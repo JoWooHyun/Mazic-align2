@@ -1,7 +1,6 @@
 import {
   Color3,
   Curve3,
-  Material,
   Mesh,
   MeshBuilder,
   Quaternion,
@@ -13,32 +12,11 @@ import {
 
 import type { SupportParams, SupportPointV2 } from "../support/types";
 
-/**
- * 서포트 기둥. base → contact 방향으로 그려진다.
- *
- * Profile (Y 축 기본, Lathe):
- *   · source='auto'|'manual': baseDiameter (큰 바닥, 플레이트 접점)
- *     → trunk → tip (모델 접점, 가는 끝)
- *   · source='bridge'        : 양 끝 모두 tipDiameter (대칭).
- *     모델 두 지점을 잇는 cross-brace 용.
- *
- * Bridge 곡선:
- *   · curveControlPoints (변곡점 3 개) 가 있으면 Lathe 대신
- *     [base, Y1, Y2, Y3, contact] 5 점을 통과하는 Catmull-Rom Tube.
- *
- * 회전: Y-up 의 lathe 를 (contact - base) 방향으로 회전시켜 두
- * 점을 잇게 한다. (base.xz == contact.xz 인 수직 케이스는 자동으로
- * identity 회전이 되어 기존 동작과 같다.)
- */
-/**
- * STL local 좌표 모드일 때 mesh.parent 로 설정할 STL mesh 를 lookup.
- * (BabylonScene 의 meshMapRef 를 외부에서 전달.)
- */
 export function createSupportMesh(
   scene: Scene,
   point: SupportPointV2,
   params: SupportParams,
-  material: Material,
+  material: StandardMaterial,
   stlMeshMap?: Map<string, Mesh>,
 ): Mesh {
   const isBridge = point.source === "bridge";
@@ -144,7 +122,7 @@ function createBridgeCurveTube(
   scene: Scene,
   point: SupportPointV2,
   params: SupportParams,
-  material: Material,
+  material: StandardMaterial,
   stlMeshMap?: Map<string, Mesh>,
 ): Mesh {
   const cps = point.curveControlPoints!;

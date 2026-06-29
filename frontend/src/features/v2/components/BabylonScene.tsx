@@ -12,7 +12,6 @@ import {
   HemisphericLight,
   HighlightLayer,
   LinesMesh,
-  Matrix,
   Mesh,
   MeshBuilder,
   Plane,
@@ -45,12 +44,44 @@ import {
   createSupportMaterial,
   createSupportMesh,
 } from "../utils/support-render";
-import { buildStlInsideGrid, type StlInsideGrid } from "../utils/stl-sdf";
 import {
-  createBridgeClipMaterial,
-  createSdfTexture,
-  type StlClipData,
-} from "../utils/bridge-clip-material";
+  babylonMeshToManifold,
+  ensureManifoldReady,
+  manifoldToBabylonMesh,
+} from "../utils/manifold-csg";
+import type { Manifold, ManifoldToplevel } from "manifold-3d";
+import { Matrix, VertexBuffer } from "@babylonjs/core";
+
+function buildBridgeClipKey(
+  point: SupportPointV2,
+  params: SupportParams,
+): string {
+  const f = (v: number) => v.toFixed(3);
+  const c = point.contact.map(f).join(",");
+  const b = point.base.map(f).join(",");
+  const cps = (point.curveControlPoints ?? [])
+    .map((p) => p.map(f).join(","))
+    .join(";");
+  return `${c}|${b}|${cps}|${params.bridgeDiameterMm}`;
+}
+
+function meshFromCachedData(
+  data: {
+    positions: Float32Array;
+    indices: Uint32Array;
+    normals: Float32Array;
+  },
+  name: string,
+  material: StandardMaterial,
+  scene: Scene,
+): Mesh {
+  const m = new Mesh(name, scene);
+  m.setVerticesData(VertexBuffer.PositionKind, Array.from(data.positions));
+  m.setIndices(Array.from(data.indices));
+  m.setVerticesData(VertexBuffer.NormalKind, Array.from(data.normals));
+  m.material = material;
+  return m;
+}
 import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
 import { meshesToStlBlob } from "../utils/stl-export";
 import { computeMeshVolumeMm3 } from "../utils/mesh-volume";
@@ -345,13 +376,16 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const supportMaterialRef = useRef<ReturnType<
       typeof createSupportMaterial
     > | null>(null);
-    // Bridge tube STL 침투 부분 fragment shader 로 discard.
-    // STL 마다 SDF voxel grid + 3D texture. mesh 의 material 은
-    // 단일 bridgeClipMat 공유 (onBindObservable 가 mesh 의 stlId 로 lookup).
-    const stlClipMapRef = useRef<Map<string, StlClipData>>(new Map());
-    const bridgeClipMatRef = useRef<ReturnType<
-      typeof createBridgeClipMaterial
-    > | null>(null);
+    // manifold-3d (wasm) — STL 마다 Manifold 객체 cache, Bridge subtract 에 사용
+    const manifoldModuleRef = useRef<ManifoldToplevel | null>(null);
+    const stlManifoldMapRef = useRef<Map<string, Manifold>>(new Map());
+    // Bridge subtract 결과 vertex data cache (supportId 기준)
+    const bridgeClipCacheRef = useRef<Map<string, {
+      key: string;
+      positions: Float32Array;
+      indices: Uint32Array;
+      normals: Float32Array;
+    }>>(new Map());
     const sliceOutlineRef = useRef<LinesMesh | null>(null);
     const sliceFillMeshesRef = useRef<Mesh[]>([]);
     const bridgeMarkerRef = useRef<Mesh | null>(null);
@@ -590,12 +624,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       // 빌드플레이트 / 그리드는 별도 plate effect 에서 생성·재생성한다.
 
       supportMaterialRef.current = createSupportMaterial(scene);
-      bridgeClipMatRef.current = createBridgeClipMaterial(scene, (stlId) => {
-        const clip = stlClipMapRef.current.get(stlId);
-        const stlMesh = meshMapRef.current.get(stlId);
-        if (!clip || !stlMesh) return null;
-        stlMesh.computeWorldMatrix(true);
-        return { inv: Matrix.Invert(stlMesh.getWorldMatrix()), clip };
+      // manifold-3d wasm async load. ready 후 manifoldModuleRef.current set.
+      // STL 이 이미 로드되어 있으면 별도 effect 에서 stlManifoldMap 생성.
+      void ensureManifoldReady().then((mod) => {
+        manifoldModuleRef.current = mod;
       });
       const bridgeMat = new StandardMaterial("v2_bridge_marker_mat", scene);
       bridgeMat.diffuseColor = new Color3(1.0, 0.55, 0.15);
@@ -962,13 +994,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               // 튀어나오지 않게. Bridge 는 굵기가 커서 더 깊이.
               const n = info.pickInfo.getNormal(true, true);
               const radius = bridge ? bridgeDiamRef.current * 0.5 : 0;
-              // Bridge 양 끝: cap 가장자리도 표면 안에 박히도록 깊이.
-              // radius × 2 + 0.5mm — cap 자체가 표면 안쪽 radius 깊이.
-              let PEN = bridge ? radius * 2 + 0.5 : 0.3;
-              // 반대편 침투 방지: 표면에서 안쪽으로 ray 쏴 같은 STL 의
-              // 반대 표면까지 거리 측정. cylinder 옆면이 반대편 표면
-              // 접촉 직전까지 (margin = radius + 0.1mm).
-              if (n) {
+              // Bridge: 사용자 알고리즘대로 0.1mm 만 박음. manifold subtract
+              // 가 cap 의 STL 안 + winding-flip 으로 외부 노출 부분도 cut.
+              // 단점: 두께 검사 적용 (반대편 침범 방지).
+              void radius;
+              let PEN = bridge ? 0.1 : 0.3;
+              if (!bridge && n) {
                 const startOffset = 0.05;
                 const origin = new Vector3(
                   p.x - n.x * startOffset,
@@ -980,8 +1011,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
                 const farPick = scene.pickWithRay(ray, (m) => m === mesh);
                 if (farPick?.hit && farPick.distance != null) {
                   const thickness = farPick.distance + startOffset;
-                  const margin = bridge ? radius + 0.1 : 0.2;
-                  const maxPen = Math.max(0.05, thickness - margin);
+                  const maxPen = Math.max(0.05, thickness - 0.2);
                   PEN = Math.min(PEN, maxPen);
                 }
               }
@@ -1114,16 +1144,19 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         if (!nextIds.has(id)) {
           meshMapRef.current.get(id)?.dispose();
           meshMapRef.current.delete(id);
-          // SDF texture / clip data dispose
-          const clip = stlClipMapRef.current.get(id);
-          if (clip) {
-            clip.texture.dispose();
-            stlClipMapRef.current.delete(id);
+          // manifold 객체도 dispose
+          const m = stlManifoldMapRef.current.get(id);
+          if (m) {
+            m.delete();
+            stlManifoldMapRef.current.delete(id);
           }
         }
       }
 
       const newFiles = files.filter((f) => !currentIds.has(f.id));
+      console.log(
+        `[stl-useEffect] currentIds=${currentIds.size} files=${files.length} newFiles=${newFiles.length}`,
+      );
       const wasEmpty = currentIds.size === 0;
 
       Promise.all(
@@ -1144,14 +1177,20 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             mesh.isPickable = true;
             attachDragBehavior(mesh, f.id);
             meshMapRef.current.set(f.id, mesh);
-            // SDF voxel grid 생성 (STL local 좌표 기준, 한 번만).
-            // Bridge tube fragment shader 가 inside 면 discard 하는 데 사용.
-            try {
-              const grid: StlInsideGrid = buildStlInsideGrid(mesh, 1.0);
-              const texture = createSdfTexture(scene, grid);
-              stlClipMapRef.current.set(f.id, { grid, texture });
-            } catch (e) {
-              console.warn("[v2] SDF 생성 실패", f.fileName, e);
+            // STL 의 manifold 객체 생성 (한 번, STL local 좌표 — transform
+            // 적용 X). Bridge subtract 시 Bridge 도 STL local 로 변환해
+            // 동일 공간에서 boolean → STL transform 변경 무관 cache hit.
+            const mod = manifoldModuleRef.current;
+            if (mod) {
+              const t0 = performance.now();
+              const man = babylonMeshToManifold(mesh, mod, null);
+              if (man) {
+                stlManifoldMapRef.current.set(f.id, man);
+                const status = man.status();
+                console.log(
+                  `[manifold] STL ${f.fileName} → status=${status} (${(performance.now() - t0).toFixed(0)} ms, numTri=${man.numTri()})`,
+                );
+              }
             }
             return mesh;
           } catch (e) {
@@ -1170,16 +1209,6 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         refreshHighlight();
         // load 가 끝난 뒤에야 mesh 가 존재하므로 여기서 다시 attach.
         syncGizmo();
-        // Bridge mesh 들 중 새 SDF 가 생긴 STL 의 것은 clip material 로 교체.
-        const clipMat = bridgeClipMatRef.current;
-        if (clipMat) {
-          for (const [supId, supMesh] of supportMeshMapRef.current) {
-            const sup = supportsRef.current.find((s) => s.id === supId);
-            if (sup?.source === "bridge" && stlClipMapRef.current.has(sup.stlId)) {
-              supMesh.material = clipMat;
-            }
-          }
-        }
       });
 
       // 기존 메쉬들은 transform 변경 가능성 체크
@@ -1214,27 +1243,127 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       for (const sm of supportMeshMapRef.current.values()) sm.dispose();
       supportMeshMapRef.current.clear();
 
-      const clipMat = bridgeClipMatRef.current;
+      const mod = manifoldModuleRef.current;
       for (const p of supports) {
-        // Bridge 는 clip material (shader 가 STL inside discard) — 단,
-        // 그 STL 의 SDF 가 있을 때만. 없거나 (단점 서포트) 면 일반 mat.
-        const useMat =
-          p.source === "bridge" &&
-          clipMat &&
-          stlClipMapRef.current.has(p.stlId)
-            ? clipMat
-            : mat;
         const m = createSupportMesh(
           scene,
           p,
           supportParams,
-          useMat,
+          mat,
           meshMapRef.current,
         );
         m.isPickable = editModeRef.current === "support";
+
+        // Bridge — manifold-3d 로 STL 침투 부분 깎아내기 (cache 없이 매번)
+        if (
+          p.source === "bridge" &&
+          mod &&
+          stlManifoldMapRef.current.size > 0
+        ) {
+          const clipped = clipBridgeWithManifold(m, p, mat as StandardMaterial, scene, mod);
+          if (clipped) {
+            supportMeshMapRef.current.set(p.id, clipped);
+            clipped.isPickable = editModeRef.current === "support";
+            continue;
+          }
+        }
         supportMeshMapRef.current.set(p.id, m);
       }
     }, [supports, supportParams]);
+
+    function clipBridgeWithManifold(
+      tube: Mesh,
+      point: SupportPointV2,
+      material: StandardMaterial,
+      scene: Scene,
+      mod: ManifoldToplevel,
+    ): Mesh | null {
+      // STL local 공간에서 subtract — STL transform 변경 시 cache hit.
+      // (현재 단순화: stlId 의 STL 한 개만 검사. baseStl 별도 검사는 추후.)
+      const stlMesh = meshMapRef.current.get(point.stlId);
+      const stlMan = stlManifoldMapRef.current.get(point.stlId);
+      if (!stlMesh || !stlMan) return null;
+      stlMesh.computeWorldMatrix(true);
+      const stlWorld = stlMesh.getWorldMatrix();
+      const stlInvWorld = Matrix.Invert(stlWorld);
+
+      // tube world → STL local 변환 matrix = stlInvWorld × tube.world
+      tube.computeWorldMatrix(true);
+      const tubeWorld = tube.getWorldMatrix();
+      const tubeToStlLocal = tubeWorld.multiply(stlInvWorld);
+
+      // cache key: Bridge contact/base 의 STL local 좌표 — STL transform
+      // 변경해도 같은 표면 위 위치면 같은 key (Bridge 가 STL 따라 함).
+      const toStlLocal = (p: [number, number, number]): [number, number, number] => {
+        const v = Vector3.TransformCoordinates(new Vector3(p[0], p[1], p[2]), stlInvWorld);
+        return [v.x, v.y, v.z];
+      };
+      const cLocal = toStlLocal(point.contact);
+      const bLocal = toStlLocal(point.base);
+      const cpsLocal = (point.curveControlPoints ?? []).map(toStlLocal);
+      const localPoint: SupportPointV2 = {
+        ...point,
+        contact: cLocal,
+        base: bLocal,
+        curveControlPoints: cpsLocal.length ? cpsLocal : undefined,
+      };
+      const key = buildBridgeClipKey(localPoint, supportParams);
+      const cached = bridgeClipCacheRef.current.get(point.id);
+      console.log(
+        `[clip] ${point.id.slice(0,6)} ${cached?.key === key ? "HIT" : "MISS"} cLocal=[${cLocal.map(v => v.toFixed(2)).join(",")}]`,
+      );
+      if (cached && cached.key === key) {
+        const reusedMesh = meshFromCachedData(
+          cached, `support_${point.id}`, material, scene,
+        );
+        reusedMesh.metadata = tube.metadata;
+        tube.dispose();
+        // STL local 좌표 mesh + parent = stlMesh → STL transform 자동 follow
+        reusedMesh.parent = stlMesh;
+        return reusedMesh;
+      }
+
+      const tubeMan = babylonMeshToManifold(tube, mod, tubeToStlLocal);
+      if (!tubeMan) return null;
+      try {
+        const result = tubeMan.subtract(stlMan);
+        if (result === tubeMan) {
+          tubeMan.delete();
+          return null;
+        }
+        const clipped = manifoldToBabylonMesh(
+          result,
+          `support_${point.id}`,
+          material,
+          scene,
+        );
+        // clipped 의 vertex 는 STL local. mesh.parent = stlMesh 박으면
+        // final world = stlMesh.world × vertex = 원래 Bridge world.
+        // cache 에 vertex data (STL local) 저장 → 다음 hit 시 재사용.
+        const positions = clipped?.getVerticesData(VertexBuffer.PositionKind);
+        const idx = clipped?.getIndices();
+        const normals = clipped?.getVerticesData(VertexBuffer.NormalKind);
+        if (clipped && positions && idx && normals) {
+          bridgeClipCacheRef.current.set(point.id, {
+            key,
+            positions: new Float32Array(positions),
+            indices: new Uint32Array(idx),
+            normals: new Float32Array(normals),
+          });
+        }
+        result.delete();
+        tubeMan.delete();
+        if (!clipped) return null;
+        clipped.metadata = tube.metadata;
+        tube.dispose();
+        clipped.parent = stlMesh;
+        return clipped;
+      } catch (e) {
+        console.warn("[manifold] subtract 실패", e);
+        tubeMan.delete();
+        return null;
+      }
+    }
 
     // 4) 선택 변경 시 highlight 갱신
     useEffect(() => {
