@@ -33,3 +33,6 @@ node_modules
 .env
 .env.local
 .env.production
+
+# Claude Code 로컬 설정
+.claude/

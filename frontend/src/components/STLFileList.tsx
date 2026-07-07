@@ -71,10 +71,7 @@ const STLFileList: React.FC<STLFileListProps> = ({
         {stlFiles.map((file) => (
           <div
             key={file.stlId}
-            className={`p-3 rounded-lg border transition-all cursor-pointer ${selectedFileIds?.has(file.stlId)
-              ? 'border-primary-500 bg-primary-50'
-              : 'border-gray-300 bg-white hover:bg-gray-50'
-              }`}
+            className="p-3 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 transition-all cursor-pointer"
             onClick={(e) => {
               e.stopPropagation();
               // If clicking the row, behave like the checkbox if it's already selected (toggle off)
@@ -185,7 +182,11 @@ const STLFileList: React.FC<STLFileListProps> = ({
 
                 {/* 파일 이름 및 정보 */}
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-gray-900 truncate">
+                  <div
+                    className={`text-sm text-gray-900 truncate ${
+                      selectedFileIds?.has(file.stlId) ? 'font-black' : 'font-medium'
+                    }`}
+                  >
                     {file.fileName}
                   </div>
                   <div className="text-xs text-gray-500">

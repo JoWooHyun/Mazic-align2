@@ -150,6 +150,13 @@ export const useSTLFiles = (projectId?: string) => {
     );
   };
 
+  /**
+   * 로컬 STL 추가 (복사/붙여넣기 등 — 백엔드 미저장, 세션 한정)
+   */
+  const addLocalSTL = (file: STLFile) => {
+    setSTLFiles((prev) => [...prev, file]);
+  };
+
   // projectId가 제공되면 자동으로 STL 파일 목록 조회
   useEffect(() => {
     if (projectId) {
@@ -167,5 +174,6 @@ export const useSTLFiles = (projectId?: string) => {
     deleteFile,
     adjustSTL,
     previewSTL,
+    addLocalSTL,
   };
 };

@@ -37,14 +37,15 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/stl', stlRoutes);
 app.use('/api/fs', fsRoutes);
 
-// 프론트엔드 정적 파일 서빙 (프로덕션)
-const frontendDist = path.join(__dirname, '../../frontend/dist');
-app.use(express.static(frontendDist));
-
-// SPA 폴백 - 모든 나머지 요청을 index.html로
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(frontendDist, 'index.html'));
-});
+// 프론트엔드 정적 파일 서빙 — 프로덕션에서만.
+// 개발 모드에서는 Vite(:5173)가 SPA 라우팅을 담당하므로 백엔드는 /api·/uploads·/health 만 처리한다.
+if (SERVER_CONFIG.NODE_ENV === 'production') {
+  const frontendDist = path.join(__dirname, '../../frontend/dist');
+  app.use(express.static(frontendDist));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
 
 // 에러 핸들링 미들웨어
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

@@ -48,31 +48,36 @@ export const loadSTLFile = async (
         // 메쉬 이름 설정
         mesh.name = fileName;
 
-        // **바운딩박스 중심을 로컬 원점으로 설정 (회전 축 중심화)**
-        // 1. 원래 바운딩박스 중심 계산
+        // 빌드플레이트 자동 정렬:
+        //   - XZ 평면(=user XY) 바운딩박스 중앙을 (0,0)에 맞춤
+        //   - 바닥(Babylon Y_min = user Z=0)을 빌드플레이트 위에 안착
+        //   - 회전축은 모델 중심 높이가 아니라 바닥 기준 → Chitubox식 동작
         mesh.computeWorldMatrix(true);
         mesh.refreshBoundingInfo();
         const boundingInfo = mesh.getBoundingInfo();
-        const originalCenter = boundingInfo.boundingBox.center.clone();
+        const bbCenter = boundingInfo.boundingBox.center;
+        const bbMinY = boundingInfo.boundingBox.minimum.y;
+        const placementOffset = new Vector3(bbCenter.x, bbMinY, bbCenter.z);
 
-        // 2. 원래 중심을 metadata에 저장 (나중에 applyTransform에서 사용)
-        mesh.metadata = {
-          ...mesh.metadata,
-          originalCenter: originalCenter
-        };
-
-        // 3. 버텍스를 원점 기준으로 재배치 (로컬 원점 = 바운딩박스 중심)
+        // 버텍스를 placement offset 기준으로 재배치
         const positions = mesh.getVerticesData('position');
         if (positions) {
           for (let i = 0; i < positions.length; i += 3) {
-            positions[i] -= originalCenter.x;
-            positions[i + 1] -= originalCenter.y;
-            positions[i + 2] -= originalCenter.z;
+            positions[i] -= placementOffset.x;
+            positions[i + 1] -= placementOffset.y;
+            positions[i + 2] -= placementOffset.z;
           }
           mesh.setVerticesData('position', positions);
         }
 
-        // 4. Mesh position 초기화 (applyTransform이 offset + translation 적용할 것임)
+        // applyTransform 호환: originalCenter = 0 으로 두어 translation 가산이 no-op
+        // placementOffset은 export/reset 시점에 원본 좌표 복원용으로 보관
+        mesh.metadata = {
+          ...mesh.metadata,
+          originalCenter: Vector3.Zero(),
+          placementOffset,
+        };
+
         mesh.position.set(0, 0, 0);
         mesh.refreshBoundingInfo();
 
@@ -132,7 +137,7 @@ export const applyTransform = (mesh: Mesh, transform: Transform): void => {
 
   mesh.position = new Vector3(
     originalCenter.x + transform.translation.x,    // X
-    originalCenter.y + transform.translation.z,    // User Z -> Babylon Y
+    originalCenter.y,                              // 임시 — 아래에서 재안착
     originalCenter.z - transform.translation.y     // User Y -> Babylon -Z
   );
 
@@ -151,6 +156,30 @@ export const applyTransform = (mesh: Mesh, transform: Transform): void => {
     transform.scale.z,          // Z → Y
     transform.scale.y           // Y → Z
   );
+
+  // 회전·스케일 적용 후, 모델 바닥(최저점)이 정확히 Z 이동 높이에 오도록 재안착.
+  //   2단계로 명시 분리하여 cache stale 등 부작용 차단:
+  //     1) mesh world yMin = 0 (플레이트 안착) 강제
+  //     2) translation.z 만큼 위로 띄움
+  //   translation.z = 0 면 결과적으로 STL 바닥 = 플레이트 면 (y=0). 회전해도 동일.
+  mesh.computeWorldMatrix(true);
+  mesh.refreshBoundingInfo();
+  let minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+  // 1단계 — plate 안착 (mesh world yMin = 0)
+  mesh.position.y -= minY;
+  mesh.computeWorldMatrix(true);
+  mesh.refreshBoundingInfo();
+  // 검증/보강: 안착 후 yMin 이 부동소수 오차로 약간 어긋나면 한 번 더 보정
+  minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+  if (Math.abs(minY) > 1e-4) {
+    mesh.position.y -= minY;
+    mesh.computeWorldMatrix(true);
+    mesh.refreshBoundingInfo();
+  }
+  // 2단계 — translation.z 만큼 위로 띄움 (= 빌드플레이트로부터의 바닥 높이)
+  mesh.position.y += transform.translation.z;
+  mesh.computeWorldMatrix(true);
+  mesh.refreshBoundingInfo();
 };
 
 /**
@@ -169,11 +198,15 @@ export const getTransformFromMesh = (mesh: Mesh): Transform => {
   // Calculate relative translation by subtracting originalCenter
   const relativePos = mesh.position.subtract(originalCenter);
 
+  // Z 이동 높이 = 모델 바닥(최저점)의 현재 높이 (mesh 원점 Y 가 아님)
+  mesh.computeWorldMatrix(true);
+  const minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+
   return {
     translation: {
       x: relativePos.x,           // Babylon X -> User X
       y: -relativePos.z,          // Babylon Z -> User -Y (Reverse of Y->-Z)
-      z: relativePos.y,           // Babylon Y -> User Z
+      z: minY,                    // 모델 바닥 높이 = Z 이동 높이
     },
     rotation: {
       x: rotation.x,            // X축 회전 유지

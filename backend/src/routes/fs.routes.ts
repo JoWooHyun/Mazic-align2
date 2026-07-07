@@ -7,19 +7,52 @@ const router = Router();
 /**
  * 드라이브 목록 반환 (Windows)
  */
-const getWindowsDrives = (): string[] => {
-  const drives: string[] = [];
-  // A-Z 드라이브 확인
+const getWindowsDrives = (): { name: string; fullPath: string }[] => {
+  const drives: { name: string; fullPath: string }[] = [];
   for (let i = 65; i <= 90; i++) {
-    const drive = `${String.fromCharCode(i)}:\\`;
+    const letter = String.fromCharCode(i);
+    const drive = `${letter}:\\`;
     try {
       fs.accessSync(drive);
-      drives.push(drive);
+      drives.push({ name: drive, fullPath: drive });
     } catch {
       // 드라이브 없음
     }
   }
   return drives;
+};
+
+/**
+ * WSL에서 마운트된 Windows 드라이브 목록 (/mnt/c, /mnt/d ...)
+ */
+const getWslDrives = (): { name: string; fullPath: string }[] => {
+  const drives: { name: string; fullPath: string }[] = [];
+  try {
+    const entries = fs.readdirSync('/mnt', { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      if (!/^[a-z]$/.test(e.name)) continue;
+      const full = `/mnt/${e.name}`;
+      try {
+        fs.accessSync(full);
+        drives.push({ name: `${e.name.toUpperCase()}:\\`, fullPath: full });
+      } catch {
+        // 접근 불가
+      }
+    }
+  } catch {
+    // /mnt 없음 (WSL 아님)
+  }
+  return drives;
+};
+
+const isWsl = (): boolean => {
+  if (process.platform !== 'linux') return false;
+  try {
+    const v = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
+    if (v.includes('microsoft') || v.includes('wsl')) return true;
+  } catch {}
+  return fs.existsSync('/mnt/c');
 };
 
 /**
@@ -31,22 +64,27 @@ router.get('/', (req: Request, res: Response) => {
 
   // 최상위: 드라이브 목록 반환
   if (!requestedPath || requestedPath === '/') {
+    let drives: { name: string; fullPath: string }[] | null = null;
     if (process.platform === 'win32') {
-      const drives = getWindowsDrives();
+      drives = getWindowsDrives();
+    } else if (isWsl()) {
+      drives = getWslDrives();
+    }
+
+    if (drives) {
       return res.json({
         success: true,
         currentPath: '/',
         parentPath: null,
         items: drives.map((d) => ({
-          name: d,
-          fullPath: d,
+          name: d.name,
+          fullPath: d.fullPath,
           isDirectory: true,
           size: null,
         })),
       });
-    } else {
-      requestedPath = '/';
     }
+    requestedPath = '/';
   }
 
   try {
@@ -88,7 +126,8 @@ router.get('/', (req: Request, res: Response) => {
     const parentPath = path.dirname(requestedPath);
     const isRoot =
       requestedPath === parentPath ||
-      (process.platform === 'win32' && /^[A-Z]:\\?$/i.test(requestedPath));
+      (process.platform === 'win32' && /^[A-Z]:\\?$/i.test(requestedPath)) ||
+      (isWsl() && /^\/mnt\/[a-z]\/?$/i.test(requestedPath));
 
     res.json({
       success: true,

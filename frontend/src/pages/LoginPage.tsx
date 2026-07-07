@@ -73,7 +73,7 @@ const LoginPage: React.FC = () => {
       <div className="max-w-md w-full">
         {/* Logo */}
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-primary-600 mb-2">MazicAlign</h1>
+          <h1 className="text-4xl font-bold text-primary-600 mb-2">Slicer</h1>
           <p className="text-gray-600">
             {isSignUp ? 'Create your account' : 'Sign in to your account'}
           </p>

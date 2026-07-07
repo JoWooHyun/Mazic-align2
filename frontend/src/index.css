@@ -32,3 +32,53 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* ===== ViewCube (네비게이션 큐브) ===== */
+.vc-scene {
+  perspective: 420px;
+}
+.vc-cube {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.05s linear;
+}
+.vc-face {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #cbd5e1;
+  background: rgba(55, 65, 81, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  cursor: pointer;
+  user-select: none;
+  backface-visibility: hidden;
+  transition: background 0.12s, color 0.12s;
+}
+.vc-face:hover {
+  background: rgba(37, 99, 235, 0.95);
+  color: #ffffff;
+}
+.vc-arrow {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: #cbd5e1;
+  background: rgba(31, 41, 55, 0.85);
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  transition: background 0.12s, color 0.12s;
+}
+.vc-arrow:hover {
+  background: rgba(37, 99, 235, 0.95);
+  color: #ffffff;
+}

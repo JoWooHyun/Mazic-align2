@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Mesh, VertexBuffer } from '@babylonjs/core';
 import { useAuth } from '@hooks/useAuth';
@@ -8,6 +8,8 @@ import STLViewer from '@components/STLViewer';
 import STLFileList from '@components/STLFileList';
 import ViewerControls from '@components/ViewerControls';
 import TransformPanel from '@components/TransformPanel';
+import SupporterPanel from '@components/SupporterPanel';
+import LayerSlider from '@components/LayerSlider';
 import HistoryViewer from '@components/HistoryViewer';
 import SettingsModal from '@components/SettingsModal';
 import SlicerPanel from '@components/Slicer/SlicerPanel';
@@ -16,8 +18,24 @@ import LocalFileBrowser from '@components/LocalFileBrowser';
 import { slicerService } from '@services/slicer/SlicerService';
 import { importSTLFromPath } from '@services/stl.service';
 import { SliceSettings, LayerData } from '@services/slicer/types';
-import { AdjustmentType } from '../types/stl.types';
+import { AdjustmentType, type Transform, type STLFile } from '../types/stl.types';
 import { getTransformFromMesh } from '@utils/stl-loader.utils';
+import {
+  type SupportSettings,
+  type SupportTool,
+  DEFAULT_SUPPORT_SETTINGS,
+} from '@utils/support.utils';
+
+/** 복사본 이름 생성 — "base (n).ext" (기존 (n) 은 제거 후 다음 번호) */
+function makeCopyName(srcName: string, existingNames: string[]): string {
+  const dot = srcName.lastIndexOf('.');
+  const ext = dot > 0 ? srcName.slice(dot) : '';
+  let base = dot > 0 ? srcName.slice(0, dot) : srcName;
+  base = base.replace(/ \(\d+\)$/, '');
+  let n = 1;
+  while (existingNames.includes(`${base} (${n})${ext}`)) n++;
+  return `${base} (${n})${ext}`;
+}
 
 /**
  * 3D 뷰어 페이지
@@ -36,12 +54,44 @@ const ViewerPage: React.FC = () => {
     deleteFile,
     adjustSTL,
     previewSTL,
+    addLocalSTL,
   } = useSTLFiles(projectId);
 
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [showFileBrowser, setShowFileBrowser] = useState(false);
-  const [rightPanelTab, setRightPanelTab] = useState<'transform' | 'history'>('transform');
+  const [rightPanelTab, setRightPanelTab] = useState<'transform' | 'supporter' | 'history'>('transform');
+  const [gizmoEnabled, setGizmoEnabled] = useState(false); // Rotation 버튼으로 기즈모 표시 토글
+  const [supportTool, setSupportTool] = useState<SupportTool>('none'); // 서포트 배치 도구
+  const [brushThickness, setBrushThickness] = useState(3); // 보호 영역 브러쉬 두께 (mm)
+  const [supportSettings, setSupportSettings] = useState<SupportSettings>(
+    DEFAULT_SUPPORT_SETTINGS
+  );
+  const [clearSupportsSignal, setClearSupportsSignal] = useState(0); // 증가 시 서포트 제거
+  const [generateSupportsSignal, setGenerateSupportsSignal] = useState(0); // 증가 시 영역 서포트 생성
+  const [autoAngleSignal, setAutoAngleSignal] = useState(0); // 증가 시 자동 각도 조절 실행
+  const [findMarginSignal, setFindMarginSignal] = useState(0); // 증가 시 마진 찾기 실행
+  const [scopedSupportSignal, setScopedSupportSignal] = useState(0); // 증가 시 선택 영역 자동 서포트 생성
+
+  // Phase 1 — Island Detection
+  const [sliceLayerHeight, setSliceLayerHeight] = useState(0.05); // 슬라이스 두께 (mm)
+  const [detectIslandsSignal, setDetectIslandsSignal] = useState(0); // 증가 시 island 검출
+  const [sliceLayerIndex, setSliceLayerIndex] = useState(-1); // -1 = clipPlane off
+  const [sliceTotalLayers, setSliceTotalLayers] = useState(0);
+  const [sliceYRange, setSliceYRange] = useState<{ yMin: number; yMax: number } | null>(null);
+  const [sliceIslandStats, setSliceIslandStats] = useState<{
+    totalIslandFaces: number;
+    perLayerCount: number[];
+  } | null>(null);
+
+  // STL 로드 직후(sliceTotalLayers 새로 잡힘) sliceLayerIndex 가 OFF(-1) 면
+  //   max 위치로 자동 설정 → 모델 전체 적층된 상태로 시작 (3D 프린팅 완료 상태).
+  //   사용자가 슬라이더 내리며 적층 해체 시뮬레이션.
+  useEffect(() => {
+    if (sliceTotalLayers > 0 && sliceLayerIndex < 0) {
+      setSliceLayerIndex(sliceTotalLayers - 1);
+    }
+  }, [sliceTotalLayers, sliceLayerIndex]);
 
   // Settings state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -72,6 +122,157 @@ const ViewerPage: React.FC = () => {
   const handleMeshLoaded = useCallback((id: string, mesh: Mesh) => {
     meshMapRef.current.set(id, mesh);
   }, []);
+
+  // ===== Ctrl+Z 되돌리기 =====
+  // transform 변경 직전 상태를 그룹(한 번의 조작 = 한 그룹) 단위로 스택에 저장
+  const undoStackRef = useRef<Array<Array<{ stlId: string; transform: Transform }>>>([]);
+
+  const pushUndoGroup = (entries: Array<{ stlId: string; transform: Transform }>) => {
+    if (entries.length === 0) return;
+    undoStackRef.current.push(
+      entries.map((e) => ({
+        stlId: e.stlId,
+        transform: JSON.parse(JSON.stringify(e.transform)) as Transform,
+      }))
+    );
+    if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+  };
+
+  const handleUndo = async () => {
+    if (!user || !projectId) return;
+    const group = undoStackRef.current.pop();
+    if (!group) return;
+    for (const { stlId, transform } of group) {
+      await adjustSTL(
+        projectId,
+        stlId,
+        user.userId,
+        AdjustmentType.TRANSLATION,
+        { x: 0, y: 0, z: 0 },
+        transform
+      );
+    }
+  };
+
+  // ===== Ctrl+C / Ctrl+V 복사·붙여넣기 =====
+  const clipboardRef = useRef<STLFile | null>(null);
+
+  const handleCopy = () => {
+    if (primarySelectedFile) clipboardRef.current = primarySelectedFile;
+  };
+
+  const handlePaste = () => {
+    const src = clipboardRef.current;
+    if (!src || !projectId) return;
+    const srcMesh = meshMapRef.current.get(src.stlId);
+    if (!srcMesh) return;
+
+    // 소스 footprint 반경 (XZ 평면)
+    const srcBox = srcMesh.getBoundingInfo().boundingBox;
+    const r = Math.hypot(srcBox.extendSizeWorld.x, srcBox.extendSizeWorld.z);
+
+    // 기존 메쉬들의 XZ 중심 + 반경
+    const existing: { x: number; z: number; radius: number }[] = [];
+    meshMapRef.current.forEach((m) => {
+      const bb = m.getBoundingInfo().boundingBox;
+      existing.push({
+        x: bb.centerWorld.x,
+        z: bb.centerWorld.z,
+        radius: Math.hypot(bb.extendSizeWorld.x, bb.extendSizeWorld.z),
+      });
+    });
+
+    // 빌드플레이트 중앙에서 나선형으로 겹치지 않는 위치 탐색
+    const margin = 2;
+    const ringStep = Math.max(r * 1.3, 6);
+    const candidates: { x: number; z: number }[] = [{ x: 0, z: 0 }];
+    for (let ring = 1; ring <= 14; ring++) {
+      const d = ring * ringStep;
+      const cnt = ring * 6;
+      for (let a = 0; a < cnt; a++) {
+        const ang = (a / cnt) * Math.PI * 2;
+        candidates.push({ x: Math.cos(ang) * d, z: Math.sin(ang) * d });
+      }
+    }
+    let spot = candidates[candidates.length - 1];
+    for (const c of candidates) {
+      const free = existing.every(
+        (e) => Math.hypot(c.x - e.x, c.z - e.z) >= r + e.radius + margin
+      );
+      if (free) {
+        spot = c;
+        break;
+      }
+    }
+
+    const newName = makeCopyName(
+      src.fileName,
+      stlFiles.map((f) => f.fileName)
+    );
+    const copyId = `local-copy-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 7)}`;
+    const copy: STLFile = {
+      stlId: copyId,
+      projectId,
+      originalUrl: src.originalUrl,
+      fileName: newName,
+      visibility: true,
+      fileSize: src.fileSize,
+      currentTransform: {
+        translation: {
+          x: spot.x,
+          y: -spot.z, // Babylon Z → user -Y
+          z: src.currentTransform.translation.z,
+        },
+        rotation: { ...src.currentTransform.rotation },
+        scale: { ...src.currentTransform.scale },
+      },
+    };
+    addLocalSTL(copy);
+    setSelectedFileIds(new Set([copyId]));
+  };
+
+  // 키보드 리스너는 1회만 등록하고, 최신 핸들러는 ref 로 호출
+  const handleUndoRef = useRef(handleUndo);
+  handleUndoRef.current = handleUndo;
+  const handleCopyRef = useRef(handleCopy);
+  handleCopyRef.current = handleCopy;
+  const handlePasteRef = useRef(handlePaste);
+  handlePasteRef.current = handlePaste;
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return; // 입력창은 기본 동작 유지
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndoRef.current();
+      } else if (k === 'c') {
+        handleCopyRef.current();
+      } else if (k === 'v') {
+        e.preventDefault();
+        handlePasteRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // 선택된 STL이 바뀌면 기즈모를 끈다 (STL 클릭만으로는 기즈모가 뜨지 않도록)
+  useEffect(() => {
+    setGizmoEnabled(false);
+  }, [primarySelectedFile?.stlId]);
+
+  // Supporter 탭을 벗어나거나 STL 선택이 풀리면 서포트 도구 해제
+  //   (영역 지정·서포트 기능은 STL 이 활성화된 동안에만 사용 가능)
+  useEffect(() => {
+    if (rightPanelTab !== 'supporter' || !primarySelectedFile) {
+      setSupportTool('none');
+    }
+  }, [rightPanelTab, primarySelectedFile]);
 
   /**
    * 파일 선택 핸들러
@@ -165,6 +366,11 @@ const ViewerPage: React.FC = () => {
         const updates = { ...pendingScaleUpdates.current };
         pendingScaleUpdates.current = {};
 
+        // 되돌리기용: 스케일 변경 전 상태 저장
+        pushUndoGroup(
+          selectedFiles.map((f) => ({ stlId: f.stlId, transform: f.currentTransform }))
+        );
+
         // Process all pending scale updates as a batch
         for (const file of selectedFiles) {
           const oldTransform = file.currentTransform;
@@ -195,6 +401,9 @@ const ViewerPage: React.FC = () => {
 
       return;
     }
+
+    // 되돌리기용: 변경 전 상태 저장
+    pushUndoGroup(selectedFiles.map((f) => ({ stlId: f.stlId, transform: f.currentTransform })));
 
     // For non-scale updates, process immediately
     for (const file of selectedFiles) {
@@ -293,10 +502,6 @@ const ViewerPage: React.FC = () => {
 
     if (!user || !projectId) return;
 
-    // Mesh에서 현재 transform 추출 (Babylon → 사용자 좌표계 변환 포함)
-    const newTransform = getTransformFromMesh(mesh);
-    console.log('[ViewerPage] Transform from mesh:', newTransform);
-
     // 기존 transform 가져오기
     const file = stlFiles.find(f => f.stlId === stlId);
     if (!file) {
@@ -306,7 +511,43 @@ const ViewerPage: React.FC = () => {
     }
 
     const oldTransform = file.currentTransform;
+
+    // 기즈모로 회전·이동해도 Z 거리(바닥 높이)는 유지 — 명시적 2단계 재안착:
+    //   1) plate 안착 (mesh world yMin = 0)
+    //   2) oldTransform.translation.z 만큼 위로 띄움
+    mesh.computeWorldMatrix(true);
+    mesh.refreshBoundingInfo();
+    let minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+    mesh.position.y -= minY;
+    mesh.computeWorldMatrix(true);
+    mesh.refreshBoundingInfo();
+    minY = mesh.getBoundingInfo().boundingBox.minimumWorld.y;
+    if (Math.abs(minY) > 1e-4) {
+      mesh.position.y -= minY;
+      mesh.computeWorldMatrix(true);
+      mesh.refreshBoundingInfo();
+    }
+    mesh.position.y += oldTransform.translation.z;
+    mesh.computeWorldMatrix(true);
+    mesh.refreshBoundingInfo();
+
+    // Mesh에서 현재 transform 추출 (Babylon → 사용자 좌표계 변환 포함)
+    const newTransform = getTransformFromMesh(mesh);
+    console.log('[ViewerPage] Transform from mesh:', newTransform);
     console.log('[ViewerPage] Old transform:', oldTransform);
+
+    // 되돌리기용: translation/rotation 중 하나라도 바뀌면 변경 전 상태 저장
+    const undoNeeded =
+      Math.abs(newTransform.translation.x - oldTransform.translation.x) > 0.0001 ||
+      Math.abs(newTransform.translation.y - oldTransform.translation.y) > 0.0001 ||
+      Math.abs(newTransform.translation.z - oldTransform.translation.z) > 0.0001 ||
+      Math.abs(newTransform.rotation.x - oldTransform.rotation.x) > 0.0001 ||
+      Math.abs(newTransform.rotation.y - oldTransform.rotation.y) > 0.0001 ||
+      Math.abs(newTransform.rotation.z - oldTransform.rotation.z) > 0.0001 ||
+      Math.abs(newTransform.rotation.w - oldTransform.rotation.w) > 0.0001;
+    if (undoNeeded) {
+      pushUndoGroup([{ stlId, transform: oldTransform }]);
+    }
 
     // Translation 변경사항 계산 및 저장
     const translationChanged =
@@ -382,6 +623,9 @@ const ViewerPage: React.FC = () => {
       rotation: { x: 0, y: 0, z: 0, w: 1 },
       scale: { x: 1, y: 1, z: 1 },
     };
+
+    // 되돌리기용: 리셋 전 상태 저장
+    pushUndoGroup(selectedFiles.map((f) => ({ stlId: f.stlId, transform: f.currentTransform })));
 
     // 각 축에 대해 리셋
     for (const file of selectedFiles) {
@@ -603,10 +847,38 @@ const ViewerPage: React.FC = () => {
             stlFiles={stlFiles}
             selectedFileIds={Array.from(selectedFileIds)}
             onMeshSelected={(id) => handleFileSelect(id, false)} // Viewer click selects single
-            onBackgroundClick={handleClearSelection} // Click background to deselect
             onGizmoTransformChange={handleGizmoTransformChange}
             onMeshLoaded={handleMeshLoaded} // Store mesh ref
             unselectedOpacity={1 - transparency / 100} // Convert 0-100% transparency to 1-0 opacity
+            showGizmo={rightPanelTab === 'transform' && gizmoEnabled} // Transform 탭 + Rotation 버튼 ON
+            supportTool={supportTool}
+            brushThickness={brushThickness}
+            onBrushThicknessChange={setBrushThickness}
+            supportSettings={supportSettings}
+            clearSupportsSignal={clearSupportsSignal}
+            generateSupportsSignal={generateSupportsSignal}
+            autoAngleSignal={autoAngleSignal}
+            findMarginSignal={findMarginSignal}
+            scopedSupportSignal={scopedSupportSignal}
+            sliceLayerHeight={sliceLayerHeight}
+            detectIslandsSignal={detectIslandsSignal}
+            currentLayerIndex={sliceLayerIndex}
+            onIslandDetectionComplete={(info) => {
+              setSliceIslandStats({
+                totalIslandFaces: info.totalIslandFaces,
+                perLayerCount: info.perLayerIslandCount,
+              });
+              // 검출 후에도 전체 적층 상태 유지 (별도 sliceLayerIndex 강제 안 함)
+            }}
+            onSliceRangeChange={(info) => {
+              if (!info) {
+                setSliceTotalLayers(0);
+                setSliceYRange(null);
+                return;
+              }
+              setSliceTotalLayers(info.nSlices);
+              setSliceYRange({ yMin: info.yMin, yMax: info.yMax });
+            }}
             className="w-full h-full"
           />
 
@@ -618,6 +890,20 @@ const ViewerPage: React.FC = () => {
               onResetView={handleResetView}
             />
           </div>
+
+          {/* Layer Slider — STL 로드되면 항상 활성, Island 검출 무관 */}
+          {sliceTotalLayers > 0 && sliceYRange && (
+            <LayerSlider
+              totalLayers={sliceTotalLayers}
+              currentLayer={sliceLayerIndex}
+              onChange={setSliceLayerIndex}
+              perLayerIslandCount={sliceIslandStats?.perLayerCount ?? []}
+              yMin={sliceYRange.yMin}
+              layerHeight={sliceLayerHeight}
+              enabled={true}
+              onLayerHeightChange={setSliceLayerHeight}
+            />
+          )}
         </main>
 
         {/* Right Sidebar - Transform & History */}
@@ -634,6 +920,15 @@ const ViewerPage: React.FC = () => {
               Transform
             </button>
             <button
+              onClick={() => setRightPanelTab('supporter')}
+              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${rightPanelTab === 'supporter'
+                ? 'text-primary-600 border-b-2 border-primary-600'
+                : 'text-gray-600 hover:text-gray-900'
+                }`}
+            >
+              Supporter
+            </button>
+            <button
               onClick={() => setRightPanelTab('history')}
               className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${rightPanelTab === 'history'
                 ? 'text-primary-600 border-b-2 border-primary-600'
@@ -646,13 +941,15 @@ const ViewerPage: React.FC = () => {
 
           {/* 탭 콘텐츠 */}
           <div className="flex-1 overflow-y-auto">
-            {rightPanelTab === 'transform' ? (
+            {rightPanelTab === 'transform' && (
               <div className="p-4">
                 <TransformPanel
                   selectedFile={primarySelectedFile}
                   onTransformChange={handleTransformChange}
                   onPreview={handleTransformPreview}
                   onReset={handleTransformReset}
+                  gizmoActive={gizmoEnabled}
+                  onToggleGizmo={() => setGizmoEnabled((v) => !v)}
                 />
                 {selectedFiles.length > 1 && (
                   <div className="mt-2 text-xs text-blue-600 text-center">
@@ -660,7 +957,33 @@ const ViewerPage: React.FC = () => {
                   </div>
                 )}
               </div>
-            ) : (
+            )}
+            {rightPanelTab === 'supporter' && (
+              <div className="p-4">
+                <SupporterPanel
+                  selectedFile={primarySelectedFile}
+                  onTransformChange={handleTransformChange}
+                  onPreview={handleTransformPreview}
+                  supportSettings={supportSettings}
+                  onSupportSettingsChange={setSupportSettings}
+                  supportTool={supportTool}
+                  onSetSupportTool={setSupportTool}
+                  brushThickness={brushThickness}
+                  onBrushThicknessChange={setBrushThickness}
+                  onGenerateRegionSupports={() =>
+                    setGenerateSupportsSignal((n) => n + 1)
+                  }
+                  onAutoAngle={() => setAutoAngleSignal((n) => n + 1)}
+                  onScopedSupport={() => setScopedSupportSignal((n) => n + 1)}
+                  onFindMargin={() => setFindMarginSignal((n) => n + 1)}
+                  onClearSupports={() => setClearSupportsSignal((n) => n + 1)}
+                  sliceLayerHeight={sliceLayerHeight}
+                  onSliceLayerHeightChange={setSliceLayerHeight}
+                  onDetectIslands={() => setDetectIslandsSignal((n) => n + 1)}
+                />
+              </div>
+            )}
+            {rightPanelTab === 'history' && (
               <HistoryViewer
                 stlId={primarySelectedFile?.stlId}
                 isMaster={user?.role === 'master'}

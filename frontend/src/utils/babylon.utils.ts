@@ -50,7 +50,7 @@ export const createCamera = (scene: Scene, canvas: HTMLCanvasElement): ArcRotate
     'camera',
     Math.PI / 2, // alpha (회전 각도)
     Math.PI / 3, // beta (상하 각도)
-    50, // radius (거리)
+    300, // radius (거리) — 200mm 빌드플레이트가 한눈에 보이도록
     Vector3.Zero(), // target
     scene
   );
@@ -60,18 +60,38 @@ export const createCamera = (scene: Scene, canvas: HTMLCanvasElement): ArcRotate
   // useCtrlForPanning = false (Ctrl 키 없이 패닝)
   camera.attachControl(canvas, true, false);
 
-  // 줌 속도 개선
-  // wheelPrecision: default 50. Lower is faster.
-  camera.wheelPrecision = 10;
+  // 카메라 키보드 입력 — ↑/↓ 는 LayerSlider 전용. 카메라는 키보드 회전 안 함.
+  //   inputs.attached.keyboard 가 ArrowUp/Down/Left/Right 를 카메라 alpha/beta 변경에
+  //   기본 적용 → LayerSlider 와 동시 발화로 뷰까지 같이 움직임. keyboard 입력 자체 제거.
+  if (camera.inputs.attached.keyboard) {
+    camera.inputs.remove(camera.inputs.attached.keyboard);
+  }
 
-  // 패닝 속도 및 관성 설정 (1:1 이동 느낌)
+  // 줌 속도: 기본 2배(wheelPrecision 0.5), Ctrl+휠은 4배(0.25)
+  // wheelPrecision 은 낮을수록 한 틱당 크게 이동
+  const ZOOM_NORMAL = 0.5;
+  const ZOOM_CTRL = 0.25;
+  camera.wheelPrecision = ZOOM_NORMAL;
+
+  // Ctrl 키 여부에 따라 휠 줌 속도 전환 (capture 단계 → Babylon 휠 입력보다 먼저 실행)
+  const wheelHandler = (e: WheelEvent) => {
+    camera.wheelPrecision = e.ctrlKey ? ZOOM_CTRL : ZOOM_NORMAL;
+    if (e.ctrlKey) e.preventDefault(); // 브라우저 페이지 줌 방지
+  };
+  canvas.addEventListener('wheel', wheelHandler, { passive: false, capture: true });
+  camera.onDisposeObservable.add(() => {
+    canvas.removeEventListener('wheel', wheelHandler, true);
+  });
+
+  // 관성 제거 — 마우스를 멈추면 즉시 멈추도록 (딜레이 없는 기민한 조작)
+  // inertia: 회전/줌 관성 (default 0.9). 0 = 코스팅 없음
+  camera.inertia = 0;
+  // panningInertia: 패닝 관성 (default 0.9). 0 = 코스팅 없음
+  camera.panningInertia = 0;
+
+  // 패닝 속도
   // panningSensibility: default 1000. Lower is faster.
-  // 10 was too fast (moved more than mouse). Increased to 50 to slow it down.
   camera.panningSensibility = 50;
-  // panningInertia: default 0.9. 
-  // User requested "smoothness" similar to rotation.
-  // 0.1 was too stiff. 0.7 provides a good balance of 1:1 feel + smoothness.
-  camera.panningInertia = 0.7;
 
   // 마우스 버튼 매핑
   // 0: Left, 1: Middle, 2: Right
@@ -94,7 +114,7 @@ export const createCamera = (scene: Scene, canvas: HTMLCanvasElement): ArcRotate
 
   // 카메라 이동 범위 제한
   camera.lowerRadiusLimit = 5;
-  camera.upperRadiusLimit = 200;
+  camera.upperRadiusLimit = 800;
 
   return camera;
 };
@@ -162,7 +182,13 @@ export const focusOnMesh = (camera: ArcRotateCamera, mesh: Mesh): void => {
  * 카메라 target은 원점 (0,0,0)에 고정하고, radius만 조정
  */
 export const focusOnAllMeshes = (camera: ArcRotateCamera, scene: Scene): void => {
-  const meshes = scene.meshes.filter((m) => m.isVisible && m.getTotalVertices() > 0);
+  // 빌드플레이트(그리드 라인 메쉬)는 바운딩 계산에서 제외
+  const meshes = scene.meshes.filter(
+    (m) =>
+      m.isVisible &&
+      m.getTotalVertices() > 0 &&
+      !m.name.startsWith('buildPlate')
+  );
 
   if (meshes.length === 0) return;
 
@@ -190,10 +216,14 @@ export const focusOnAllMeshes = (camera: ArcRotateCamera, scene: Scene): void =>
   const size = new Vector3(maxX - minX, maxY - minY, maxZ - minZ);
   const radius = size.length();
 
-  // 카메라 target은 항상 원점에 고정
-  camera.target = Vector3.Zero();
-  // 거리만 조정하여 모든 메쉬가 보이도록 설정
-  camera.radius = Math.max(radius * 1.5, 50); // 최소 거리 50 유지
+  // 모델 바운딩박스 중심을 바라보고, 모델 크기에 맞춰 거리 조정
+  // (원점 고정 시 작은 모델이 화면 위쪽에 작게 치우쳐 보이는 문제 해결)
+  camera.target = new Vector3(
+    (minX + maxX) / 2,
+    (minY + maxY) / 2,
+    (minZ + maxZ) / 2
+  );
+  camera.radius = Math.max(radius * 1.5, 50);
 };
 
 /**
@@ -217,11 +247,11 @@ export const createGizmoManager = (scene: Scene, utilityLayer: UtilityLayerRende
   gizmoManager.positionGizmoEnabled = true;
   gizmoManager.rotationGizmoEnabled = true;
   gizmoManager.scaleGizmoEnabled = false;
-  gizmoManager.boundingBoxGizmoEnabled = true; // 바운딩 박스 표시 (조작 불가)
+  // 바운딩 박스(파란 선택 박스) 비활성화 — 선택 표기는 파일 목록에서만
+  gizmoManager.boundingBoxGizmoEnabled = false;
 
   const positionGizmo = gizmoManager.gizmos.positionGizmo;
   const rotationGizmo = gizmoManager.gizmos.rotationGizmo;
-  const boundingBoxGizmo = gizmoManager.gizmos.boundingBoxGizmo;
 
   if (positionGizmo) {
     positionGizmo.updateGizmoRotationToMatchAttachedMesh = false;
@@ -229,16 +259,6 @@ export const createGizmoManager = (scene: Scene, utilityLayer: UtilityLayerRende
 
   if (rotationGizmo) {
     rotationGizmo.updateGizmoRotationToMatchAttachedMesh = false;
-  }
-
-  // Bounding Box는 시각적으로만 표시 (조작 핸들 비활성화)
-  if (boundingBoxGizmo) {
-    // 모든 스케일 박스 숨기기 (조작 포인트 제거)
-    boundingBoxGizmo.setEnabledScaling(false);
-    // 회전 핸들도 숨기기
-    boundingBoxGizmo.setEnabledRotationAxis('');
-    // 고정 크기로 표시
-    boundingBoxGizmo.fixedDragMeshScreenSize = true;
   }
 
   return gizmoManager;

@@ -14,6 +14,8 @@ interface TransformPanelProps {
     value: number
   ) => void;
   onReset: () => void;
+  gizmoActive: boolean; // 회전/이동 기즈모 표시 여부
+  onToggleGizmo: () => void; // Rotation 버튼 토글
   className?: string;
 }
 
@@ -26,6 +28,8 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
   onTransformChange,
   onPreview,
   onReset,
+  gizmoActive,
+  onToggleGizmo,
   className = '',
 }) => {
   const [translation, setTranslation] = useState({ x: 0, y: 0, z: 0 });
@@ -255,7 +259,19 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
 
       {/* Rotation */}
       <div className="mb-6">
-        <h4 className="text-sm font-medium text-gray-700 mb-3">Rotation (degrees)</h4>
+        <button
+          onClick={onToggleGizmo}
+          className={`w-full mb-3 flex items-center justify-between px-3 py-2 rounded text-sm font-medium transition-colors ${
+            gizmoActive
+              ? 'bg-primary-600 text-white hover:bg-primary-700'
+              : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+        >
+          <span>Rotation</span>
+          <span className="text-xs font-normal">
+            {gizmoActive ? '기즈모 켜짐' : '클릭하여 기즈모 표시'}
+          </span>
+        </button>
         <div className="space-y-2">
           {(['x', 'y', 'z'] as const).map((axis) => (
             <div key={`rotation-${axis}`} className="flex items-center space-x-3">
