@@ -65,6 +65,39 @@ function buildBridgeClipKey(
   return `${c}|${b}|${cps}|${params.bridgeDiameterMm}`;
 }
 
+/**
+ * support 전체 rebuild 판정용 key. STL local 좌표 기준이라 STL transform
+ * 이 변경되어도 (world 좌표는 바뀌지만 local 좌표 = 원래 값) key 동일 →
+ * mesh 재생성 skip. mesh.parent = stlMesh 로 auto-follow 되므로 world
+ * 위치는 자동 이동. rebuild = freeze 원인이므로 이 skip 이 핵심.
+ *
+ * localContact/localBase 는 stlInvWorld 로 미리 변환한 좌표를 전달.
+ */
+function buildSupportKey(
+  point: SupportPointV2,
+  params: SupportParams,
+  localContact: [number, number, number],
+  localBase: [number, number, number],
+  localCps: [number, number, number][] | null,
+): string {
+  const f = (v: number) => v.toFixed(3);
+  const c = localContact.map(f).join(",");
+  const b = localBase.map(f).join(",");
+  const cps = localCps ? localCps.map((p) => p.map(f).join(",")).join(";") : "";
+  return [
+    point.source,
+    c,
+    b,
+    cps,
+    params.trunkDiameterMm,
+    params.tipDiameterMm,
+    params.baseDiameterMm,
+    params.baseTransitionMm,
+    params.tipTransitionMm,
+    params.bridgeDiameterMm,
+  ].join("|");
+}
+
 function meshFromCachedData(
   data: {
     positions: Float32Array;
@@ -1233,18 +1266,65 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
     }, [overhangAngleDeg]);
 
-    // 3.5) 서포트 점 동기화 — supports / supportParams 변경 시 전부
-    //      dispose 후 재생성. 굵기 변화가 즉시 반영되도록 단순화.
+    // 3.5) 서포트 점 동기화 — diff-based.
+    //   · 각 support 의 rebuild key = STL local 좌표 + params (STL transform
+    //     은 world 만 바꾸고 local 은 안 바꿈 → key 동일 → rebuild skip).
+    //   · mesh.parent = stlMesh 라 STL transform 시 자동 follow → freeze 0.
+    //   · 삭제된 support: dispose. 추가/변경된 support: 재생성.
     useEffect(() => {
       const scene = sceneRef.current;
       const mat = supportMaterialRef.current;
       if (!scene || !mat) return;
 
-      for (const sm of supportMeshMapRef.current.values()) sm.dispose();
-      supportMeshMapRef.current.clear();
-
       const mod = manifoldModuleRef.current;
+      const map = supportMeshMapRef.current;
+
+      // 1) 삭제된 support mesh dispose.
+      const newIds = new Set(supports.map((s) => s.id));
+      for (const [id, mesh] of Array.from(map)) {
+        if (!newIds.has(id)) {
+          mesh.dispose();
+          map.delete(id);
+        }
+      }
+
+      // 2) 각 support 처리 — key 동일하면 skip.
       for (const p of supports) {
+        const stlMesh = meshMapRef.current.get(p.stlId);
+        let stlInvWorld: Matrix | null = null;
+        if (stlMesh) {
+          stlMesh.computeWorldMatrix(true);
+          stlInvWorld = Matrix.Invert(stlMesh.getWorldMatrix());
+        }
+        const toLocal = (
+          w: [number, number, number],
+        ): [number, number, number] => {
+          if (!stlInvWorld) return w;
+          const v = Vector3.TransformCoordinates(
+            new Vector3(w[0], w[1], w[2]),
+            stlInvWorld,
+          );
+          return [v.x, v.y, v.z];
+        };
+        const lc = toLocal(p.contact);
+        const lb = toLocal(p.base);
+        const lcps = p.curveControlPoints
+          ? p.curveControlPoints.map(toLocal)
+          : null;
+        const key = buildSupportKey(p, supportParams, lc, lb, lcps);
+
+        const existing = map.get(p.id);
+        // skip 조건: key 동일 + mesh 가 stlMesh child (auto-follow). parent
+        // 없는 mesh 는 STL 이동 시 world 위치 그대로 남으므로 재생성 필요.
+        if (
+          existing &&
+          existing.metadata?.rebuildKey === key &&
+          existing.parent
+        ) {
+          continue;
+        }
+        if (existing) existing.dispose();
+
         const m = createSupportMesh(
           scene,
           p,
@@ -1254,7 +1334,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         );
         m.isPickable = editModeRef.current === "support";
 
-        // Bridge — manifold-3d 로 STL 침투 부분 깎아내기 (cache 없이 매번)
+        let finalMesh: Mesh = m;
+        // Bridge — manifold-3d 로 STL 침투 부분 깎아내기.
         if (
           p.source === "bridge" &&
           mod &&
@@ -1262,12 +1343,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         ) {
           const clipped = clipBridgeWithManifold(m, p, mat as StandardMaterial, scene, mod);
           if (clipped) {
-            supportMeshMapRef.current.set(p.id, clipped);
             clipped.isPickable = editModeRef.current === "support";
-            continue;
+            finalMesh = clipped;
           }
         }
-        supportMeshMapRef.current.set(p.id, m);
+        finalMesh.metadata = {
+          ...(finalMesh.metadata ?? {}),
+          rebuildKey: key,
+        };
+        map.set(p.id, finalMesh);
       }
     }, [supports, supportParams]);
 
@@ -1309,9 +1393,6 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       };
       const key = buildBridgeClipKey(localPoint, supportParams);
       const cached = bridgeClipCacheRef.current.get(point.id);
-      console.log(
-        `[clip] ${point.id.slice(0,6)} ${cached?.key === key ? "HIT" : "MISS"} cLocal=[${cLocal.map(v => v.toFixed(2)).join(",")}]`,
-      );
       if (cached && cached.key === key) {
         const reusedMesh = meshFromCachedData(
           cached, `support_${point.id}`, material, scene,
