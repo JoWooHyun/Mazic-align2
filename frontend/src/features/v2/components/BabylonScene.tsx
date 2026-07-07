@@ -118,7 +118,11 @@ function meshFromCachedData(
 import { autoGenerateSupportPoints } from "../support/utils/auto-generate";
 import { meshesToStlBlob } from "../utils/stl-export";
 import { computeMeshVolumeMm3 } from "../utils/mesh-volume";
-import { chainSegments, sliceMeshAtY } from "../utils/slice-section";
+import {
+  chainSegments,
+  extractWorldTriangles,
+  sliceMeshAtY,
+} from "../utils/slice-section";
 import {
   buildPolygonFillMesh,
   createSliceFillMaterial,
@@ -290,6 +294,12 @@ export interface BabylonSceneHandle {
     widthPx: number,
     heightPx: number,
   ) => SliceMask;
+  /**
+   * 현재 씬의 모든 STL + 서포트 mesh 를 world 삼각형 배열(삼각형당 9 float)로
+   * 추출한다. getSliceMask 와 동일한 mesh 집합. Web Worker 로 넘겨 배치
+   * 슬라이스/출력할 때 씬(Babylon Mesh) 직렬화 불가 문제를 우회한다.
+   */
+  getSliceGeometry: () => { triangles: Float32Array }[];
   /**
    * 씬에 있는 모든 STL + 서포트의 world AABB 최대 Y. 모델 없으면 0.
    * 슬라이서가 layer count 를 계산할 때 쓴다.
@@ -1878,6 +1888,19 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             plateWidthMm: plateWRef.current,
             plateDepthMm: plateDRef.current,
           });
+        },
+        getSliceGeometry() {
+          // getSliceMask 와 동일한 mesh 집합 (STL + 서포트) 을 world 삼각형으로.
+          const out: { triangles: Float32Array }[] = [];
+          for (const mesh of meshMapRef.current.values()) {
+            const tris = extractWorldTriangles(mesh);
+            if (tris.length > 0) out.push({ triangles: tris });
+          }
+          for (const sm of supportMeshMapRef.current.values()) {
+            const tris = extractWorldTriangles(sm);
+            if (tris.length > 0) out.push({ triangles: tris });
+          }
+          return out;
         },
         getSceneTopY() {
           let top = 0;

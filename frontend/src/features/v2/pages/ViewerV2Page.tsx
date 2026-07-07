@@ -14,8 +14,7 @@ import { SupportParamsPanel, useSupportParamsStore } from "../support";
 import * as supportRepo from "../data/supports.repo";
 import type { SupportPointV2 } from "../support/types";
 import { downloadBlob } from "../utils/stl-export";
-import { exportLayersAsPngZip } from "../utils/slice-batch";
-import { makeCtbV4 } from "../utils/ctb-encoder";
+import { sliceBatchService } from "../utils/slice-batch-service";
 import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
@@ -872,17 +871,23 @@ const ViewerV2Page: React.FC = () => {
     if (batchExport.busy) return;
     setBatchExport({ busy: true, done: 0, total: 0 });
     try {
-      const blob = await exportLayersAsPngZip(handle, {
-        layerHeightMm: slicePreview.layerHeightMm,
-        widthPx: printerProfile.lcdWidthPx,
-        heightPx: printerProfile.lcdHeightPx,
-        plateWidthMm: printerProfile.buildVolumeMm[0],
-        plateDepthMm: printerProfile.buildVolumeMm[1],
-        // 프로파일에 노광 설정이 있을 때만 manifest 에 노광 배열 동봉 (기존 프로파일 하위 호환).
-        exposure: profileExposure(printerProfile),
-        onProgress: (done, total) =>
-          setBatchExport({ busy: true, done, total }),
-      });
+      // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열로 직렬화해 전달.
+      const meshes = handle.getSliceGeometry();
+      const topY = handle.getSceneTopY();
+      const blob = await sliceBatchService.exportPngZip(
+        meshes,
+        {
+          layerHeightMm: slicePreview.layerHeightMm,
+          widthPx: printerProfile.lcdWidthPx,
+          heightPx: printerProfile.lcdHeightPx,
+          plateWidthMm: printerProfile.buildVolumeMm[0],
+          plateDepthMm: printerProfile.buildVolumeMm[1],
+          topY,
+          // 프로파일에 노광 설정이 있을 때만 manifest 에 노광 배열 동봉 (기존 프로파일 하위 호환).
+          exposure: profileExposure(printerProfile),
+        },
+        (done, total) => setBatchExport({ busy: true, done, total }),
+      );
       if (!blob) return;
       const safe = (project?.name ?? "project").replace(
         /[\\/:*?"<>|]/g,
@@ -908,21 +913,29 @@ const ViewerV2Page: React.FC = () => {
     if (batchExport.busy) return;
     setBatchExport({ busy: true, done: 0, total: 0 });
     try {
-      const blob = await makeCtbV4(handle, {
-        layerHeightMm: slicePreview.layerHeightMm,
-        resolutionX: printerProfile.lcdWidthPx,
-        resolutionY: printerProfile.lcdHeightPx,
-        bedSizeXMm: printerProfile.buildVolumeMm[0],
-        bedSizeYMm: printerProfile.buildVolumeMm[1],
-        bedSizeZMm: printerProfile.buildVolumeMm[2],
-        // 프로파일에 값이 없으면 undefined → 인코더 기본값 사용 (기존 산출물과 동일).
-        exposureSec: printerProfile.exposureSec,
-        bottomExposureSec: printerProfile.bottomExposureSec,
-        bottomLayerCount: printerProfile.bottomLayerCount,
-        transitionLayerCount: printerProfile.transitionLayerCount,
-        onProgress: (done, total) =>
-          setBatchExport({ busy: true, done, total }),
-      });
+      // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열로 직렬화해 전달.
+      const meshes = handle.getSliceGeometry();
+      const topY = handle.getSceneTopY();
+      const blob = await sliceBatchService.exportCtb(
+        meshes,
+        {
+          layerHeightMm: slicePreview.layerHeightMm,
+          widthPx: printerProfile.lcdWidthPx,
+          heightPx: printerProfile.lcdHeightPx,
+          plateWidthMm: printerProfile.buildVolumeMm[0],
+          plateDepthMm: printerProfile.buildVolumeMm[1],
+          topY,
+        },
+        {
+          bedSizeZMm: printerProfile.buildVolumeMm[2],
+          // 프로파일에 값이 없으면 undefined → 인코더 기본값 사용 (기존 산출물과 동일).
+          exposureSec: printerProfile.exposureSec,
+          bottomExposureSec: printerProfile.bottomExposureSec,
+          bottomLayerCount: printerProfile.bottomLayerCount,
+          transitionLayerCount: printerProfile.transitionLayerCount,
+        },
+        (done, total) => setBatchExport({ busy: true, done, total }),
+      );
       if (!blob) return;
       const safe = (project?.name ?? "project").replace(
         /[\\/:*?"<>|]/g,

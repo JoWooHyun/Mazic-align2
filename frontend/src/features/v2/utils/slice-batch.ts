@@ -25,27 +25,21 @@ export interface BatchSliceOptions {
 }
 
 /**
- * sceneTop 까지 layerHeight 간격으로 모든 레이어 마스크를 만들어
- * PNG 로 인코딩 → ZIP STORE 1 개로 묶는다.
+ * 이미 PNG 로 인코딩된 레이어 바이트 배열 + 파라미터로 ZIP STORE 에 넣을
+ * ZipEntry 배열(manifest.json + layer_*.png)을 조립한다.
  *
- * 메모리 관리: 마스크 자체는 즉시 PNG 로 변환 후 버린다. 큰 해상도 +
- * 수백 레이어도 동시에 메모리에 1 layer 만 들고 있다.
- *
- * 파일명: layer_00001.png … (1-based, leading zero padded)
- * 첫 번째 파일로 메타 텍스트 manifest.json 동봉.
+ * Babylon / 캔버스에 의존하지 않는 순수 함수 — 메인스레드(exportLayersAsPngZip)와
+ * 워커가 공유한다. manifest 필드/파일명 규칙은 분리 전과 동일.
  */
-export async function exportLayersAsPngZip(
-  sceneHandle: BabylonSceneHandle,
+export function buildPngZipEntries(
+  pngs: Uint8Array[],
+  layerCount: number,
   opts: BatchSliceOptions,
-): Promise<Blob | null> {
-  const topY = sceneHandle.getSceneTopY();
-  if (topY <= 0) return null;
-  const layerCount = Math.max(1, Math.ceil(topY / opts.layerHeightMm));
-
+  topY: number,
+): ZipEntry[] {
   const entries: ZipEntry[] = [];
 
   // 노광 설정이 있으면 레이어별 노광 시간(초) 배열을 계산해 manifest 에 동봉.
-  // (전환 레이어 노광 선형 보간 결과 포함. 미지정 시 배열을 추가하지 않아 기존 manifest 와 동일.)
   const exposureSecByLayer = opts.exposure
     ? Array.from({ length: layerCount }, (_, i) =>
         layerExposureSec(i, opts.exposure!),
@@ -70,6 +64,35 @@ export async function exportLayersAsPngZip(
   });
 
   const pad = String(layerCount).length;
+  for (let i = 0; i < pngs.length; i++) {
+    entries.push({
+      name: `layer_${String(i + 1).padStart(pad, "0")}.png`,
+      data: pngs[i],
+    });
+  }
+
+  return entries;
+}
+
+/**
+ * sceneTop 까지 layerHeight 간격으로 모든 레이어 마스크를 만들어
+ * PNG 로 인코딩 → ZIP STORE 1 개로 묶는다.
+ *
+ * 메모리 관리: 마스크 자체는 즉시 PNG 로 변환 후 버린다. 큰 해상도 +
+ * 수백 레이어도 동시에 메모리에 1 layer 만 들고 있다.
+ *
+ * 파일명: layer_00001.png … (1-based, leading zero padded)
+ * 첫 번째 파일로 메타 텍스트 manifest.json 동봉.
+ */
+export async function exportLayersAsPngZip(
+  sceneHandle: BabylonSceneHandle,
+  opts: BatchSliceOptions,
+): Promise<Blob | null> {
+  const topY = sceneHandle.getSceneTopY();
+  if (topY <= 0) return null;
+  const layerCount = Math.max(1, Math.ceil(topY / opts.layerHeightMm));
+
+  const pngs: Uint8Array[] = [];
 
   for (let i = 0; i < layerCount; i++) {
     const sliceY = (i + 0.5) * opts.layerHeightMm;
@@ -78,11 +101,7 @@ export async function exportLayersAsPngZip(
       opts.widthPx,
       opts.heightPx,
     );
-    const png = await maskToPngBlob(mask);
-    entries.push({
-      name: `layer_${String(i + 1).padStart(pad, "0")}.png`,
-      data: png,
-    });
+    pngs.push(await maskToPngBlob(mask));
     opts.onProgress?.(i + 1, layerCount);
 
     // 다음 microtask 로 yield — 큰 작업 중 UI 가 멈추지 않게.
@@ -91,5 +110,5 @@ export async function exportLayersAsPngZip(
     }
   }
 
-  return makeZipStore(entries);
+  return makeZipStore(buildPngZipEntries(pngs, layerCount, opts, topY));
 }
