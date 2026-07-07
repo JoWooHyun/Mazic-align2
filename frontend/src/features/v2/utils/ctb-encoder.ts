@@ -1,4 +1,5 @@
 import type { BabylonSceneHandle } from "../components/BabylonScene";
+import { layerExposureSec } from "./exposure";
 import type { SliceMask } from "./slice-rasterize";
 
 /**
@@ -33,6 +34,8 @@ export interface CtbExportOptions {
   /** 바닥 레이어 노광 시간. 보통 30s. */
   bottomExposureSec?: number;
   bottomLayerCount?: number;
+  /** 전환 레이어 개수. 바닥→일반 노광 선형 보간 구간. 기본 0 (전환 없음). */
+  transitionLayerCount?: number;
   lightOffDelaySec?: number;
   onProgress?: (done: number, total: number) => void;
 }
@@ -51,6 +54,7 @@ export async function makeCtbV4(
   const exposureSec = opts.exposureSec ?? 2.5;
   const bottomExposureSec = opts.bottomExposureSec ?? 30.0;
   const bottomLayers = opts.bottomLayerCount ?? 5;
+  const transitionLayers = opts.transitionLayerCount ?? 0;
   const lightOffSec = opts.lightOffDelaySec ?? 0.0;
 
   // ---------- 1) 각 layer 의 RLE 인코딩 ----------
@@ -201,7 +205,7 @@ export async function makeCtbV4(
   view.setUint32(p, 0x01060300, true); p += 4; // SoftwareVersion (resinforge v1.6.3)
   view.setFloat32(p, 0.0, true); p += 4;   // RestTimeAfterRetract
   view.setFloat32(p, 0.0, true); p += 4;   // RestTimeAfterLift
-  view.setUint32(p, 0, true); p += 4;      // TransitionLayerCount
+  view.setUint32(p, transitionLayers, true); p += 4; // TransitionLayerCount
   view.setUint32(p, 0, true); p += 4;      // Padding2
   view.setUint32(p, 0, true); p += 4;      // Padding3
 
@@ -209,7 +213,13 @@ export async function makeCtbV4(
   p = layerTableOffset;
   for (let i = 0; i < layerCount; i++) {
     const z = (i + 1) * opts.layerHeightMm;
-    const expo = i < bottomLayers ? bottomExposureSec : exposureSec;
+    // 전환 레이어 노광 선형 보간 (transitionLayers=0 이면 바닥/일반 즉시 전환 — 기존 동작 동일).
+    const expo = layerExposureSec(i, {
+      bottomLayerCount: bottomLayers,
+      transitionLayerCount: transitionLayers,
+      bottomExposureSec,
+      exposureSec,
+    });
     view.setFloat32(p, z, true); p += 4;
     view.setFloat32(p, expo, true); p += 4;
     view.setFloat32(p, lightOffSec, true); p += 4;

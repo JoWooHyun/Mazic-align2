@@ -1,4 +1,5 @@
 import type { BabylonSceneHandle } from "../components/BabylonScene";
+import { layerExposureSec } from "./exposure";
 import type { SliceMask } from "./slice-rasterize";
 import { maskToPngBlob } from "./mask-png";
 import { makeZipStore, type ZipEntry } from "./zip-store";
@@ -9,6 +10,16 @@ export interface BatchSliceOptions {
   heightPx: number;
   plateWidthMm: number;
   plateDepthMm: number;
+  /**
+   * 노광 설정 (선택). 지정 시 manifest 에 레이어별 exposureSec 배열을 동봉한다.
+   * 미지정 시 manifest 는 기존과 동일 (노광 정보 없음 — 하위 호환).
+   */
+  exposure?: {
+    bottomLayerCount: number;
+    transitionLayerCount: number;
+    bottomExposureSec: number;
+    exposureSec: number;
+  };
   /** 0 ≤ progress ≤ 1 콜백 (선택). */
   onProgress?: (done: number, total: number) => void;
 }
@@ -33,6 +44,14 @@ export async function exportLayersAsPngZip(
 
   const entries: ZipEntry[] = [];
 
+  // 노광 설정이 있으면 레이어별 노광 시간(초) 배열을 계산해 manifest 에 동봉.
+  // (전환 레이어 노광 선형 보간 결과 포함. 미지정 시 배열을 추가하지 않아 기존 manifest 와 동일.)
+  const exposureSecByLayer = opts.exposure
+    ? Array.from({ length: layerCount }, (_, i) =>
+        layerExposureSec(i, opts.exposure!),
+      )
+    : undefined;
+
   const manifest = {
     layerCount,
     layerHeightMm: opts.layerHeightMm,
@@ -43,6 +62,7 @@ export async function exportLayersAsPngZip(
     topY,
     generatedAt: new Date().toISOString(),
     generator: "resinforge-v2",
+    ...(exposureSecByLayer ? { exposureSecByLayer } : {}),
   };
   entries.push({
     name: "manifest.json",

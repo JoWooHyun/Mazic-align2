@@ -33,6 +33,7 @@ import GithubProjectDialog from "../components/GithubProjectDialog";
 import PrinterProfileSelect from "../components/PrinterProfileSelect";
 import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
+import type { PrinterProfileV2 } from "../types/printer";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import { transformPointBetween } from "../utils/transform";
 import {
@@ -43,6 +44,34 @@ import {
   removeControlPoint,
   straightCps,
 } from "../utils/bridge-path";
+
+/**
+ * 프로파일의 노광 설정을 PNG-ZIP manifest 용 exposure 객체로 변환.
+ * 프로파일에 노광 필드가 하나도 없으면 undefined 를 반환해 manifest 에 노광 정보를
+ * 추가하지 않는다 (기존 프로파일 하위 호환 — 산출물 불변).
+ * (기본값은 ctb-encoder 의 기본값과 동일하게 맞춰 CTB/manifest 간 일관성 유지.)
+ */
+function profileExposure(p: PrinterProfileV2):
+  | {
+      bottomLayerCount: number;
+      transitionLayerCount: number;
+      bottomExposureSec: number;
+      exposureSec: number;
+    }
+  | undefined {
+  const hasAny =
+    p.exposureSec !== undefined ||
+    p.bottomExposureSec !== undefined ||
+    p.bottomLayerCount !== undefined ||
+    p.transitionLayerCount !== undefined;
+  if (!hasAny) return undefined;
+  return {
+    bottomLayerCount: p.bottomLayerCount ?? 5,
+    transitionLayerCount: p.transitionLayerCount ?? 0,
+    bottomExposureSec: p.bottomExposureSec ?? 30.0,
+    exposureSec: p.exposureSec ?? 2.5,
+  };
+}
 
 /**
  * v2 프로젝트 작업 화면.
@@ -849,6 +878,8 @@ const ViewerV2Page: React.FC = () => {
         heightPx: printerProfile.lcdHeightPx,
         plateWidthMm: printerProfile.buildVolumeMm[0],
         plateDepthMm: printerProfile.buildVolumeMm[1],
+        // 프로파일에 노광 설정이 있을 때만 manifest 에 노광 배열 동봉 (기존 프로파일 하위 호환).
+        exposure: profileExposure(printerProfile),
         onProgress: (done, total) =>
           setBatchExport({ busy: true, done, total }),
       });
@@ -867,6 +898,7 @@ const ViewerV2Page: React.FC = () => {
     project?.name,
     slicePreview.layerHeightMm,
     batchExport.busy,
+    printerProfile,
   ]);
 
   // ----- .ctb v4 내보내기 -----
@@ -883,6 +915,11 @@ const ViewerV2Page: React.FC = () => {
         bedSizeXMm: printerProfile.buildVolumeMm[0],
         bedSizeYMm: printerProfile.buildVolumeMm[1],
         bedSizeZMm: printerProfile.buildVolumeMm[2],
+        // 프로파일에 값이 없으면 undefined → 인코더 기본값 사용 (기존 산출물과 동일).
+        exposureSec: printerProfile.exposureSec,
+        bottomExposureSec: printerProfile.bottomExposureSec,
+        bottomLayerCount: printerProfile.bottomLayerCount,
+        transitionLayerCount: printerProfile.transitionLayerCount,
         onProgress: (done, total) =>
           setBatchExport({ busy: true, done, total }),
       });
@@ -895,7 +932,13 @@ const ViewerV2Page: React.FC = () => {
     } finally {
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
-  }, [files.length, project?.name, slicePreview.layerHeightMm, batchExport.busy]);
+  }, [
+    files.length,
+    project?.name,
+    slicePreview.layerHeightMm,
+    batchExport.busy,
+    printerProfile,
+  ]);
 
   // ----- STL 내보내기 -----
   // Chrome/Edge 의 File System Access API (showSaveFilePicker) 우선 사용 —
