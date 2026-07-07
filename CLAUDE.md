@@ -9,8 +9,9 @@ Top-down 레진 프린터용 하이브리드 슬라이서 (최종 목표: 2노�
   현재 `main`은 구 v1 — 신규 기능 작업은 `docs/통합로드맵.md`의 이식 순서를 따를 것.
 - 데이터 계층: **IndexedDB** (Express/SQLite 백엔드는 동결 — 삭제 금지, 신규 의존 금지). 근거: `docs/아키텍처결정_20260707.md`
 - 서포트 분담: 유승제=구조물 생성/편집, 지현규=배치 판단(마진/아일랜드). 검출 결과 → 서포트 생성 입력으로 연결.
-- 팀 브랜치: `feat/slicer-step1-2`(조우현 슬라이서), `dev/ji-margin-island`(지현규), `integrate/v2-mainline`(유승제 v2)
-  — 전부 origin(popcaron/MazicAlign)에 반입 완료. 이 절은 통합 완료 후 삭제한다.
+- **공식 저장소: `JoWooHyun/Mazic-align2` (origin)** — 조우현이 admin. 팀 브랜치 `feat/slicer-step1-2`(조우현 슬라이서),
+  `dev/ji-margin-island`(지현규), `integrate/v2-mainline`(유승제 v2) 전부 반입 완료.
+  `popcaron/MazicAlign`은 구 미러 — 신규 push 금지. 이 절은 통합 완료 후 삭제한다.
 
 ## 필수 참고 문서
 

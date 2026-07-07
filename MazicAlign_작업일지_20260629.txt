@@ -166,7 +166,7 @@
       - ADR-2: 데이터 계층 IndexedDB, Express/SQLite 백엔드 동결
       - ADR-3: 서포트 = 검출(지현규) → 생성(유승제) 파이프라인
 
-    [완료] git 반입 (origin = popcaron/MazicAlign)
+    [완료] git 반입 (공식 저장소 = JoWooHyun/Mazic-align2, popcaron은 구 미러)
       - feat/slicer-step1-2: Step 1~2 코드(1,152줄) + 팀 문서 커밋
       - integrate/v2-mainline: 유승제 v2 (새 메인라인 기준 브랜치)
       - dev/ji-margin-island: 지현규 마진/아일랜드 작업
