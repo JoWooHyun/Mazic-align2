@@ -1,15 +1,12 @@
 import { useMemo } from "react";
 
+import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
+import { estimatePrintTimeSec } from "../utils/print-time";
 import type { BabylonSceneHandle } from "./BabylonScene";
 import SliceMaskPreview from "./SliceMaskPreview";
 
 /** SLA 레진 평균 밀도 (g/cm³). 메이커마다 1.05 ~ 1.15. */
 const RESIN_DENSITY_G_PER_CM3 = 1.1;
-/** 일반 SLA exposure (초). */
-const NORMAL_EXPOSURE_SEC = 2.5;
-/** 첫 N 레이어는 바닥 exposure. */
-const BOTTOM_LAYERS = 5;
-const BOTTOM_EXPOSURE_SEC = 30;
 
 function formatDuration(sec: number): string {
   if (sec < 60) return `${Math.round(sec)}초`;
@@ -68,6 +65,9 @@ const SliceSidePanel: React.FC<Props> = ({
 }) => {
   const safeLayerIdx = Math.min(layerIdx, Math.max(0, layerCount - 1));
 
+  // 예상 출력 시간 추정에 쓰는 현재 프린터 프로파일 (노광 + 리프트/딜레이).
+  const printerProfile = useCurrentProfile();
+
   // G-code 내보내기: DEFAULT_FDM_SETTINGS 로 슬라이스한 전체 문자열을
   // .gcode 텍스트 파일로 즉시 다운로드. 설정 UI 는 이번 범위 아님.
   const handleExportGcode = () => {
@@ -96,13 +96,11 @@ const SliceSidePanel: React.FC<Props> = ({
     const volumeMm3 = model + support;
     const volumeMl = volumeMm3 / 1000;
     const resinG = volumeMl * RESIN_DENSITY_G_PER_CM3;
-    const bottomCount = Math.min(BOTTOM_LAYERS, layerCount);
-    const printSec =
-      bottomCount * BOTTOM_EXPOSURE_SEC +
-      Math.max(0, layerCount - bottomCount) * NORMAL_EXPOSURE_SEC;
+    // v1 합산식(노광 + lightOffDelay + 리프트 왕복) 기반 프로파일 추정.
+    const printSec = estimatePrintTimeSec(layerCount, printerProfile);
     return { volumeMl, resinG, printSec };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelCount, layerCount, sceneTopY, sceneHandleRef]);
+  }, [modelCount, layerCount, sceneTopY, sceneHandleRef, printerProfile]);
 
   return (
     <aside className="w-[420px] border-l border-gray-200 bg-white flex flex-col overflow-y-auto">
@@ -151,7 +149,11 @@ const SliceSidePanel: React.FC<Props> = ({
             </span>
           </div>
           <p className="text-xs text-gray-400 mt-1">
-            기준: 노광 2.5s · 바닥 5층 30s · 레진 ~1.1 g/cm³
+            기준: {printerProfile.name} · 노광{" "}
+            {(printerProfile.exposureSec ?? 2.5).toFixed(1)}s · 바닥{" "}
+            {printerProfile.bottomLayerCount ?? 5}층{" "}
+            {(printerProfile.bottomExposureSec ?? 30).toFixed(1)}s · 레진 ~1.1
+            g/cm³
           </p>
         </Card>
 

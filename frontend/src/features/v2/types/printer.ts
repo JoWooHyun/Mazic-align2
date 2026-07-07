@@ -29,7 +29,26 @@ export interface PrinterProfileV2 {
    * 0 이면 전환 없이 바닥→일반이 즉시 전환 (기본값, 기존 동작과 동일).
    */
   transitionLayerCount?: number;
+
+  // ---- 리프트/딜레이 설정 (모두 선택 — 미지정 시 v1 기본값으로 폴백, 기존 프로파일 하위 호환) ----
+  /** 리프트 거리 (mm). 레이어 노광 후 플랫폼이 올라갔다 내려오는 거리. */
+  liftDistanceMm?: number;
+  /** 리프트 속도 (mm/s). 플랫폼이 올라가는 속도. */
+  liftSpeedMmS?: number;
+  /** 하강 속도 (mm/s). 플랫폼이 내려오는 속도. */
+  retractSpeedMmS?: number;
+  /** 노광 후 대기 시간 (초). light-off delay. */
+  lightOffDelaySec?: number;
 }
+
+/**
+ * 리프트/딜레이 v1 기본값 — 프로파일에 값이 없을 때 폴백에 사용.
+ * (v1 SlicerWorker 합산식의 기본 파라미터와 동일.)
+ */
+export const DEFAULT_LIFT_DISTANCE_MM = 6.0;
+export const DEFAULT_LIFT_SPEED_MM_S = 3.0;
+export const DEFAULT_RETRACT_SPEED_MM_S = 3.0;
+export const DEFAULT_LIGHT_OFF_DELAY_SEC = 1.0;
 
 /**
  * 빌드플레이트 정렬(좌표 매핑)에 쓰는 헬퍼.
