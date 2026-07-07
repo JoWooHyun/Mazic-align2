@@ -21,6 +21,10 @@ interface Draft {
   bvX: number;
   bvY: number;
   bvZ: number;
+  exposureSec: number;
+  bottomExposureSec: number;
+  bottomLayerCount: number;
+  transitionLayerCount: number;
 }
 
 const EMPTY_DRAFT: Draft = {
@@ -31,6 +35,10 @@ const EMPTY_DRAFT: Draft = {
   bvX: 143.43,
   bvY: 89.6,
   bvZ: 175,
+  exposureSec: 2.5,
+  bottomExposureSec: 30,
+  bottomLayerCount: 5,
+  transitionLayerCount: 0,
 };
 
 const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
@@ -63,6 +71,10 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
       bvX: p.buildVolumeMm[0],
       bvY: p.buildVolumeMm[1],
       bvZ: p.buildVolumeMm[2],
+      exposureSec: p.exposureSec ?? 2.5,
+      bottomExposureSec: p.bottomExposureSec ?? 30,
+      bottomLayerCount: p.bottomLayerCount ?? 5,
+      transitionLayerCount: p.transitionLayerCount ?? 0,
     });
   }, [selectedId, isNew, all]);
 
@@ -90,6 +102,10 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
         Math.max(1, d.bvY),
         Math.max(1, d.bvZ),
       ],
+      exposureSec: Math.max(0, d.exposureSec),
+      bottomExposureSec: Math.max(0, d.bottomExposureSec),
+      bottomLayerCount: Math.max(0, Math.round(d.bottomLayerCount)),
+      transitionLayerCount: Math.max(0, Math.round(d.transitionLayerCount)),
     };
   }
 
@@ -244,6 +260,52 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
               </div>
               <p className="text-xs text-gray-400 mt-1">
                 X = 가로 · Y = 세로 · Z = 출력 가능 높이
+              </p>
+            </FormRow>
+
+            <FormRow label="노광 시간 (초)">
+              <div className="flex items-center gap-2">
+                <NumberInput
+                  value={draft.exposureSec}
+                  onChange={(v) => setDraft((d) => ({ ...d, exposureSec: v }))}
+                  disabled={readOnly}
+                  step={0.1}
+                />
+                <span className="text-xs text-gray-500">일반</span>
+                <NumberInput
+                  value={draft.bottomExposureSec}
+                  onChange={(v) =>
+                    setDraft((d) => ({ ...d, bottomExposureSec: v }))
+                  }
+                  disabled={readOnly}
+                  step={0.1}
+                />
+                <span className="text-xs text-gray-500">바닥</span>
+              </div>
+            </FormRow>
+
+            <FormRow label="바닥/전환 레이어 수">
+              <div className="flex items-center gap-2">
+                <NumberInput
+                  value={draft.bottomLayerCount}
+                  onChange={(v) =>
+                    setDraft((d) => ({ ...d, bottomLayerCount: v }))
+                  }
+                  disabled={readOnly}
+                />
+                <span className="text-xs text-gray-500">바닥</span>
+                <NumberInput
+                  value={draft.transitionLayerCount}
+                  onChange={(v) =>
+                    setDraft((d) => ({ ...d, transitionLayerCount: v }))
+                  }
+                  disabled={readOnly}
+                />
+                <span className="text-xs text-gray-500">전환</span>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                전환 레이어 구간에서 바닥→일반 노광이 선형으로 보간됩니다 (0 =
+                전환 없음).
               </p>
             </FormRow>
 
