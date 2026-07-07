@@ -75,6 +75,10 @@ const ViewerV2Page: React.FC = () => {
   supportsRef.current = supports;
 
   const [browserOpen, setBrowserOpen] = useState(false);
+  // 뷰어 영역 드래그앤드롭 오버레이 표시 여부.
+  const [isDragOver, setIsDragOver] = useState(false);
+  // 네이티브 파일 열기용 숨김 input.
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [ghDialog, setGhDialog] = useState<"save" | "load" | null>(null);
   const [panelTab, setPanelTab] = useState<"transform" | "support">(
     "transform",
@@ -1176,6 +1180,57 @@ const ViewerV2Page: React.FC = () => {
     setSelectedIds(new Set([created.id]));
   }
 
+  // 브라우저 네이티브 파일 열기 / 드래그앤드롭 공통 저장 경로.
+  // handlePicked 와 동일하게 addStlFile → repo.createStlFile → IndexedDB.
+  // 여러 파일을 순차 저장하고 새로 추가된 파일 전체를 선택 상태로 만든다.
+  async function addNativeFiles(fileList: File[]) {
+    const stlFiles = fileList.filter((f) =>
+      f.name.toLowerCase().endsWith(".stl"),
+    );
+    if (stlFiles.length === 0) return;
+    const newIds: string[] = [];
+    for (const file of stlFiles) {
+      // File 은 Blob 의 서브타입이라 blob 으로 그대로 전달 가능.
+      const created = await addStlFile(file.name, file);
+      newIds.push(created.id);
+    }
+    if (newIds.length > 0) setSelectedIds(new Set(newIds));
+  }
+
+  // 숨김 input 을 통한 "내 PC에서 열기".
+  function handleNativeInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = e.target.files ? Array.from(e.target.files) : [];
+    // 같은 파일을 다시 선택해도 onChange 가 발생하도록 value 초기화.
+    e.target.value = "";
+    void addNativeFiles(picked);
+  }
+
+  // ----- 드래그앤드롭 (뷰어 영역) -----
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // canvas 등 자식 요소로 이동하는 경우는 무시하고, 컨테이너 바깥으로
+    // 실제로 벗어날 때만 해제. relatedTarget 이 main 안에 없으면 이탈.
+    const related = e.relatedTarget as Node | null;
+    if (!related || !e.currentTarget.contains(related)) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const dropped = Array.from(e.dataTransfer.files);
+    void addNativeFiles(dropped);
+  };
+
   async function handleRemove(id: string) {
     await removeStlFile(id);
     // STL 삭제 시 DB cascade 로 supports 도 사라지므로 state sync.
@@ -1265,6 +1320,13 @@ const ViewerV2Page: React.FC = () => {
               GitHub 불러오기
             </button>
             <button
+              onClick={() => fileInputRef.current?.click()}
+              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 transition-colors"
+              title="브라우저 파일 선택 창으로 내 PC 의 STL 을 엽니다 (백엔드 불필요)"
+            >
+              내 PC에서 열기
+            </button>
+            <button
               onClick={() => setBrowserOpen(true)}
               className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors"
             >
@@ -1273,6 +1335,16 @@ const ViewerV2Page: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* 네이티브 파일 열기용 숨김 input — 버튼 클릭으로 트리거. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".stl"
+        multiple
+        className="hidden"
+        onChange={handleNativeInputChange}
+      />
 
       <div className="flex-1 flex min-h-0">
         <StlFileList
@@ -1284,7 +1356,12 @@ const ViewerV2Page: React.FC = () => {
           loading={filesLoading}
         />
 
-        <main className="flex-1 relative bg-gray-100">
+        <main
+          className="flex-1 relative bg-gray-100"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
           <BabylonScene
             ref={sceneHandleRef}
             files={files}
@@ -1452,10 +1529,21 @@ const ViewerV2Page: React.FC = () => {
           </div>
           {/* 우측 상단 stack 끝 */}
 
-          {files.length === 0 && (
+          {files.length === 0 && !isDragOver && (
             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-center pointer-events-none">
               <div className="bg-white/90 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-600">
-                좌측 '+ 추가' 또는 상단 'STL 불러오기' 로 파일을 가져오세요.
+                좌측 '+ 추가' · 상단 '내 PC에서 열기' · STL 을 여기로 드래그하여
+                가져오세요.
+              </div>
+            </div>
+          )}
+
+          {/* 드래그앤드롭 오버레이 — pointer-events-none 로 drop 이벤트가
+              main 컨테이너에 그대로 도달하게 한다. */}
+          {isDragOver && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-primary-500/10 border-2 border-dashed border-primary-500 pointer-events-none">
+              <div className="bg-white/95 backdrop-blur rounded-lg shadow-lg px-6 py-4 text-base font-medium text-primary-700">
+                여기에 STL 을 놓으세요
               </div>
             </div>
           )}
