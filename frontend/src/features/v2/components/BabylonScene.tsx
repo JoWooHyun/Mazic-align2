@@ -127,6 +127,11 @@ import {
   rasterizePolygons,
   type SliceMask,
 } from "../utils/slice-rasterize";
+import { generateFdmGcode } from "../utils/gcode/slice-adapter";
+import {
+  DEFAULT_FDM_SETTINGS,
+  type FdmSettings,
+} from "../utils/gcode/types";
 import type { SupportParams, SupportPointV2 } from "../support/types";
 import type { EditMode } from "./EditModeControls";
 
@@ -294,6 +299,12 @@ export interface BabylonSceneHandle {
    * 모델 + 서포트의 부피 (mm³) 합. 출력 시간 / 레진 사용량 추정용.
    */
   getBuildVolumeMm3: () => { model: number; support: number };
+  /**
+   * 씬의 모든 STL + 서포트 mesh 를 (exportStl 과 동일한 집합) FDM
+   * G-code 로 슬라이스한 전체 문자열. 모델이 0 개면 null.
+   * settings 미지정 필드는 DEFAULT_FDM_SETTINGS 로 채운다.
+   */
+  exportFdmGcode: (settings?: Partial<FdmSettings>) => string | null;
   /**
    * world 좌표 한 점을 그 STL 의 local 좌표로 변환.
    * supports 마이그레이션 (world → stl-local) 에 사용.
@@ -1821,6 +1832,35 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           const supports = Array.from(supportMeshMapRef.current.values());
           if (stl.length === 0) return null;
           return meshesToStlBlob([...stl, ...supports]);
+        },
+        exportFdmGcode(settings) {
+          // exportStl 과 동일한 mesh 집합 (STL + 서포트).
+          const stl = Array.from(meshMapRef.current.values());
+          const supports = Array.from(supportMeshMapRef.current.values());
+          if (stl.length === 0) return null;
+          const meshes = [...stl, ...supports];
+
+          // getSceneTopY 가 top(maximumWorld.y) 을 구하는 방식과 대칭으로
+          // bottom(minimumWorld.y) 도 함께 구해 실제 슬라이스 범위를 정한다.
+          let yMin = Infinity;
+          let yMax = -Infinity;
+          for (const mesh of meshes) {
+            mesh.computeWorldMatrix(true);
+            const bb = mesh.getBoundingInfo().boundingBox;
+            if (bb.minimumWorld.y < yMin) yMin = bb.minimumWorld.y;
+            if (bb.maximumWorld.y > yMax) yMax = bb.maximumWorld.y;
+          }
+          if (yMin === Infinity || yMax <= yMin) return null;
+
+          const merged: FdmSettings = {
+            ...DEFAULT_FDM_SETTINGS,
+            // buildWidth/buildDepth 는 getSliceMask 와 동일한 출처(plateWRef/plateDRef).
+            buildWidth: plateWRef.current,
+            buildDepth: plateDRef.current,
+            ...settings,
+          };
+
+          return generateFdmGcode(meshes, merged, { yMin, yMax });
         },
         getSliceMask(sliceY, widthPx, heightPx) {
           const polys = [];
