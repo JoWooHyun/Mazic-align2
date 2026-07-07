@@ -8,9 +8,13 @@
  *   - LayerData(DLP 필드 포함) 대신 이 레이어의 polygons: Point[][] 만 받는다.
  *     generateLayer 가 실제로 layerData 에서 쓰는 것은 polygons 뿐이었다.
  *   - PolygonClipper 는 ./polygon-clipper.ts 로 v1 원본 그대로 이식.
- *
- * 알려진 한계(v1 승계, 후속 수정 예정 — 통합로드맵 참고):
- *   - M82 절대 E 모드에서 레이어마다 currentE 리셋 + G92 E0 미방출 (실기 사용 전 수정 필요)
+ *   - [Step 1-1b] 레이어 preamble 에서 G92 E0 방출 (v1 미방출 결함 수정).
+ *     v1 은 M82(절대 E) 헤더를 방출하면서도 레이어마다 currentE 를 0 에서 재시작하고
+ *     레이어 경계에 G92 E0 를 넣지 않아, 절대 E 모드 프린터가 각 레이어 첫 압출을
+ *     이전 레이어 누적량만큼의 대량 리트랙트로 오해석했다. 이제 각 레이어 시작에
+ *     G92 E0 를 방출해 프린터 절대 E 좌표를 레이어 로컬 currentE(=0)와 정합시킨다.
+ *     → 이 파일은 v1 대비 산출 G-code 가 의도적으로 달라지는 첫 지점이다
+ *       (레이어마다 "G92 E0 ; 압출 좌표 리셋" 라인 1 줄 추가).
  */
 import { Point, PathSegment, GCodePath, FdmSettings } from './types';
 import { PolygonClipper } from './polygon-clipper';
@@ -44,6 +48,9 @@ export class GCodeGenerator {
 
     public generateFooter(): string {
         let f = '\n; === END ===\n';
+        // 절대 E 모드(M82) 정합: 리셋 없이는 아래 E-5 가 "마지막 레이어 누적량 - 5" 로
+        // 해석되어 종료 리트랙트가 5mm 가 아니게 된다. 레이어 preamble 과 같은 취지의 리셋.
+        f += 'G92 E0 ; 압출 좌표 리셋 (종료 리트랙트 기준점)\n';
         f += 'G1 E-5 F1800 ; retract\n';
         f += 'G91 ; relative\n';
         f += 'G0 Z10 ; raise Z\n';
@@ -58,6 +65,12 @@ export class GCodeGenerator {
 
     public generateLayerPreamble(layerIndex: number): string {
         let pre = '';
+        // 절대 E 모드(M82) 정합: generateLayer 는 레이어마다 currentE 를 0 에서 다시 시작하므로,
+        // 각 레이어 시작에서 프린터의 절대 E 좌표도 0 으로 리셋해야 한다.
+        // 미방출 시 다음 레이어의 첫 G1 E 값이 이전 누적량 대비 대량 리트랙트로 오해석된다.
+        // (레이어는 항상 언리트랙트 상태로 끝나므로 — 마지막 경로 명령이 extrude —
+        //  이 리셋이 보류 중인 리트랙트 오프셋을 지우는 경우는 없다.)
+        pre += 'G92 E0 ; 압출 좌표 리셋\n';
         if (layerIndex === this.settings.fanDisableLayerCount) {
             const pwm = Math.round((this.settings.fanSpeed / 100) * 255);
             pre += `M106 S${pwm} ; fan on ${this.settings.fanSpeed}%\n`;
