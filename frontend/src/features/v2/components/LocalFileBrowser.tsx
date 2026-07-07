@@ -30,6 +30,10 @@ interface Props {
   onClose: () => void;
 }
 
+// 백엔드 서버가 꺼져 있을 때 사용자에게 대체 경로를 안내하는 메시지.
+const BACKEND_OFF_MESSAGE =
+  "백엔드 서버가 꺼져 있습니다. '내 PC에서 열기'를 사용하세요.";
+
 const LocalFileBrowser: React.FC<Props> = ({ onSelect, onClose }) => {
   const [currentPath, setCurrentPath] = useState("/");
   const [parentPath, setParentPath] = useState<string | null>(null);
@@ -44,11 +48,21 @@ const LocalFileBrowser: React.FC<Props> = ({ onSelect, onClose }) => {
     setLoading(true);
     setError(null);
     setSelectedPath(null);
+    const url =
+      p === "/" ? "/api/fs" : `/api/fs?path=${encodeURIComponent(p)}`;
+    let data: FsResponse;
     try {
-      const url =
-        p === "/" ? "/api/fs" : `/api/fs?path=${encodeURIComponent(p)}`;
       const res = await fetch(url);
-      const data = (await res.json()) as FsResponse;
+      data = (await res.json()) as FsResponse;
+    } catch {
+      // fetch 실패 / JSON 파싱 실패 = 백엔드 미기동. raw 에러 대신
+      // 대체 경로("내 PC에서 열기") 안내. (백엔드가 살아있을 때의
+      // 400 / success:false 는 아래 정상 처리로 넘어간다.)
+      setError(BACKEND_OFF_MESSAGE);
+      setLoading(false);
+      return;
+    }
+    try {
       if (!data.success) {
         throw new Error("디렉토리를 읽을 수 없습니다.");
       }
@@ -82,10 +96,18 @@ const LocalFileBrowser: React.FC<Props> = ({ onSelect, onClose }) => {
     if (!selectedPath || opening) return;
     setOpening(true);
     setError(null);
+    let res: Response;
     try {
-      const res = await fetch(
+      res = await fetch(
         `/api/fs/read?path=${encodeURIComponent(selectedPath)}`,
       );
+    } catch {
+      // fetch 자체 실패 = 백엔드 미기동.
+      setError(BACKEND_OFF_MESSAGE);
+      setOpening(false);
+      return;
+    }
+    try {
       if (!res.ok) {
         const body = await res
           .json()
