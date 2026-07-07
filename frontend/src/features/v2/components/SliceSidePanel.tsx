@@ -68,6 +68,22 @@ const SliceSidePanel: React.FC<Props> = ({
 }) => {
   const safeLayerIdx = Math.min(layerIdx, Math.max(0, layerCount - 1));
 
+  // G-code 내보내기: DEFAULT_FDM_SETTINGS 로 슬라이스한 전체 문자열을
+  // .gcode 텍스트 파일로 즉시 다운로드. 설정 UI 는 이번 범위 아님.
+  const handleExportGcode = () => {
+    const handle = sceneHandleRef.current;
+    if (!handle) return;
+    const gcode = handle.exportFdmGcode();
+    if (!gcode) return;
+    const blob = new Blob([gcode], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "print.gcode";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // 출력 시간·레진 추정. modelCount / layerCount / sceneTopY 가 바뀔
   // 때만 다시 계산. mesh transform 이 바뀌면 sceneTopY 가 함께 갱신
   // 되니 무관해 보여도 dep 에 들어가야 정확.
@@ -213,6 +229,13 @@ const SliceSidePanel: React.FC<Props> = ({
                 className="px-3 py-2 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 마스크 ZIP
+              </button>
+              <button
+                onClick={handleExportGcode}
+                disabled={modelCount === 0}
+                className="px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                G-code 내보내기
               </button>
               <button
                 onClick={onExportCtb}
