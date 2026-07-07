@@ -3,6 +3,25 @@ import { layerExposureSec } from "./exposure";
 import type { SliceMask } from "./slice-rasterize";
 
 /**
+ * CTB 조립에 필요한 파라미터 (Babylon 의존 없는 순수부).
+ * makeCtbV4 는 sceneHandle 에서 마스크를 얻은 뒤 이 옵션으로 assembleCtb 를 호출.
+ * 워커는 자체적으로 마스크를 만들어 encodeRle1bpp → assembleCtb 로 동일 산출.
+ */
+export interface CtbAssembleOptions {
+  layerHeightMm: number;
+  resolutionX: number;
+  resolutionY: number;
+  bedSizeXMm: number;
+  bedSizeYMm: number;
+  bedSizeZMm: number;
+  exposureSec: number;
+  bottomExposureSec: number;
+  bottomLayers: number;
+  transitionLayers: number;
+  lightOffSec: number;
+}
+
+/**
  * ChiTuBox `.ctb` v4 인코더 — minimal viable 구현.
  *
  * spec 출처: UVTools wiki (https://github.com/sn4k3/UVtools/wiki/File-Formats).
@@ -70,6 +89,36 @@ export async function makeCtbV4(
     opts.onProgress?.(i + 1, layerCount);
     if (i % 8 === 7) await new Promise<void>((r) => setTimeout(r, 0));
   }
+
+  return assembleCtb(layerData, layerCount, {
+    layerHeightMm: opts.layerHeightMm,
+    resolutionX: opts.resolutionX,
+    resolutionY: opts.resolutionY,
+    bedSizeXMm: opts.bedSizeXMm,
+    bedSizeYMm: opts.bedSizeYMm,
+    bedSizeZMm: opts.bedSizeZMm,
+    exposureSec,
+    bottomExposureSec,
+    bottomLayers,
+    transitionLayers,
+    lightOffSec,
+  });
+}
+
+/**
+ * 이미 RLE 인코딩된 레이어 데이터 배열 + 파라미터로 최종 .ctb ArrayBuffer 를 조립.
+ *
+ * Babylon 에 의존하지 않는 순수 함수 — 메인스레드(makeCtbV4)와 워커가 공유한다.
+ * 산출 바이트는 분리 전과 동일 (헤더/preview/파라미터/layer table/layer data 순).
+ * 단, slicer info 의 TimestampMinutes 필드는 호출 시각(분)을 담으므로 호출마다 달라진다.
+ */
+export function assembleCtb(
+  layerData: Uint8Array[],
+  layerCount: number,
+  opts: CtbAssembleOptions,
+): Blob {
+  const { exposureSec, bottomExposureSec, bottomLayers, transitionLayers, lightOffSec } =
+    opts;
 
   // ---------- 2) 작은 / 큰 preview (단색 회색 placeholder) ----------
   const previewSmall = makeBlankPreview(400, 300);
@@ -247,7 +296,7 @@ export async function makeCtbV4(
  *
  * run > 127 은 같은 (color, 127) byte 를 여러 번 출력해 분할.
  */
-function encodeRle1bpp(mask: SliceMask): Uint8Array {
+export function encodeRle1bpp(mask: SliceMask): Uint8Array {
   const data = mask.data;
   const out: number[] = [];
   let i = 0;
