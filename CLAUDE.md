@@ -3,6 +3,15 @@
 Top-down 레진 프린터용 하이브리드 슬라이서 (최종 목표: 2노즐 레진 경로 도포 하이브리드 프린터 지원).
 현재 단계: DLP/레진 슬라이서 최소 완결 워크플로우 구축.
 
+## ⚠️ 메인라인 전환 진행 중 (2026-07-07 결정)
+
+- **새 메인라인은 `integrate/v2-mainline` 브랜치** (유승제 v2 기반: `features/v2/`, IndexedDB, undo, 프린터 프로파일, ctb).
+  현재 `main`은 구 v1 — 신규 기능 작업은 `docs/통합로드맵.md`의 이식 순서를 따를 것.
+- 데이터 계층: **IndexedDB** (Express/SQLite 백엔드는 동결 — 삭제 금지, 신규 의존 금지). 근거: `docs/아키텍처결정_20260707.md`
+- 서포트 분담: 유승제=구조물 생성/편집, 지현규=배치 판단(마진/아일랜드). 검출 결과 → 서포트 생성 입력으로 연결.
+- 팀 브랜치: `feat/slicer-step1-2`(조우현 슬라이서), `dev/ji-margin-island`(지현규), `integrate/v2-mainline`(유승제 v2)
+  — 전부 origin(popcaron/MazicAlign)에 반입 완료. 이 절은 통합 완료 후 삭제한다.
+
 ## 필수 참고 문서
 
 - `docs/WORKFLOW.md` — **팀 개발 흐름과 AI 역할 분담. 작업 시작 전 반드시 읽을 것.**

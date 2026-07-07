@@ -110,7 +110,7 @@
       5. 슬라이싱 + 예상 시간 표시 - OK
 
 
-  2026-06-29 (오늘) | Step 2 구현 완료 - UI/UX Phase 1 (핵심 조작성)
+  2026-06-29 | Step 2 구현 완료 - UI/UX Phase 1 (핵심 조작성)
   --------------------------------------------------------------------------
     수정/생성된 파일 (2개 수정 + 2개 신규):
 
@@ -148,16 +148,43 @@
       - useKeyboardShortcuts 훅 연결
 
 
+  2026-07-07 | 팀 통합 체제 전환 - 3-way 분석 및 아키텍처 결정
+  --------------------------------------------------------------------------
+    [완료] 팀 협업/AI 문서 세트 구축
+      - CLAUDE.md, docs/WORKFLOW.md, docs/templates/개발방향_템플릿.md
+      - .claude/agents (coder=Sonnet, reviewer), .claude/commands (/dev-cycle, /worklog)
+
+    [완료] 개발자 코드베이스 확보 및 검증
+      - 유승제: admin-zero-lab/MazicAlign-v2 (129커밋, features/v2) - 문서 대조 검증 통과
+      - 지현규: veridigital01/MazicAlign feat/margin-island (+6,033줄) - 문서 대조 검증 통과
+      - 세 코드베이스 공통 조상 b5c3339 확인, 3-way 겹침/중복 분석
+        → docs/코드베이스_통합분석_20260707.md
+
+    [완료] 아키텍처 결정 (docs/아키텍처결정_20260707.md)
+      - ADR-1: 유승제 v2 = 새 메인라인. 단 FDM G-code/Worker/전환보간/시간추정은
+        조우현 구현이 우세하여 이식 채택 (슬라이서 기능별 비교 분석 근거)
+      - ADR-2: 데이터 계층 IndexedDB, Express/SQLite 백엔드 동결
+      - ADR-3: 서포트 = 검출(지현규) → 생성(유승제) 파이프라인
+
+    [완료] git 반입 (origin = popcaron/MazicAlign)
+      - feat/slicer-step1-2: Step 1~2 코드(1,152줄) + 팀 문서 커밋
+      - integrate/v2-mainline: 유승제 v2 (새 메인라인 기준 브랜치)
+      - dev/ji-margin-island: 지현규 마진/아일랜드 작업
+      - docs/references/feedback_margin_algorithm_lock.md (마진 잠금 규약) 반입
+
+    [신규] docs/통합로드맵.md - Phase 0~3 이식 계획 (Step 단위, 수용 기준 포함)
+
+
 ================================================================================
 
 
-[2] 현재 상태 (2026-06-29 기준)
+[2] 현재 상태 (2026-07-07 기준)
 ================================================================================
 
   ── 커밋 상태 ──
-    - 마지막 커밋: 2026-03-17 (feat: 분석 보고서)
-    - 미커밋 변경: 12개 파일 수정 + 4개 신규 파일 (Step 1 + Step 2 전체)
-      총 833줄 추가, 95줄 삭제
+    - 미커밋 없음. 전 작업이 origin 브랜치에 보존됨:
+      feat/slicer-step1-2 / integrate/v2-mainline / dev/ji-margin-island
+    - 이후 개발 기준: integrate/v2-mainline + docs/통합로드맵.md
 
   ── 완료된 기능 ──
     [O] 3D STL 뷰어 (Babylon.js, ArcRotateCamera)
