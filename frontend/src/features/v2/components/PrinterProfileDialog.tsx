@@ -6,7 +6,13 @@ import {
   useAllProfiles,
   usePrinterProfileStore,
 } from "../hooks/usePrinterProfileStore";
-import type { PrinterProfileV2 } from "../types/printer";
+import {
+  DEFAULT_LIFT_DISTANCE_MM,
+  DEFAULT_LIFT_SPEED_MM_S,
+  DEFAULT_RETRACT_SPEED_MM_S,
+  DEFAULT_LIGHT_OFF_DELAY_SEC,
+  type PrinterProfileV2,
+} from "../types/printer";
 
 interface Props {
   open: boolean;
@@ -25,6 +31,10 @@ interface Draft {
   bottomExposureSec: number;
   bottomLayerCount: number;
   transitionLayerCount: number;
+  liftDistanceMm: number;
+  liftSpeedMmS: number;
+  retractSpeedMmS: number;
+  lightOffDelaySec: number;
 }
 
 const EMPTY_DRAFT: Draft = {
@@ -39,6 +49,10 @@ const EMPTY_DRAFT: Draft = {
   bottomExposureSec: 30,
   bottomLayerCount: 5,
   transitionLayerCount: 0,
+  liftDistanceMm: DEFAULT_LIFT_DISTANCE_MM,
+  liftSpeedMmS: DEFAULT_LIFT_SPEED_MM_S,
+  retractSpeedMmS: DEFAULT_RETRACT_SPEED_MM_S,
+  lightOffDelaySec: DEFAULT_LIGHT_OFF_DELAY_SEC,
 };
 
 const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
@@ -75,6 +89,10 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
       bottomExposureSec: p.bottomExposureSec ?? 30,
       bottomLayerCount: p.bottomLayerCount ?? 5,
       transitionLayerCount: p.transitionLayerCount ?? 0,
+      liftDistanceMm: p.liftDistanceMm ?? DEFAULT_LIFT_DISTANCE_MM,
+      liftSpeedMmS: p.liftSpeedMmS ?? DEFAULT_LIFT_SPEED_MM_S,
+      retractSpeedMmS: p.retractSpeedMmS ?? DEFAULT_RETRACT_SPEED_MM_S,
+      lightOffDelaySec: p.lightOffDelaySec ?? DEFAULT_LIGHT_OFF_DELAY_SEC,
     });
   }, [selectedId, isNew, all]);
 
@@ -106,6 +124,10 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
       bottomExposureSec: Math.max(0, d.bottomExposureSec),
       bottomLayerCount: Math.max(0, Math.round(d.bottomLayerCount)),
       transitionLayerCount: Math.max(0, Math.round(d.transitionLayerCount)),
+      liftDistanceMm: Math.max(0, d.liftDistanceMm),
+      liftSpeedMmS: Math.max(0, d.liftSpeedMmS),
+      retractSpeedMmS: Math.max(0, d.retractSpeedMmS),
+      lightOffDelaySec: Math.max(0, d.lightOffDelaySec),
     };
   }
 
@@ -306,6 +328,54 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
               <p className="text-xs text-gray-400 mt-1">
                 전환 레이어 구간에서 바닥→일반 노광이 선형으로 보간됩니다 (0 =
                 전환 없음).
+              </p>
+            </FormRow>
+
+            <FormRow label="리프트 거리 (mm)">
+              <NumberInput
+                value={draft.liftDistanceMm}
+                onChange={(v) =>
+                  setDraft((d) => ({ ...d, liftDistanceMm: v }))
+                }
+                disabled={readOnly}
+                step={0.1}
+              />
+            </FormRow>
+
+            <FormRow label="리프트/하강 속도 (mm/s)">
+              <div className="flex items-center gap-2">
+                <NumberInput
+                  value={draft.liftSpeedMmS}
+                  onChange={(v) =>
+                    setDraft((d) => ({ ...d, liftSpeedMmS: v }))
+                  }
+                  disabled={readOnly}
+                  step={0.1}
+                />
+                <span className="text-xs text-gray-500">리프트</span>
+                <NumberInput
+                  value={draft.retractSpeedMmS}
+                  onChange={(v) =>
+                    setDraft((d) => ({ ...d, retractSpeedMmS: v }))
+                  }
+                  disabled={readOnly}
+                  step={0.1}
+                />
+                <span className="text-xs text-gray-500">하강</span>
+              </div>
+            </FormRow>
+
+            <FormRow label="노광 후 대기 (초)">
+              <NumberInput
+                value={draft.lightOffDelaySec}
+                onChange={(v) =>
+                  setDraft((d) => ({ ...d, lightOffDelaySec: v }))
+                }
+                disabled={readOnly}
+                step={0.1}
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                리프트·딜레이는 예상 출력 시간 추정에 사용됩니다.
               </p>
             </FormRow>
 
