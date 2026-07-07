@@ -1,10 +1,45 @@
+import type { ViewMode } from './STLViewer';
+
 interface ViewerControlsProps {
   onZoomIn?: () => void;
   onZoomOut?: () => void;
   onResetView?: () => void;
-  onToggleWireframe?: () => void;
+  viewMode?: ViewMode;
+  onViewModeChange?: (mode: ViewMode) => void;
   className?: string;
 }
+
+const viewModeConfig: { mode: ViewMode; label: string; icon: JSX.Element }[] = [
+  {
+    mode: 'solid',
+    label: 'Solid',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+      </svg>
+    ),
+  },
+  {
+    mode: 'wireframe',
+    label: 'Wireframe',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 12h16M12 4v16M4 5l8 7m0 0l8-7M4 19l8-7m0 0l8 7" />
+      </svg>
+    ),
+  },
+  {
+    mode: 'xray',
+    label: 'X-Ray',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+      </svg>
+    ),
+  },
+];
 
 /**
  * 뷰어 컨트롤 컴포넌트
@@ -14,7 +49,8 @@ const ViewerControls: React.FC<ViewerControlsProps> = ({
   onZoomIn,
   onZoomOut,
   onResetView,
-  onToggleWireframe,
+  viewMode = 'solid',
+  onViewModeChange,
   className = '',
 }) => {
   const buttonClass =
@@ -94,28 +130,26 @@ const ViewerControls: React.FC<ViewerControlsProps> = ({
         </button>
       )}
 
-      {/* 와이어프레임 토글 */}
-      {onToggleWireframe && (
-        <button
-          onClick={onToggleWireframe}
-          className={buttonClass}
-          title="Toggle Wireframe"
-          aria-label="Toggle Wireframe"
-        >
-          <svg
-            className="w-5 h-5 text-gray-700"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"
-            />
-          </svg>
-        </button>
+      {/* 뷰 모드 전환 */}
+      {onViewModeChange && (
+        <>
+          <div className="border-t border-gray-200 my-1" />
+          {viewModeConfig.map((cfg) => (
+            <button
+              key={cfg.mode}
+              onClick={() => onViewModeChange(cfg.mode)}
+              className={`p-3 rounded-lg shadow-sm transition-colors border ${
+                viewMode === cfg.mode
+                  ? 'bg-primary-600 text-white border-primary-600'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`}
+              title={cfg.label}
+              aria-label={cfg.label}
+            >
+              {cfg.icon}
+            </button>
+          ))}
+        </>
       )}
     </div>
   );

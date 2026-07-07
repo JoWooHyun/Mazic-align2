@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import { Engine, Scene, ArcRotateCamera, Mesh, GizmoManager, UtilityLayerRenderer, IPointerEvent } from '@babylonjs/core';
 import {
   createEngine,
@@ -10,6 +10,8 @@ import {
   focusOnAllMeshes,
   createUtilityLayer,
   createGizmoManager,
+  createBuildPlate,
+  disposeBuildPlate,
 } from '@utils/babylon.utils';
 import {
   loadSTLFile,
@@ -19,6 +21,17 @@ import {
 } from '@utils/stl-loader.utils';
 import type { STLFile } from '@types/stl.types';
 
+export type GizmoMode = 'select' | 'move' | 'rotate' | 'scale';
+export type ViewMode = 'solid' | 'wireframe' | 'xray';
+
+export interface STLViewerHandle {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetView: () => void;
+  focusOnSelected: () => void;
+  setGizmoMode: (mode: GizmoMode) => void;
+}
+
 interface STLViewerProps {
   stlFiles: STLFile[];
   selectedFileIds?: string[];  // 선택된 파일 IDs
@@ -27,6 +40,8 @@ interface STLViewerProps {
   onGizmoTransformChange?: (stlId: string, mesh: Mesh) => void;  // Gizmo 드래그 완료 시
   onBackgroundClick?: () => void; // 배경 클릭 시
   unselectedOpacity?: number; // 선택되지 않은 객체의 투명도 (0~1)
+  viewMode?: ViewMode;
+  buildPlateConfig?: { width: number; depth: number; height: number };
   className?: string;
 }
 
@@ -34,7 +49,7 @@ interface STLViewerProps {
  * STL 뷰어 컴포넌트
  * Babylon.js를 사용하여 3D STL 모델 렌더링
  */
-const STLViewer: React.FC<STLViewerProps> = ({
+const STLViewer = forwardRef<STLViewerHandle, STLViewerProps>(({
   stlFiles,
   selectedFileIds = [],
   onMeshLoaded,
@@ -42,8 +57,10 @@ const STLViewer: React.FC<STLViewerProps> = ({
   onGizmoTransformChange,
   onBackgroundClick,
   unselectedOpacity = 1, // Default to opaque
+  viewMode = 'solid',
+  buildPlateConfig,
   className = '',
-}) => {
+}, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const sceneRef = useRef<Scene | null>(null);
@@ -51,9 +68,65 @@ const STLViewer: React.FC<STLViewerProps> = ({
   const meshMapRef = useRef<Map<string, Mesh>>(new Map());
   const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
   const gizmoManagerRef = useRef<GizmoManager | null>(null);
+  const buildPlateRef = useRef<Mesh[]>([]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Expose methods to parent via ref
+  useImperativeHandle(ref, () => ({
+    zoomIn: () => {
+      const camera = cameraRef.current;
+      if (!camera) return;
+      const newRadius = camera.radius * 0.8;
+      camera.radius = Math.max(newRadius, camera.lowerRadiusLimit || 5);
+    },
+    zoomOut: () => {
+      const camera = cameraRef.current;
+      if (!camera) return;
+      const newRadius = camera.radius * 1.25;
+      camera.radius = Math.min(newRadius, camera.upperRadiusLimit || 200);
+    },
+    resetView: () => {
+      const camera = cameraRef.current;
+      const scene = sceneRef.current;
+      if (!camera || !scene) return;
+      camera.alpha = Math.PI / 2;
+      camera.beta = Math.PI / 3;
+      focusOnAllMeshes(camera, scene);
+    },
+    focusOnSelected: () => {
+      const camera = cameraRef.current;
+      if (!camera) return;
+      const selectedMeshes = Array.from(selectedFileIds)
+        .map(id => meshMapRef.current.get(id))
+        .filter((m): m is Mesh => m !== undefined);
+      if (selectedMeshes.length === 0) return;
+      // Focus on first selected mesh
+      const mesh = selectedMeshes[0];
+      mesh.computeWorldMatrix(true);
+      const bi = mesh.getBoundingInfo();
+      const center = bi.boundingBox.centerWorld;
+      const size = bi.boundingBox.extendSizeWorld.length() * 2;
+      camera.target = center.clone();
+      camera.radius = Math.max(size * 2, 20);
+    },
+    setGizmoMode: (mode: GizmoMode) => {
+      const gm = gizmoManagerRef.current;
+      if (!gm) return;
+      gm.positionGizmoEnabled = mode === 'move';
+      gm.rotationGizmoEnabled = mode === 'rotate';
+      gm.scaleGizmoEnabled = mode === 'scale';
+      gm.boundingBoxGizmoEnabled = mode !== 'select';
+
+      // Configure bounding box gizmo for visual-only display
+      if (mode !== 'select' && gm.gizmos.boundingBoxGizmo) {
+        gm.gizmos.boundingBoxGizmo.setEnabledScaling(false);
+        gm.gizmos.boundingBoxGizmo.setEnabledRotationAxis('');
+        gm.gizmos.boundingBoxGizmo.fixedDragMeshScreenSize = true;
+      }
+    },
+  }), [selectedFileIds]);
 
   /**
    * Babylon.js 초기화
@@ -69,6 +142,11 @@ const STLViewer: React.FC<STLViewerProps> = ({
 
       // 조명 설정
       createLights(scene);
+
+      // 빌드 플레이트 생성
+      if (buildPlateConfig) {
+        buildPlateRef.current = createBuildPlate(scene, buildPlateConfig.width, buildPlateConfig.depth, buildPlateConfig.height);
+      }
 
       // Utility Layer 및 Gizmo Manager 생성
       const utilityLayer = createUtilityLayer(scene);
@@ -160,6 +238,7 @@ const STLViewer: React.FC<STLViewerProps> = ({
 
     // 클린업
     return () => {
+      disposeBuildPlate(buildPlateRef.current);
       if (gizmoManagerRef.current) {
         gizmoManagerRef.current.dispose();
       }
@@ -319,6 +398,47 @@ const STLViewer: React.FC<STLViewerProps> = ({
 
   }, [selectedFileIds, unselectedOpacity]);
 
+  /**
+   * 빌드 플레이트 동적 업데이트
+   */
+  useEffect(() => {
+    if (!sceneRef.current || !buildPlateConfig) return;
+    disposeBuildPlate(buildPlateRef.current);
+    buildPlateRef.current = createBuildPlate(
+      sceneRef.current,
+      buildPlateConfig.width,
+      buildPlateConfig.depth,
+      buildPlateConfig.height
+    );
+  }, [buildPlateConfig?.width, buildPlateConfig?.depth, buildPlateConfig?.height]);
+
+  /**
+   * 뷰 모드 변경 처리 (Solid / Wireframe / X-ray)
+   */
+  useEffect(() => {
+    meshMapRef.current.forEach((mesh) => {
+      const mat = mesh.material;
+      if (!mat) return;
+      switch (viewMode) {
+        case 'wireframe':
+          mat.wireframe = true;
+          mat.alpha = 1;
+          (mat as any).backFaceCulling = true;
+          break;
+        case 'xray':
+          mat.wireframe = false;
+          mat.alpha = 0.3;
+          (mat as any).backFaceCulling = false;
+          break;
+        default: // solid
+          mat.wireframe = false;
+          mat.alpha = 1;
+          (mat as any).backFaceCulling = true;
+          break;
+      }
+    });
+  }, [viewMode, stlFiles]);
+
   return (
     <div className={`relative w-full h-full ${className}`}>
       <canvas
@@ -347,6 +467,8 @@ const STLViewer: React.FC<STLViewerProps> = ({
       )}
     </div>
   );
-};
+});
+
+STLViewer.displayName = 'STLViewer';
 
 export default STLViewer;

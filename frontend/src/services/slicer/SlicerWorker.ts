@@ -1,4 +1,4 @@
-import { SlicerWorkerMessage, SlicerWorkerResponse, LayerData } from './types';
+import { SlicerWorkerMessage, SlicerWorkerResponse, SliceMetadata } from './types';
 import { SliceEngine } from './SliceEngine';
 import { GCodeGenerator } from './GCodeGenerator';
 import { ImageGenerator } from './ImageGenerator';
@@ -29,9 +29,10 @@ ctx.addEventListener('message', async (event: MessageEvent<SlicerWorkerMessage>)
 
                 // 2. Generate Output (G-code & Images)
                 const gcodeGen = new GCodeGenerator(settings);
-                // Assuming 1920x1080 projector, 50 micron pixel size -> scale = 1/0.05 = 20 pixels/mm
-                // TODO: Make projector resolution/scale configurable
-                const imageGen = new ImageGenerator(1920, 1080, 20);
+
+                // Dynamic resolution from settings
+                const pixelPerMm = 1000 / settings.pixelSize;
+                const imageGen = new ImageGenerator(settings.resolutionX, settings.resolutionY, pixelPerMm);
 
                 for (let i = 0; i < layers.length; i++) {
                     const layer = layers[i];
@@ -43,6 +44,17 @@ ctx.addEventListener('message', async (event: MessageEvent<SlicerWorkerMessage>)
 
                     // Generate Image
                     layer.imageData = await imageGen.generateLayer(layer.polygons);
+
+                    // Calculate exposure time for this layer
+                    if (i < settings.bottomLayerCount) {
+                        layer.exposureTime = settings.bottomExposureTime;
+                    } else if (i < settings.bottomLayerCount + settings.transitionLayerCount) {
+                        const progress = (i - settings.bottomLayerCount) / settings.transitionLayerCount;
+                        layer.exposureTime = settings.bottomExposureTime +
+                            (settings.exposureTime - settings.bottomExposureTime) * progress;
+                    } else {
+                        layer.exposureTime = settings.exposureTime;
+                    }
 
                     // Report Progress
                     if (i % 10 === 0) {
@@ -59,7 +71,38 @@ ctx.addEventListener('message', async (event: MessageEvent<SlicerWorkerMessage>)
                     }
                 }
 
-                postMessage({ type: 'COMPLETE', payload: layers });
+                // 3. Assemble full G-code (header + layers + footer)
+                let fullGcode = gcodeGen.generateHeader();
+                for (const layer of layers) {
+                    fullGcode += layer.gcode;
+                }
+                fullGcode += gcodeGen.generateFooter();
+
+                // 4. Calculate estimated print time
+                let estimatedTime = 0;
+                for (const layer of layers) {
+                    estimatedTime += layer.exposureTime;
+                    estimatedTime += settings.lightOffDelay;
+                    estimatedTime += settings.liftDistance / settings.liftSpeed;
+                    estimatedTime += settings.liftDistance / settings.dlpRetractSpeed;
+                }
+
+                // 5. Build metadata
+                const metadata: SliceMetadata = {
+                    totalLayers: layers.length,
+                    layerHeight: settings.layerHeight,
+                    buildWidth: settings.buildWidth,
+                    buildDepth: settings.buildDepth,
+                    buildHeight: settings.buildHeight,
+                    resolutionX: settings.resolutionX,
+                    resolutionY: settings.resolutionY,
+                    exposureTime: settings.exposureTime,
+                    bottomExposureTime: settings.bottomExposureTime,
+                    bottomLayerCount: settings.bottomLayerCount,
+                    estimatedTime,
+                };
+
+                postMessage({ type: 'COMPLETE', payload: { layers, fullGcode, metadata } });
 
             } catch (error) {
                 console.error('Slicer error:', error);
@@ -71,7 +114,6 @@ ctx.addEventListener('message', async (event: MessageEvent<SlicerWorkerMessage>)
             break;
 
         case 'CANCEL':
-            // Handle cancellation (not fully implemented in sync loop)
             break;
     }
 });

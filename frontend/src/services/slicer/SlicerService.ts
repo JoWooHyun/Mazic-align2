@@ -1,4 +1,4 @@
-import { SliceSettings, LayerData, SlicerWorkerMessage, SlicerWorkerResponse, SlicerProgress } from './types';
+import { SliceSettings, SlicerWorkerMessage, SlicerWorkerResponse, SlicerProgress, SlicerResult } from './types';
 import SlicerWorker from './SlicerWorker?worker'; // Vite worker import
 
 export class SlicerService {
@@ -11,7 +11,7 @@ export class SlicerService {
         meshData: Float32Array,
         settings: SliceSettings,
         onProgress?: (progress: SlicerProgress) => void
-    ): Promise<LayerData[]> {
+    ): Promise<SlicerResult> {
         return new Promise((resolve, reject) => {
             this.terminate(); // Ensure clean state
 

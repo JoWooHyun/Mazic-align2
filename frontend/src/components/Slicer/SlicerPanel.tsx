@@ -19,7 +19,7 @@ const SlicerPanel: React.FC<SlicerPanelProps> = ({
     const [activeTab, setActiveTab] = useState<'common' | 'fdm' | 'dlp'>('common');
     const [settings, setSettings] = useState<SliceSettings>({
         // Common
-        layerHeight: 0.1,
+        layerHeight: 0.05,
         buildWidth: 192,
         buildDepth: 120,
         buildHeight: 200,
@@ -38,13 +38,39 @@ const SlicerPanel: React.FC<SlicerPanelProps> = ({
         printOrder: 'walls-first',
         enableGapFilling: true,
 
-        // DLP
-        resolutionX: 3840, // 4K
+        // FDM - Temperature
+        nozzleTemp: 200,
+        bedTemp: 60,
+
+        // FDM - Retraction
+        enableRetraction: true,
+        retractLength: 5.0,
+        retractSpeed: 40,
+        retractZHop: 0.2,
+        retractMinTravelDistance: 1.0,
+
+        // FDM - Fan
+        fanSpeed: 100,
+        fanDisableLayerCount: 2,
+
+        // DLP - Display
+        resolutionX: 3840,
         resolutionY: 2400,
-        pixelSize: 50,     // microns
-        lightPower: 80,    // %
+        pixelSize: 50,
+
+        // DLP - Exposure
+        lightPower: 80,
         exposureTime: 2.5,
+        bottomExposureTime: 30,
+        bottomLayerCount: 6,
+        transitionLayerCount: 6,
+        lightOffDelay: 1.0,
+
+        // DLP - Z Movement
+        liftDistance: 6.0,
+        liftSpeed: 3.0,
         zLiftSpeed: 3.0,
+        dlpRetractSpeed: 3.0,
     });
 
     // Load settings from localStorage on mount
@@ -73,7 +99,8 @@ const SlicerPanel: React.FC<SlicerPanelProps> = ({
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value, type } = e.target;
         const isCheckbox = type === 'checkbox';
-        const isNumber = type === 'number' || (name !== 'wallPrintOrder' && name !== 'infillPattern' && name !== 'printOrder' && !isCheckbox);
+        const stringFields = ['wallPrintOrder', 'infillPattern', 'printOrder'];
+        const isNumber = type === 'number' || (!stringFields.includes(name) && !isCheckbox);
 
         setSettings((prev) => {
             const newSettings = {
@@ -321,17 +348,74 @@ const SlicerPanel: React.FC<SlicerPanelProps> = ({
                         <SettingRow label="Infill Overlap (%)" name="infillOverlapPercentage" value={settings.infillOverlapPercentage || 15} />
                         <SettingRow label="Extruder Speed (mm/s)" name="fdmExtrusionRate" value={settings.fdmExtrusionRate} />
                         <SettingRow label="XY Speed (mm/s)" name="fdmSpeed" value={settings.fdmSpeed} />
+
+                        {/* Temperature */}
+                        <div className="border-t border-gray-600 mt-3 pt-3">
+                            <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">Temperature</span>
+                        </div>
+                        <SettingRow label="Nozzle Temp (°C)" name="nozzleTemp" value={settings.nozzleTemp} min={150} max={300} />
+                        <SettingRow label="Bed Temp (°C)" name="bedTemp" value={settings.bedTemp} min={0} max={120} />
+
+                        {/* Retraction */}
+                        <div className="border-t border-gray-600 mt-3 pt-3">
+                            <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">Retraction</span>
+                        </div>
+                        <div className="flex justify-between items-center py-1">
+                            <label className="text-sm text-gray-400">Enable Retraction</label>
+                            <input
+                                type="checkbox"
+                                name="enableRetraction"
+                                checked={settings.enableRetraction}
+                                onChange={handleChange}
+                                className="h-4 w-4 text-green-500 focus:ring-green-500 border-gray-300 rounded"
+                            />
+                        </div>
+                        {settings.enableRetraction && (
+                            <>
+                                <SettingRow label="Retract Length (mm)" name="retractLength" value={settings.retractLength} step={0.5} min={0} max={15} />
+                                <SettingRow label="Retract Speed (mm/s)" name="retractSpeed" value={settings.retractSpeed} min={10} max={100} />
+                                <SettingRow label="Z Hop (mm)" name="retractZHop" value={settings.retractZHop} step={0.1} min={0} max={2} />
+                                <SettingRow label="Min Travel (mm)" name="retractMinTravelDistance" value={settings.retractMinTravelDistance} step={0.5} min={0} />
+                            </>
+                        )}
+
+                        {/* Fan Control */}
+                        <div className="border-t border-gray-600 mt-3 pt-3">
+                            <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">Fan Control</span>
+                        </div>
+                        <SettingRow label="Fan Speed (%)" name="fanSpeed" value={settings.fanSpeed} min={0} max={100} />
+                        <SettingRow label="Disable First N Layers" name="fanDisableLayerCount" value={settings.fanDisableLayerCount} min={0} max={10} />
                     </>
                 )}
 
                 {activeTab === 'dlp' && (
                     <>
+                        {/* Display */}
+                        <div className="mb-2">
+                            <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">Display</span>
+                        </div>
                         <SettingRow label="Resolution X (px)" name="resolutionX" value={settings.resolutionX} />
                         <SettingRow label="Resolution Y (px)" name="resolutionY" value={settings.resolutionY} />
-                        <SettingRow label="Pixel Size (µm)" name="pixelSize" value={settings.pixelSize} readOnly title="Calculated" />
+                        <SettingRow label="Pixel Size (µm)" name="pixelSize" value={settings.pixelSize} readOnly title="Auto-calculated from Build Width / Resolution X" />
+
+                        {/* Exposure */}
+                        <div className="border-t border-gray-600 mt-3 pt-3">
+                            <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">Exposure</span>
+                        </div>
+                        <SettingRow label="Normal Exposure (s)" name="exposureTime" value={settings.exposureTime} step={0.1} min={0.1} />
+                        <SettingRow label="Bottom Exposure (s)" name="bottomExposureTime" value={settings.bottomExposureTime} step={1} min={1} />
+                        <SettingRow label="Bottom Layer Count" name="bottomLayerCount" value={settings.bottomLayerCount} min={1} max={20} />
+                        <SettingRow label="Transition Layers" name="transitionLayerCount" value={settings.transitionLayerCount} min={0} max={20} />
                         <SettingRow label="Light Power (%)" name="lightPower" value={settings.lightPower} min={0} max={100} />
-                        <SettingRow label="Exposure Time (s)" name="exposureTime" value={settings.exposureTime} step={0.1} />
-                        <SettingRow label="Z-axis Move Speed (mm/s)" name="zLiftSpeed" value={settings.zLiftSpeed} step={0.1} />
+                        <SettingRow label="Light-Off Delay (s)" name="lightOffDelay" value={settings.lightOffDelay} step={0.1} min={0} />
+
+                        {/* Z Movement */}
+                        <div className="border-t border-gray-600 mt-3 pt-3">
+                            <span className="text-xs font-bold text-gray-300 uppercase tracking-wide">Z Movement</span>
+                        </div>
+                        <SettingRow label="Lift Distance (mm)" name="liftDistance" value={settings.liftDistance} step={0.5} min={1} max={20} />
+                        <SettingRow label="Lift Speed (mm/s)" name="liftSpeed" value={settings.liftSpeed} step={0.5} min={0.5} max={10} />
+                        <SettingRow label="Retract Speed (mm/s)" name="dlpRetractSpeed" value={settings.dlpRetractSpeed} step={0.5} min={0.5} max={10} />
                     </>
                 )}
             </div>

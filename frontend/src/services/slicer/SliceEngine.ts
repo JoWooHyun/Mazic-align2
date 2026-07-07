@@ -53,7 +53,8 @@ export class SliceEngine {
                 z: z, // Store nominal Z
                 polygons: polygons,
                 gcode: '', // To be filled by GCodeGenerator
-                imageData: '' // To be filled by ImageGenerator
+                imageData: '', // To be filled by ImageGenerator
+                exposureTime: 0, // To be filled by SlicerWorker
             });
         }
 

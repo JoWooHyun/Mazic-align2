@@ -10,6 +10,8 @@ import {
   Mesh,
   UtilityLayerRenderer,
   GizmoManager,
+  MeshBuilder,
+  StandardMaterial,
 } from '@babylonjs/core';
 import '@babylonjs/loaders/STL';
 
@@ -159,7 +161,7 @@ export const focusOnMesh = (camera: ArcRotateCamera, mesh: Mesh): void => {
 
 /**
  * 씬의 모든 메쉬에 카메라 포커스
- * 카메라 target은 원점 (0,0,0)에 고정하고, radius만 조정
+ * 카메라 target을 모든 메쉬의 바운딩박스 중심으로 설정
  */
 export const focusOnAllMeshes = (camera: ArcRotateCamera, scene: Scene): void => {
   const meshes = scene.meshes.filter((m) => m.isVisible && m.getTotalVertices() > 0);
@@ -175,6 +177,7 @@ export const focusOnAllMeshes = (camera: ArcRotateCamera, scene: Scene): void =>
     maxZ = -Infinity;
 
   meshes.forEach((mesh) => {
+    mesh.computeWorldMatrix(true);
     const boundingInfo = mesh.getBoundingInfo();
     const min = boundingInfo.boundingBox.minimumWorld;
     const max = boundingInfo.boundingBox.maximumWorld;
@@ -188,12 +191,13 @@ export const focusOnAllMeshes = (camera: ArcRotateCamera, scene: Scene): void =>
   });
 
   const size = new Vector3(maxX - minX, maxY - minY, maxZ - minZ);
+  const center = new Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
   const radius = size.length();
 
-  // 카메라 target은 항상 원점에 고정
-  camera.target = Vector3.Zero();
-  // 거리만 조정하여 모든 메쉬가 보이도록 설정
-  camera.radius = Math.max(radius * 1.5, 50); // 최소 거리 50 유지
+  // 카메라 target을 실제 메쉬 중심으로 설정
+  camera.target = center;
+  // 거리 조정하여 모든 메쉬가 보이도록 설정
+  camera.radius = Math.max(radius * 1.5, 50);
 };
 
 /**
@@ -207,6 +211,92 @@ export const createUtilityLayer = (scene: Scene): UtilityLayerRenderer => {
 /**
  * Gizmo Manager 생성 및 설정
  */
+/**
+ * 빌드 플레이트 생성 (바닥판 + 그리드 + 볼륨 경계)
+ */
+export const createBuildPlate = (
+  scene: Scene,
+  buildWidth: number,
+  buildDepth: number,
+  buildHeight: number
+): Mesh[] => {
+  if (buildWidth <= 0 || buildDepth <= 0) return [];
+
+  const meshes: Mesh[] = [];
+  const hw = buildWidth / 2;
+  const hd = buildDepth / 2;
+
+  // 1. 바닥판 (반투명)
+  const ground = MeshBuilder.CreateGround('buildPlate_ground', {
+    width: buildWidth,
+    height: buildDepth,
+  }, scene);
+  ground.position.y = 0;
+  ground.isPickable = false;
+  const groundMat = new StandardMaterial('buildPlate_groundMat', scene);
+  groundMat.diffuseColor = new Color3(0.3, 0.3, 0.3);
+  groundMat.alpha = 0.3;
+  groundMat.backFaceCulling = false;
+  ground.material = groundMat;
+  meshes.push(ground);
+
+  // 2. 그리드 (10mm 간격)
+  const gridSpacing = 10;
+  const lineArrays: Vector3[][] = [];
+
+  for (let z = -hd; z <= hd; z += gridSpacing) {
+    lineArrays.push([new Vector3(-hw, 0.01, z), new Vector3(hw, 0.01, z)]);
+  }
+  for (let x = -hw; x <= hw; x += gridSpacing) {
+    lineArrays.push([new Vector3(x, 0.01, -hd), new Vector3(x, 0.01, hd)]);
+  }
+
+  const gridMesh = MeshBuilder.CreateLineSystem('buildPlate_grid', {
+    lines: lineArrays,
+  }, scene);
+  gridMesh.color = new Color3(0.4, 0.4, 0.4);
+  gridMesh.alpha = 0.5;
+  gridMesh.isPickable = false;
+  meshes.push(gridMesh);
+
+  // 3. 볼륨 경계선 (와이어프레임 박스)
+  const bh = buildHeight;
+  const boxLines: Vector3[][] = [
+    // Bottom
+    [new Vector3(-hw, 0, -hd), new Vector3(hw, 0, -hd)],
+    [new Vector3(hw, 0, -hd), new Vector3(hw, 0, hd)],
+    [new Vector3(hw, 0, hd), new Vector3(-hw, 0, hd)],
+    [new Vector3(-hw, 0, hd), new Vector3(-hw, 0, -hd)],
+    // Top
+    [new Vector3(-hw, bh, -hd), new Vector3(hw, bh, -hd)],
+    [new Vector3(hw, bh, -hd), new Vector3(hw, bh, hd)],
+    [new Vector3(hw, bh, hd), new Vector3(-hw, bh, hd)],
+    [new Vector3(-hw, bh, hd), new Vector3(-hw, bh, -hd)],
+    // Vertical edges
+    [new Vector3(-hw, 0, -hd), new Vector3(-hw, bh, -hd)],
+    [new Vector3(hw, 0, -hd), new Vector3(hw, bh, -hd)],
+    [new Vector3(hw, 0, hd), new Vector3(hw, bh, hd)],
+    [new Vector3(-hw, 0, hd), new Vector3(-hw, bh, hd)],
+  ];
+
+  const boundary = MeshBuilder.CreateLineSystem('buildPlate_boundary', {
+    lines: boxLines,
+  }, scene);
+  boundary.color = new Color3(0.2, 0.6, 1.0);
+  boundary.alpha = 0.6;
+  boundary.isPickable = false;
+  meshes.push(boundary);
+
+  return meshes;
+};
+
+/**
+ * 빌드 플레이트 제거
+ */
+export const disposeBuildPlate = (meshes: Mesh[]): void => {
+  meshes.forEach(m => m.dispose());
+};
+
 export const createGizmoManager = (scene: Scene, utilityLayer: UtilityLayerRenderer): GizmoManager => {
   const gizmoManager = new GizmoManager(scene, 1, utilityLayer);
 

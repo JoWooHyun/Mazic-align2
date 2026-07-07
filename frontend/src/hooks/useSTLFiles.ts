@@ -83,14 +83,38 @@ export const useSTLFiles = (projectId?: string) => {
   };
 
   /**
+   * 로컬 STL 파일 추가 (드래그앤드롭용)
+   */
+  const addLocalFile = (file: File): STLFile => {
+    const blobUrl = URL.createObjectURL(file);
+    const localFile: STLFile = {
+      stlId: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      projectId: projectId || '',
+      originalUrl: blobUrl,
+      fileName: file.name,
+      visibility: true,
+      currentTransform: {
+        translation: { x: 0, y: 0, z: 0 },
+        rotation: { x: 0, y: 0, z: 0, w: 1 },
+        scale: { x: 1, y: 1, z: 1 },
+      },
+    };
+    setSTLFiles(prev => [...prev, localFile]);
+    return localFile;
+  };
+
+  /**
    * STL 파일 삭제
    */
   const deleteFile = async (stlId: string): Promise<boolean> => {
     setLoading(true);
     setError(null);
     try {
-      // Local files don't need backend update
-      if (!stlId.startsWith('local-')) {
+      // Local files: revoke blob URL
+      if (stlId.startsWith('local-')) {
+        const file = stlFiles.find(f => f.stlId === stlId);
+        if (file) URL.revokeObjectURL(file.originalUrl);
+      } else {
         await deleteSTLFile(stlId);
       }
 
@@ -163,6 +187,7 @@ export const useSTLFiles = (projectId?: string) => {
     error,
     fetchSTLFiles,
     uploadFile,
+    addLocalFile,
     toggleVisibility,
     deleteFile,
     adjustSTL,

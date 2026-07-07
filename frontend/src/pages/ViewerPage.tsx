@@ -1,12 +1,16 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Mesh, VertexBuffer } from '@babylonjs/core';
 import { useAuth } from '@hooks/useAuth';
 import { useProject } from '@hooks/useProjects';
 import { useSTLFiles } from '@hooks/useSTLFiles';
+import { useKeyboardShortcuts } from '@hooks/useKeyboardShortcuts';
 import STLViewer from '@components/STLViewer';
+import type { STLViewerHandle, GizmoMode, ViewMode } from '@components/STLViewer';
+import StatusBar from '@components/StatusBar';
 import STLFileList from '@components/STLFileList';
 import ViewerControls from '@components/ViewerControls';
+import Toolbar from '@components/Toolbar';
 import TransformPanel from '@components/TransformPanel';
 import HistoryViewer from '@components/HistoryViewer';
 import SettingsModal from '@components/SettingsModal';
@@ -15,7 +19,8 @@ import SlicePreview from '@components/Slicer/SlicePreview';
 import LocalFileBrowser from '@components/LocalFileBrowser';
 import { slicerService } from '@services/slicer/SlicerService';
 import { importSTLFromPath } from '@services/stl.service';
-import { SliceSettings, LayerData } from '@services/slicer/types';
+import { SliceSettings, LayerData, SliceMetadata } from '@services/slicer/types';
+import JSZip from 'jszip';
 import { AdjustmentType } from '../types/stl.types';
 import { getTransformFromMesh } from '@utils/stl-loader.utils';
 
@@ -32,6 +37,7 @@ const ViewerPage: React.FC = () => {
     stlFiles,
     loading: filesLoading,
     fetchSTLFiles,
+    addLocalFile,
     toggleVisibility,
     deleteFile,
     adjustSTL,
@@ -41,7 +47,7 @@ const ViewerPage: React.FC = () => {
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [showFileBrowser, setShowFileBrowser] = useState(false);
-  const [rightPanelTab, setRightPanelTab] = useState<'transform' | 'history'>('transform');
+  const [rightPanelTab, setRightPanelTab] = useState<'transform' | 'history' | 'support'>('transform');
 
   // Settings state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -53,10 +59,32 @@ const ViewerPage: React.FC = () => {
   const [sliceProgress, setSliceProgress] = useState(0);
   const [sliceStatus, setSliceStatus] = useState('');
   const [slicedLayers, setSlicedLayers] = useState<LayerData[]>([]);
+  const [fullGcode, setFullGcode] = useState<string>('');
+  const [sliceMetadata, setSliceMetadata] = useState<SliceMetadata | null>(null);
   const [lastSliceSettings, setLastSliceSettings] = useState<SliceSettings | null>(null);
   const [slicerViewMode, setSlicerViewMode] = useState<'3d' | '2d'>('3d');
 
+  // Drag & Drop state
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // Build plate config (from localStorage)
+  const [buildPlateConfig] = useState(() => {
+    const saved = localStorage.getItem('mazicalign_slicer_settings');
+    if (saved) {
+      try {
+        const p = JSON.parse(saved);
+        return { width: p.buildWidth || 192, depth: p.buildDepth || 120, height: p.buildHeight || 200 };
+      } catch { /* fallback */ }
+    }
+    return { width: 192, depth: 120, height: 200 };
+  });
+
+  // Gizmo mode & View mode
+  const [gizmoMode, setGizmoMode] = useState<GizmoMode>('move');
+  const [viewMode, setViewMode] = useState<ViewMode>('solid');
+
   // Refs
+  const viewerRef = useRef<STLViewerHandle>(null);
   const pendingScaleUpdates = useRef<{ x?: number; y?: number; z?: number }>({});
   const scaleUpdateTimeout = useRef<NodeJS.Timeout | null>(null);
   const meshMapRef = useRef<Map<string, Mesh>>(new Map());
@@ -65,6 +93,20 @@ const ViewerPage: React.FC = () => {
   const selectedFiles = stlFiles.filter((f) => selectedFileIds.has(f.stlId));
   // 대표 파일 (Transform 패널 표시용 - 첫 번째 선택된 파일)
   const primarySelectedFile = selectedFiles.length > 0 ? selectedFiles[0] : null;
+
+  // 선택된 메쉬 정보 (StatusBar용)
+  const selectedMeshInfo = useMemo(() => {
+    if (selectedFiles.length === 0) return null;
+    const mesh = meshMapRef.current.get(selectedFiles[0].stlId);
+    if (!mesh) return null;
+    mesh.computeWorldMatrix(true);
+    const bi = mesh.getBoundingInfo();
+    const ext = bi.boundingBox.extendSizeWorld;
+    return {
+      triangles: Math.floor(mesh.getTotalIndices() / 3),
+      boundingSize: { x: ext.x * 2, y: ext.z * 2, z: ext.y * 2 }, // Babylon Y-up → slicer Z-up
+    };
+  }, [selectedFiles, stlFiles]);
 
   /**
    * Mesh Load Handler
@@ -399,20 +441,9 @@ const ViewerPage: React.FC = () => {
   /**
    * 뷰어 컨트롤 핸들러들
    */
-  const handleZoomIn = () => {
-    // TODO: 카메라 줌 인 구현
-    console.log('Zoom in');
-  };
-
-  const handleZoomOut = () => {
-    // TODO: 카메라 줌 아웃 구현
-    console.log('Zoom out');
-  };
-
-  const handleResetView = () => {
-    // TODO: 카메라 뷰 리셋 구현
-    console.log('Reset view');
-  };
+  const handleZoomIn = () => viewerRef.current?.zoomIn();
+  const handleZoomOut = () => viewerRef.current?.zoomOut();
+  const handleResetView = () => viewerRef.current?.resetView();
 
   /**
    * Slicer 핸들러
@@ -474,12 +505,14 @@ const ViewerPage: React.FC = () => {
     setSlicedLayers([]);
 
     try {
-      const layers = await slicerService.slice(mergedMeshData, settings, (progress) => {
+      const result = await slicerService.slice(mergedMeshData, settings, (progress) => {
         setSliceProgress(progress.progress);
         setSliceStatus(progress.message);
       });
 
-      setSlicedLayers(layers);
+      setSlicedLayers(result.layers);
+      setFullGcode(result.fullGcode);
+      setSliceMetadata(result.metadata);
       setLastSliceSettings(settings);
       setSliceStatus('Slicing complete!');
       setSlicerViewMode('2d');
@@ -490,6 +523,119 @@ const ViewerPage: React.FC = () => {
       setIsSlicing(false);
     }
   };
+
+  /**
+   * 드래그 앤 드롭 핸들러
+   */
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set false when leaving the main area (not child elements)
+    if (e.currentTarget === e.target) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = Array.from(e.dataTransfer.files).filter(
+      (f) => f.name.toLowerCase().endsWith('.stl')
+    );
+
+    if (files.length === 0) {
+      alert('Please drop .stl files only.');
+      return;
+    }
+
+    for (const file of files) {
+      // 중복 체크
+      const isDuplicate = stlFiles.some((f) => f.fileName === file.name);
+      if (isDuplicate) {
+        console.log(`[ViewerPage] File ${file.name} already exists, skipping`);
+        continue;
+      }
+      addLocalFile(file);
+    }
+  }, [stlFiles, addLocalFile]);
+
+  /**
+   * ZIP 내보내기 핸들러
+   */
+  const handleExportZip = useCallback(async () => {
+    if (slicedLayers.length === 0 || !sliceMetadata) return;
+
+    const zip = new JSZip();
+    const layersFolder = zip.folder('layers');
+
+    // metadata.json
+    zip.file('metadata.json', JSON.stringify(sliceMetadata, null, 2));
+
+    // print.gcode (FDM G-code)
+    if (fullGcode) {
+      zip.file('print.gcode', fullGcode);
+    }
+
+    // Layer images
+    for (const layer of slicedLayers) {
+      if (!layer.imageData) continue;
+      // Data URL → binary
+      const base64 = layer.imageData.split(',')[1];
+      if (base64 && layersFolder) {
+        const padded = String(layer.index + 1).padStart(4, '0');
+        layersFolder.file(`${padded}.png`, base64, { base64: true });
+      }
+    }
+
+    // Generate and download
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const modelName = selectedFiles.length > 0 ? selectedFiles[0].fileName.replace('.stl', '') : 'model';
+    a.href = url;
+    a.download = `${modelName}_sliced.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [slicedLayers, sliceMetadata, fullGcode, selectedFiles]);
+
+  /**
+   * Gizmo 모드 변경 핸들러
+   */
+  const handleGizmoModeChange = useCallback((mode: GizmoMode) => {
+    setGizmoMode(mode);
+    viewerRef.current?.setGizmoMode(mode);
+  }, []);
+
+  /**
+   * 키보드 단축키
+   */
+  const shortcutCallbacks = useMemo(() => ({
+    onModeChange: (mode: GizmoMode) => {
+      setGizmoMode(mode);
+      viewerRef.current?.setGizmoMode(mode);
+    },
+    onFocusSelected: () => viewerRef.current?.focusOnSelected(),
+    onDeleteSelected: () => {
+      if (selectedFileIds.size === 0) return;
+      const ids = Array.from(selectedFileIds);
+      for (const id of ids) {
+        deleteFile(id);
+      }
+      setSelectedFileIds(new Set());
+    },
+    onClearSelection: handleClearSelection,
+    onSelectAll: () => setSelectedFileIds(new Set(stlFiles.map(f => f.stlId))),
+  }), [selectedFileIds, deleteFile, stlFiles, handleClearSelection]);
+
+  useKeyboardShortcuts(shortcutCallbacks);
 
   if (projectLoading) {
     return (
@@ -598,8 +744,14 @@ const ViewerPage: React.FC = () => {
         </aside>
 
         {/* 3D Viewer */}
-        <main className="flex-1 relative bg-gray-900">
+        <main
+          className="flex-1 relative bg-gray-900"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
           <STLViewer
+            ref={viewerRef}
             stlFiles={stlFiles}
             selectedFileIds={Array.from(selectedFileIds)}
             onMeshSelected={(id) => handleFileSelect(id, false)} // Viewer click selects single
@@ -607,8 +759,15 @@ const ViewerPage: React.FC = () => {
             onGizmoTransformChange={handleGizmoTransformChange}
             onMeshLoaded={handleMeshLoaded} // Store mesh ref
             unselectedOpacity={1 - transparency / 100} // Convert 0-100% transparency to 1-0 opacity
+            viewMode={viewMode}
+            buildPlateConfig={buildPlateConfig}
             className="w-full h-full"
           />
+
+          {/* Left Toolbar - Tool Mode Selector */}
+          <div className="absolute top-4 left-4 z-10">
+            <Toolbar activeMode={gizmoMode} onModeChange={handleGizmoModeChange} />
+          </div>
 
           {/* Viewer Controls */}
           <div className="absolute top-4 right-4">
@@ -616,8 +775,19 @@ const ViewerPage: React.FC = () => {
               onZoomIn={handleZoomIn}
               onZoomOut={handleZoomOut}
               onResetView={handleResetView}
+              viewMode={viewMode}
+              onViewModeChange={setViewMode}
             />
           </div>
+
+          {/* Drag & Drop Overlay */}
+          {isDragOver && (
+            <div className="absolute inset-0 bg-primary-600 bg-opacity-30 border-4 border-dashed border-primary-400 flex items-center justify-center z-20 pointer-events-none">
+              <div className="bg-gray-900 bg-opacity-80 px-8 py-6 rounded-xl">
+                <p className="text-white text-xl font-semibold">Drop STL files here</p>
+              </div>
+            </div>
+          )}
         </main>
 
         {/* Right Sidebar - Transform & History */}
@@ -642,6 +812,15 @@ const ViewerPage: React.FC = () => {
             >
               History
             </button>
+            <button
+              onClick={() => setRightPanelTab('support')}
+              className={`flex-1 px-4 py-3 text-sm font-medium transition-colors ${rightPanelTab === 'support'
+                ? 'text-primary-600 border-b-2 border-primary-600'
+                : 'text-gray-600 hover:text-gray-900'
+                }`}
+            >
+              Support
+            </button>
           </div>
 
           {/* 탭 콘텐츠 */}
@@ -660,17 +839,63 @@ const ViewerPage: React.FC = () => {
                   </div>
                 )}
               </div>
-            ) : (
+            ) : rightPanelTab === 'history' ? (
               <HistoryViewer
                 stlId={primarySelectedFile?.stlId}
                 isMaster={user?.role === 'master'}
                 className="h-full"
               />
+            ) : (
+              /* Support Tab - Shell UI */
+              <div className="p-4 space-y-4">
+                <div className="text-center py-8">
+                  <svg className="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                  <p className="text-gray-400 text-sm font-medium mb-2">Support Generation</p>
+                  <p className="text-gray-500 text-xs">Coming Soon</p>
+                </div>
+
+                {/* Support settings placeholder (disabled) */}
+                <div className="opacity-40 pointer-events-none space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Contact Shape</label>
+                    <select className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded" disabled>
+                      <option>Sphere</option>
+                      <option>None</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Contact Diameter (mm)</label>
+                    <input type="number" className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded" value="0.6" disabled />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Support Density (%)</label>
+                    <input type="number" className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded" value="50" disabled />
+                  </div>
+                  <div className="flex space-x-2 pt-2">
+                    <button className="flex-1 px-3 py-2 bg-primary-600 text-white text-sm rounded" disabled>
+                      Auto Support
+                    </button>
+                    <button className="flex-1 px-3 py-2 bg-gray-200 text-gray-700 text-sm rounded" disabled>
+                      Manual
+                    </button>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
         </aside>
       </div>
 
+      {/* Status Bar */}
+      <StatusBar
+        totalModels={stlFiles.length}
+        selectedCount={selectedFiles.length}
+        selectedMeshInfo={selectedMeshInfo}
+        buildPlateSize={buildPlateConfig}
+        gizmoMode={gizmoMode}
+      />
 
       {/* Settings Modal */}
       <SettingsModal
@@ -685,15 +910,31 @@ const ViewerPage: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75">
           <div className="bg-gray-900 p-6 rounded-lg shadow-xl max-w-6xl w-full h-[90vh] flex flex-col">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-2xl font-bold text-white">Hybrid Slicer</h2>
-              <button
-                onClick={() => setIsSlicerOpen(false)}
-                className="text-gray-400 hover:text-white"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center space-x-4">
+                <h2 className="text-2xl font-bold text-white">Hybrid Slicer</h2>
+                {sliceMetadata && (
+                  <span className="text-sm text-gray-400">
+                    {sliceMetadata.totalLayers} layers | Est. {Math.floor(sliceMetadata.estimatedTime / 60)}m {Math.round(sliceMetadata.estimatedTime % 60)}s
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center space-x-3">
+                <button
+                  onClick={handleExportZip}
+                  disabled={slicedLayers.length === 0}
+                  className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Export ZIP
+                </button>
+                <button
+                  onClick={() => setIsSlicerOpen(false)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 flex space-x-4 overflow-hidden">
