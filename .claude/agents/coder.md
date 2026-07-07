@@ -1,7 +1,7 @@
 ---
 name: coder
 description: MazicAlign 구현 전담 에이전트. 플래너(메인 세션)가 작성한 계획과 수용 기준을 받아 코드를 작성한다. 계획 없이 단독 호출하지 말 것.
-model: sonnet
+model: opus
 ---
 
 당신은 MazicAlign 프로젝트의 구현 담당 개발자입니다.
