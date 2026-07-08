@@ -1,0 +1,299 @@
+================================================================================
+                MazicAlign 작업 일지 및 진행 현황
+================================================================================
+  작성일: 2026-06-29
+  프로젝트: MazicAlign - Top-down 레진 프린터용 하이브리드 슬라이서
+================================================================================
+
+
+[1] 날짜별 작업 내역
+================================================================================
+
+
+  2025-11-07 | 프로젝트 초기 설정 (v0)
+  --------------------------------------------------------------------------
+    - Initial commit
+    - Phase 1: 3D 뷰어 플랫폼 기초 구축 (Babylon.js, Express, SQLite)
+    - Phase 2: STL 조정 및 히스토리 트래킹 구현
+    - Vite 개발 서버 네트워크 접근 허용
+    - Firebase 초기화 이슈 수정
+    - PowerShell 런처 스크립트 추가
+    - .env 파일 실행 팝업 이슈 수정
+
+
+  2026-02-26 | 프로젝트 정리 (v1)
+  --------------------------------------------------------------------------
+    - Initial commit: MazicAlign v1 - 로컬 전용 3D STL 뷰어
+    - README 전면 개정 (프로젝트 목적 및 기능 기준)
+
+
+  2026-03-17 | 분석 및 비교
+  --------------------------------------------------------------------------
+    - MazicAlign 프로젝트 분석 보고서 작성
+    - PrusaSlicer 기능 비교 분석
+
+
+  2026-06-25 | Step 1 계획 수립 및 구현 시작
+  --------------------------------------------------------------------------
+    - CHITUBOX / PrusaSlicer SLA 참고하여 개발계획서 작성
+      (MazicAlign_개발계획서.txt)
+    - DLP 슬라이서 최소 기능 구현 착수
+
+
+  2026-06-25~26 | Step 1 구현 완료 - DLP 슬라이서 최소 기능
+  --------------------------------------------------------------------------
+    수정/생성된 파일 (12개 수정 + 2개 신규):
+
+    [완료] types.ts
+      - DLP 필드 추가: bottomExposureTime, bottomLayerCount,
+        transitionLayerCount, liftDistance, liftSpeed, dlpRetractSpeed,
+        lightOffDelay
+      - FDM 필드 추가: nozzleTemp, bedTemp, enableRetraction, retractLength,
+        retractSpeed, retractZHop, retractMinTravelDistance, fanSpeed,
+        fanDisableLayerCount
+      - 신규 타입: SlicerResult, SliceMetadata
+      - LayerData 확장: exposureTime 추가
+
+    [완료] GCodeGenerator.ts
+      - generateHeader() 메서드 추가 (G28, 온도, 팬)
+      - generateFooter() 메서드 추가 (M84, 온도 끄기)
+      - generateLayerPreamble() 메서드 추가 (레이어별 팬 제어)
+      - addSegment() 자동 리트랙션 로직 (Z-hop 포함)
+
+    [완료] SlicerWorker.ts
+      - 동적 해상도 적용 (resolutionX/Y, pixelSize)
+      - 바닥/전환 레이어 노출 시간 계산 (선형 보간)
+      - 전체 G-code 조립 (header + layers + footer)
+      - 예상 출력 시간 계산
+      - SlicerResult 반환
+
+    [완료] SlicerService.ts
+      - 반환 타입: Promise<LayerData[]> → Promise<SlicerResult>
+
+    [완료] SlicerPanel.tsx
+      - DLP 탭: Display/Exposure/Z Movement 섹션 완전 재구성
+      - FDM 탭: Temperature/Retraction/Fan Control 섹션 추가
+      - 기본 layerHeight: 0.1 → 0.05mm (레진 기본)
+
+    [완료] babylon.utils.ts
+      - createBuildPlate() 함수 추가 (바닥판 + 10mm 그리드 + 볼륨 경계)
+      - disposeBuildPlate() 함수 추가
+
+    [완료] useSTLFiles.ts
+      - addLocalFile(file: File) 메서드 추가
+      - 로컬 파일용 blob URL 생성
+      - 삭제 시 blob URL 해제
+
+    [완료] STLViewer.tsx
+      - buildPlateConfig prop 추가
+      - 빌드 플레이트 초기화/정리/동적 업데이트
+
+    [완료] ViewerPage.tsx
+      - 드래그 앤 드롭 핸들러 (handleDragOver/Leave/Drop)
+      - ZIP 내보내기 (handleExportZip, JSZip)
+      - handleSlice → SlicerResult 처리
+      - 예상 출력 시간 표시
+      - Export ZIP 버튼 (슬라이서 모달 헤더)
+      - 서포트 탭 UI 쉘 (Coming Soon)
+      - 빌드 플레이트 연동
+
+    [완료] SliceEngine.ts
+      - LayerData에 exposureTime 필드 추가 (타입 호환)
+
+    [신규] jszip 패키지 설치 (npm install jszip)
+
+    검증 결과: 모든 기능 동작 확인 (사용자 테스트 완료)
+      1. 빌드 플레이트 표시 - OK
+      2. 드래그 앤 드롭 파일 로드 - OK
+      3. 서포트 탭 UI - OK
+      4. DLP 설정 UI - OK
+      5. 슬라이싱 + 예상 시간 표시 - OK
+
+
+  2026-06-29 | Step 2 구현 완료 - UI/UX Phase 1 (핵심 조작성)
+  --------------------------------------------------------------------------
+    수정/생성된 파일 (2개 수정 + 2개 신규):
+
+    [완료] STLViewer.tsx
+      - forwardRef + useImperativeHandle 래핑
+      - 외부 노출 메서드:
+        * zoomIn() - 카메라 20% 접근
+        * zoomOut() - 카메라 20% 후퇴
+        * resetView() - 초기 뷰 복원 (alpha/beta + focusOnAllMeshes)
+        * focusOnSelected() - 선택 메쉬에 카메라 포커스
+        * setGizmoMode(mode) - 기즈모 모드 전환
+      - GizmoMode 타입, STLViewerHandle 인터페이스 export
+
+    [신규] Toolbar.tsx
+      - 좌측 세로 도구 전환 툴바 (CHITUBOX 참고)
+      - 4개 도구: Select(Q) / Move(W) / Rotate(E) / Scale(R)
+      - 활성 도구 파란색 하이라이트
+      - 각 버튼에 tooltip (도구명 + 단축키)
+
+    [신규] useKeyboardShortcuts.ts
+      - 키보드 단축키 훅
+      - Q/W/E/R: 도구 모드 전환
+      - F: 선택 메쉬 포커스
+      - Delete/Backspace: 선택 파일 삭제
+      - Escape: 선택 해제
+      - Ctrl+A: 전체 선택
+      - input/select/textarea 포커스 시 비활성
+
+    [완료] ViewerPage.tsx
+      - viewerRef (STLViewerHandle) 추가
+      - gizmoMode 상태 관리
+      - handleZoomIn/Out/ResetView → ref 메서드 호출 (console.log 제거)
+      - handleGizmoModeChange 핸들러
+      - Toolbar 컴포넌트 배치 (뷰어 좌상단)
+      - useKeyboardShortcuts 훅 연결
+
+
+  2026-07-07 | 팀 통합 체제 전환 - 3-way 분석 및 아키텍처 결정
+  --------------------------------------------------------------------------
+    [완료] 팀 협업/AI 문서 세트 구축
+      - CLAUDE.md, docs/WORKFLOW.md, docs/templates/개발방향_템플릿.md
+      - .claude/agents (coder=Sonnet, reviewer), .claude/commands (/dev-cycle, /worklog)
+
+    [완료] 개발자 코드베이스 확보 및 검증
+      - 유승제: admin-zero-lab/MazicAlign-v2 (129커밋, features/v2) - 문서 대조 검증 통과
+      - 지현규: veridigital01/MazicAlign feat/margin-island (+6,033줄) - 문서 대조 검증 통과
+      - 세 코드베이스 공통 조상 b5c3339 확인, 3-way 겹침/중복 분석
+        → docs/코드베이스_통합분석_20260707.md
+
+    [완료] 아키텍처 결정 (docs/아키텍처결정_20260707.md)
+      - ADR-1: 유승제 v2 = 새 메인라인. 단 FDM G-code/Worker/전환보간/시간추정은
+        조우현 구현이 우세하여 이식 채택 (슬라이서 기능별 비교 분석 근거)
+      - ADR-2: 데이터 계층 IndexedDB, Express/SQLite 백엔드 동결
+      - ADR-3: 서포트 = 검출(지현규) → 생성(유승제) 파이프라인
+
+    [완료] git 반입 (공식 저장소 = JoWooHyun/Mazic-align2, popcaron은 구 미러)
+      - feat/slicer-step1-2: Step 1~2 코드(1,152줄) + 팀 문서 커밋
+      - integrate/v2-mainline: 유승제 v2 (새 메인라인 기준 브랜치)
+      - dev/ji-margin-island: 지현규 마진/아일랜드 작업
+      - docs/references/feedback_margin_algorithm_lock.md (마진 잠금 규약) 반입
+
+    [신규] docs/통합로드맵.md - Phase 0~3 이식 계획 (Step 단위, 수용 기준 포함)
+
+    [완료] Phase 1 이식 실행 (AI dev-cycle: 계획->Opus 구현->검수->PR)
+      - PR #1 FDM G-code 이식        : 승인/머지 (Step 1-1)
+      - PR #2 백엔드 없는 STL 열기   : 승인/머지 (Step 2-5, 실사용 테스트에서 발견)
+      - PR #3 노광 보간+프로파일 배선: 승인/머지 (Step 1-3)
+      - PR #4 압출(E) 정합 수정      : 승인/머지 (Step 1-1b, 실기 필수)
+      - PR #5 배치 슬라이스 워커화   : 머지 (Step 1-2. 오클릭으로 리뷰 전 머지
+                                       -> 유승제 사후 검증 3건 대기, PR 코멘트 참고)
+      - PR #6 출력 시간 정밀화       : 승인/머지 (Step 1-4, Phase 1 완결)
+      => Phase 1 완료. 총정리본: docs/정리_20260707.md
+      - 검수에서 잡은 실버그: 압출 오해석(v1 승계), 드래그 오버레이 잔류,
+        취소 시 busy 고착, 노광 stale closure, 푸터 리트랙트 기준점
+      - 후속 등재: Step 1-5(CTB 리프트 배선), Step 3-2b(ESLint 설정 부재)
+
+
+================================================================================
+
+
+[2] 현재 상태 (2026-07-07 기준)
+================================================================================
+
+  ── 커밋 상태 ──
+    - 미커밋 없음. 전 작업이 origin 브랜치에 보존됨:
+      feat/slicer-step1-2 / integrate/v2-mainline / dev/ji-margin-island
+    - 이후 개발 기준: integrate/v2-mainline + docs/통합로드맵.md
+
+  ── 완료된 기능 ──
+    [O] 3D STL 뷰어 (Babylon.js, ArcRotateCamera)
+    [O] Transform 편집 (이동/회전/크기 + Gizmo)
+    [O] 조정 히스토리 (서버 저장, 로그 조회/삭제)
+    [O] 프로젝트 관리 (생성/조회/삭제)
+    [O] STL 파일 관리 (업로드/삭제/가시성)
+    [O] Z축 레이어 슬라이싱 (Web Worker)
+    [O] FDM G-code 생성 (헤더/푸터/리트랙션/팬/온도)
+    [O] DLP 마스크 이미지 생성 (동적 해상도)
+    [O] 바닥/전환 레이어 노출 시간 처리
+    [O] 2D 레이어 프리뷰
+    [O] ZIP 내보내기 (metadata + gcode + 레이어 이미지)
+    [O] 빌드 플레이트 시각화 (바닥판 + 그리드 + 경계)
+    [O] 드래그 앤 드롭 파일 열기
+    [O] 서포트 탭 UI (Coming Soon 껍데기)
+    [O] 줌 인/아웃, 뷰 리셋 (카메라 제어)
+    [O] 도구 전환 툴바 (Select/Move/Rotate/Scale)
+    [O] 키보드 단축키 (Q/W/E/R/F/Delete/Esc/Ctrl+A)
+
+  ── 기존 TS 에러 (이전부터 존재, 기능 무관) ──
+    - @types/ import 스타일 경고 (~10개 파일)
+    - NodeJS.Timeout 타입 미인식 (1개)
+    - unused variables (2~3개)
+    - LoginPage의 login/register 함수 미존재 (1개)
+    - js-clipper 모듈 타입 이슈 (1개)
+
+
+================================================================================
+
+
+[3] 앞으로의 계획
+================================================================================
+
+
+  ── UI/UX Phase 2: 정보 표시 ──  (다음 우선)
+    1. 하단 상태표시줄 (StatusBar)
+       - 삼각형 수, 바운딩 박스 크기, 모델 수
+       - 빌드 플레이트 크기 표시
+       - 신규 파일: StatusBar.tsx
+
+    2. 뷰 모드 전환
+       - Solid / Wireframe / X-ray 모드
+       - material 속성 동적 변경
+       - ViewerControls 또는 Toolbar에 버튼 추가
+
+
+  ── UI/UX Phase 3: 편의 기능 ──
+    3. 우클릭 컨텍스트 메뉴
+       - Delete, Center, Reset Transform, Focus 등
+       - 신규 파일: ContextMenu.tsx
+
+    4. Settings 모달 확장
+       - 빌드 플레이트 크기 편집
+       - 그리드 표시 토글, 배경색, 카메라 감도
+
+    5. 상단 메뉴바
+       - File / Edit / View / Help 드롭다운
+       - 기존 헤더 버튼 통합
+       - 신규 파일: MenuBar.tsx
+
+
+  ── 기능 구현 (후순위) ──
+    6. 서포트 자동 생성 로직
+       - 오버행 감지, 서포트 기둥 자동 배치
+       - 3D 시각화
+
+    7. 프린터 프로파일 시스템
+       - 기종별 설정 저장/불러오기
+       - 빌드 사이즈, 해상도 등 프리셋
+
+    8. 바이너리 포맷 지원
+       - .ctb / .cbddlp 등 프린터별 출력 포맷
+
+    9. 안티앨리어싱
+       - DLP 마스크 이미지 가장자리 부드럽게 처리
+
+
+  ── 코드 품질 (언제든) ──
+    10. 기존 TS 에러 정리
+        - import 스타일 통일, unused 코드 제거
+        - 미사용 함수/페이지 정리 (LoginPage, signInAsGuest 등)
+
+
+================================================================================
+
+
+[4] 프로젝트 기술 스택
+================================================================================
+
+  Frontend : React 18, TypeScript, Tailwind CSS, Vite
+  3D Engine: Babylon.js (ArcRotateCamera, GizmoManager)
+  Backend  : Express.js, SQLite (better-sqlite3)
+  기타     : JSZip, Web Worker, localStorage
+
+
+================================================================================
+                              END OF DOCUMENT
+================================================================================
