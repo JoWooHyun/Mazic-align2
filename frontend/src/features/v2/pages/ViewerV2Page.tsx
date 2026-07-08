@@ -133,6 +133,18 @@ const ViewerV2Page: React.FC = () => {
     ok: boolean;
     message: string;
   } | null>(null);
+  // 아일랜드 검출 결과 상태 (세션). null = 미실행. islandResultRef 자체는
+  //   BabylonScene 내부 — 여기서는 UI 표시/버튼 활성용 상태만.
+  const [islandStatus, setIslandStatus] = useState<
+    | {
+        ok: true;
+        totalIslandFaces: number;
+        nSlices: number;
+        layersWithIsland: number;
+      }
+    | { ok: false; message: string }
+    | null
+  >(null);
   const [pendingBridge, setPendingBridge] = useState<{
     stlId: string;
     contact: [number, number, number];
@@ -169,6 +181,29 @@ const ViewerV2Page: React.FC = () => {
     Math.ceil(sceneTopY / slicePreview.layerHeightMm),
   );
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
+
+  // STL 이 삭제되면 dental 세션 상태(마진/아일랜드 결과)를 리셋한다 (2-3b 잔여 ①).
+  //   BabylonScene 은 mesh 제거 시 해당 STL 의 시각화를 내부에서 정리하지만,
+  //   여기 React 상태(marginStatus/islandStatus)는 별도라 stale 로 남는다. 삭제
+  //   경로가 여러 개(handleRemove/handleCut/키보드 Delete)라 개별 처리 대신 파일
+  //   id 집합 변화를 감지해 한 곳에서 리셋 — 삭제(집합 축소)일 때만 초기화.
+  const prevFileIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const prev = prevFileIdsRef.current;
+    const nextIds = new Set(files.map((f) => f.id));
+    let removed = false;
+    for (const id of prev) {
+      if (!nextIds.has(id)) {
+        removed = true;
+        break;
+      }
+    }
+    prevFileIdsRef.current = nextIds;
+    if (removed) {
+      setMarginStatus(null);
+      setIslandStatus(null);
+    }
+  }, [files]);
 
   const overhangAngleDeg = useSupportParamsStore(
     (s) => s.params.overhangAngleDeg,
@@ -1057,8 +1092,9 @@ const ViewerV2Page: React.FC = () => {
   const handleClearDentalPaint = useCallback(() => {
     sceneHandleRef.current?.clearDentalPaint();
     setPaintedFaces({});
-    // clearDentalPaint 는 씬에서 마진 시각화도 함께 정리하므로 상태도 초기화.
+    // clearDentalPaint 는 씬에서 마진·아일랜드 시각화도 함께 정리하므로 상태도 초기화.
     setMarginStatus(null);
+    setIslandStatus(null);
   }, []);
 
   // ----- Dental 마진 찾기 (2-3b) -----
@@ -1080,6 +1116,31 @@ const ViewerV2Page: React.FC = () => {
   const handleClearMargin = useCallback(() => {
     sceneHandleRef.current?.clearDentalMargin();
     setMarginStatus(null);
+  }, []);
+
+  // ----- Dental 아일랜드 검출 (2-3c) -----
+  //   활성 STL 전체를 슬라이스 → detectSliceIslands → 마젠타 overlay.
+  //   레이어 높이는 슬라이스 프리뷰가 쓰는 값(slicePreview.layerHeightMm)을 재사용.
+  const handleDetectIslands = useCallback(() => {
+    const res = sceneHandleRef.current?.detectDentalIslands(
+      slicePreview.layerHeightMm,
+    );
+    if (!res) return;
+    if (res.ok) {
+      setIslandStatus({
+        ok: true,
+        totalIslandFaces: res.stats.totalIslandFaces,
+        nSlices: res.stats.nSlices,
+        layersWithIsland: res.stats.layersWithIsland,
+      });
+    } else {
+      setIslandStatus({ ok: false, message: res.reason });
+    }
+  }, [slicePreview.layerHeightMm]);
+
+  const handleClearIslands = useCallback(() => {
+    sceneHandleRef.current?.clearDentalIslands();
+    setIslandStatus(null);
   }, []);
 
   // ----- Transform -----
@@ -1808,6 +1869,9 @@ const ViewerV2Page: React.FC = () => {
                 onFindMargin={handleFindMargin}
                 onClearMargin={handleClearMargin}
                 marginStatus={marginStatus}
+                onDetectIslands={handleDetectIslands}
+                onClearIslands={handleClearIslands}
+                islandStatus={islandStatus}
               />
             )}
           </div>

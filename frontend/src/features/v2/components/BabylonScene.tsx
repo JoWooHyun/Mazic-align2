@@ -62,6 +62,11 @@ import {
   type FindMarginResult,
   type FindMarginStats,
 } from "../utils/dental/margin-detect";
+import { readWorldTriangles } from "../utils/dental/dental-support";
+import {
+  detectSliceIslands,
+  type SliceIslandResult,
+} from "../utils/dental/island-detection";
 
 function buildBridgeClipKey(
   point: SupportPointV2,
@@ -437,6 +442,35 @@ export interface BabylonSceneHandle {
    * 지운다. 브러쉬 색칠(painted) 자체는 건드리지 않는다 (clearDentalPaint 와 분리).
    */
   clearDentalMargin: () => void;
+  /**
+   * 활성 STL(선택된 것, 없으면 첫 STL) 전체에 대해 슬라이스 기반 아일랜드
+   * (미지지 영역) 검출을 실행한다.
+   *   활성 mesh → readWorldTriangles → detectSliceIslands(island-detection.ts, 잠금)
+   *   호출(원본 STLViewer 의 detectIslandsSignal useEffect 와 동일 파라미터 구성.
+   *   단 임시 진단용 debugLayers 는 v2 에서 비활성). 검출된 island face 를 마젠타
+   *   overlay(원본 시각화 이식, zOffset -1, mesh child) 로 표시하고 결과를 내부
+   *   islandResultRef 에 보관. 요약 통계를 반환해 패널이 표시한다.
+   *   layerHeightMm 미지정 시 island-detection 기본값(0.05mm).
+   */
+  detectDentalIslands: (layerHeightMm?: number) =>
+    | { ok: true; stats: IslandStats }
+    | { ok: false; reason: string };
+  /**
+   * 아일랜드 마젠타 overlay + 결과 ref 를 지운다. 브러쉬 색칠/마진 은 유지.
+   */
+  clearDentalIslands: () => void;
+}
+
+/** 아일랜드 검출 요약 통계 (패널 표시용). 원본 onIslandDetectionComplete 페이로드 축약. */
+export interface IslandStats {
+  /** ISLAND 로 판정된 face 총 개수 (result.islandFaces.size). */
+  totalIslandFaces: number;
+  /** 슬라이스한 레이어 수 (result.nSlices). */
+  nSlices: number;
+  /** island face 가 1개 이상인 레이어 수 (perLayerIslandCount > 0 인 레이어). */
+  layersWithIsland: number;
+  /** 검출에 쓴 레이어 두께 (mm). */
+  layerHeight: number;
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -591,6 +625,14 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const autoFillFacesRef = useRef<Set<number>>(new Set());
     // 마진 floodfill 자동 색칠 시각화 오버레이 mesh (주황). autoFillFacesRef 와 세트.
     const autoFillOverlayRef = useRef<Mesh[]>([]);
+    // 아일랜드 검출 결과 캐시 (원본 sliceDataRef 대응 축약). stlId 로 어떤 STL 의
+    //   결과인지 기록. null = 미검출.
+    const islandResultRef = useRef<
+      | (SliceIslandResult & { stlId: string })
+      | null
+    >(null);
+    // 아일랜드 face 마젠타 overlay mesh. stlId 를 metadata 에 담아 정리 시 구분.
+    const islandMarkersRef = useRef<Mesh[]>([]);
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
     selectedSupportRef.current = selectedSupportId;
     const bridgeModeRef = useRef<boolean>(bridgeMode);
@@ -841,6 +883,159 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     }
 
     /**
+     * 아일랜드 마젠타 overlay + 결과 ref 를 정리한다.
+     *   stlId 지정 시 그 STL 것만, 미지정 시 전부. islandResultRef 는 전부 지울 때
+     *   또는 같은 STL 재검출 시 null 로.
+     */
+    function disposeIslandVisualization(stlId?: string): void {
+      islandMarkersRef.current = islandMarkersRef.current.filter((m) => {
+        if (stlId === undefined || m.metadata?.stlId === stlId) {
+          m.dispose(false, true);
+          return false;
+        }
+        return true;
+      });
+      if (stlId === undefined) {
+        islandResultRef.current = null;
+      } else if (islandResultRef.current?.stlId === stlId) {
+        islandResultRef.current = null;
+      }
+    }
+
+    /**
+     * 활성 STL 전체에 대해 슬라이스 기반 아일랜드(미지지 영역)를 검출하고 마젠타
+     * overlay 로 시각화한다.
+     *   원본 STLViewer 의 detectIslandsSignal useEffect [씬/시각화 의존부] 이식 —
+     *   알고리즘 코어는 detectSliceIslands(island-detection.ts, 잠금) 담당.
+     *   호출 파라미터는 원본과 동일:
+     *     · cellSize = layerHeight = lh (원본 sliceLayerHeight)
+     *     · supportAngle 45° (원본 DEFAULT_SUPPORT_SETTINGS.supportAngle — v2 에는
+     *       support-settings ref 가 없어 그 기본값을 명시. detectSliceIslands 의
+     *       supportAngle ?? 45 기본과도 동일 → 수치 무변경.)
+     *     · downFacingOnly true · minIslandCells 1 · plateGap 0
+     *   debugLayers 는 전달하지 않는다(원본의 임시 진단 [41,42,43] 은 v2 에서 비활성이
+     *   정답 — 지현규 문서 Step 2 의도).
+     */
+    function runDetectDentalIslands(layerHeightMm?: number):
+      | { ok: true; stats: IslandStats }
+      | { ok: false; reason: string } {
+      const scene = sceneRef.current;
+      if (!scene) return { ok: false, reason: "씬이 준비되지 않았습니다." };
+      const active = getActiveStl();
+      if (!active) {
+        // 원본 console.warn('Island 검출: 대상 STL이 없습니다.') → UI 문구.
+        return { ok: false, reason: "대상 STL이 없습니다." };
+      }
+      const { id: stlId, mesh } = active;
+
+      // 현재 STL 각도(회전/이동) 정확 반영 — worldMatrix 갱신 (원본 이식).
+      mesh.computeWorldMatrix(true);
+      mesh.refreshBoundingInfo();
+
+      const tris = readWorldTriangles(mesh);
+      if (tris.length === 0) {
+        // 원본 console.warn('Island 검출: 분석할 삼각형이 없습니다.') → UI 문구.
+        return { ok: false, reason: "분석할 삼각형이 없습니다." };
+      }
+
+      const lh = layerHeightMm ?? 0.05; // 원본 sliceLayerHeight 기본 0.05mm.
+      const t0 = performance.now();
+      const result = detectSliceIslands({
+        tris,
+        cellSize: lh, // 라스터화 정밀도 = layer 두께 (원본 verbatim).
+        layerHeight: lh,
+        // 원본 supportSettingsRef.current.supportAngle (기본 45°). v2 는 support
+        //   설정 ref 가 없어 그 기본값을 명시 — detectSliceIslands 기본과 동일.
+        supportAngle: 45,
+        // 위 향한 면(n.y > 0)은 서포트 불필요 → island 결과에서 제외 (원본 verbatim).
+        downFacingOnly: true,
+        minIslandCells: 1, // 슬라이스 sim 미지지 정의 일치 — 1-cell piece 도 포착.
+        plateGap: 0, // plate 인접 layer 도 island 검출 (낮은 Y 의 piece 도 포착).
+        // debugLayers 전달 안 함 — 원본 임시 진단 [41,42,43] 은 v2 에서 비활성.
+      });
+      const tDetect = performance.now() - t0;
+
+      // 이 STL 의 기존 island 시각화만 교체 (다른 STL 것은 유지).
+      disposeIslandVisualization(stlId);
+      islandResultRef.current = { ...result, stlId };
+
+      // Island face overlay — 검출된 island face 의 실제 STL triangle 을 표면
+      //   conforming 마젠타로 표시 (원본 시각화 verbatim). mesh index 버퍼에서
+      //   local vertex 를 직접 읽어 overlay.parent=mesh 로 얹는다.
+      const meshIndices = mesh.getIndices();
+      const meshPositions = mesh.getVerticesData("position");
+      if (meshIndices && meshPositions && result.islandFaces.size > 0) {
+        const positions: number[] = [];
+        const indices: number[] = [];
+        let vIdx = 0;
+        for (const f of result.islandFaces) {
+          for (let kk = 0; kk < 3; kk++) {
+            const vi = meshIndices[f * 3 + kk];
+            positions.push(
+              meshPositions[vi * 3],
+              meshPositions[vi * 3 + 1],
+              meshPositions[vi * 3 + 2],
+            );
+          }
+          indices.push(vIdx, vIdx + 1, vIdx + 2);
+          vIdx += 3;
+        }
+        if (indices.length > 0) {
+          const overlay = new Mesh("v2_islandFaces", scene);
+          const vd = new VertexData();
+          vd.positions = positions;
+          vd.indices = indices;
+          const norms: number[] = [];
+          VertexData.ComputeNormals(positions, indices, norms);
+          vd.normals = norms;
+          vd.applyToMesh(overlay);
+          const mat = new StandardMaterial("v2_islandFacesMat", scene);
+          mat.emissiveColor = new Color3(1.0, 0.2, 0.85); // 마젠타 (원본 verbatim).
+          mat.diffuseColor = new Color3(0, 0, 0);
+          mat.specularColor = new Color3(0, 0, 0);
+          mat.disableLighting = true;
+          mat.backFaceCulling = false;
+          mat.zOffset = -1; // STL 표면보다 살짝 앞으로 — z-fighting 차단.
+          overlay.material = mat;
+          overlay.isPickable = false;
+          overlay.renderingGroupId = 0;
+          overlay.metadata = { stlId, kind: "islandFaces" };
+          // local vertex → 직접 parent 할당 (setParent 아님 — worldMatrix 승계).
+          overlay.parent = mesh;
+          islandMarkersRef.current.push(overlay);
+        }
+      }
+
+      const layersWithIsland = result.perLayerIslandCount.reduce(
+        (n, c) => (c > 0 ? n + 1 : n),
+        0,
+      );
+
+      // 원본 console.log 문구 이식 (통계 — 디버그용).
+      const totalIslandCells = result.perLayerIslandCells.reduce(
+        (s, c) => s + c.size,
+        0,
+      );
+      console.log(
+        `[Island 검출] 전체 face ${tris.length} · island face ${result.islandFaces.size} · ` +
+          `island cell ${totalIslandCells} · layers ${result.nSlices} · ` +
+          `layerHeight ${result.layerHeight}mm · cellSize ${result.cellSize}mm · ` +
+          `supportAngle 45° (dSafe ${result.dSafe.toFixed(3)}mm, prevLayers ${result.prevLayers}, ` +
+          `cellAdjR ${result.cellAdjR}) · ${tDetect.toFixed(0)}ms`,
+      );
+
+      return {
+        ok: true,
+        stats: {
+          totalIslandFaces: result.islandFaces.size,
+          nSlices: result.nSlices,
+          layersWithIsland,
+          layerHeight: result.layerHeight,
+        },
+      };
+    }
+
+    /**
      * 마진 안쪽 face floodfill — startFace 를 시작으로 마진 엣지(edgeKeys)를 차단
      * 벽 삼아 BFS 로 내부 face 를 모으고 주황 오버레이로 채운다.
      *   원본 fillFromFace 이식. 결과는 autoFillFacesRef (painted 계약과 별도 집합)
@@ -914,14 +1109,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
       autoFillFacesRef.current = filled;
 
-      // 시각화 — 이 STL 의 이전 오버레이만 제거 후 새로 생성 (원본 이식).
-      autoFillOverlayRef.current = autoFillOverlayRef.current.filter((m) => {
-        if (m.metadata?.stlId === stlId) {
-          m.dispose(false, true);
-          return false;
-        }
-        return true;
-      });
+      // 시각화 — 이전 floodfill 오버레이를 전부 제거 후 새로 생성 (원본 fillFromFace
+      //   verbatim). autoFillFacesRef 는 단일 전역 Set 이라 floodfill 은 한 번에 한
+      //   영역만 존재 → 위에서 filled 로 덮어쓴 순간 다른 STL 의 이전 fill 은 추적에서
+      //   벗어난다. 오버레이도 stlId 불문 전부 지워야 다른 STL 의 orphan 잔존(2-3b
+      //   잔여 ②)을 막는다.
+      for (const m of autoFillOverlayRef.current) m.dispose(false, true);
+      autoFillOverlayRef.current = [];
       const meshPositions = mesh.getVerticesData("position");
       if (!meshPositions) return;
       const positions: number[] = [];
@@ -1591,6 +1785,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           //   튜브/오버레이는 mesh child 라 dispose 로 함께 사라지지만 ref/marginRef
           //   가 stale 로 남으므로 명시적으로 제거.
           disposeMarginVisualization(id);
+          // 이 STL 의 아일랜드 마젠타 overlay + 결과 ref 도 정리 (2-3b 패턴).
+          disposeIslandVisualization(id);
           removedMesh?.dispose();
           meshMapRef.current.delete(id);
           // 이 STL 의 painted 목록도 비었음을 부모에 통지 (세션 상태 sync).
@@ -2889,6 +3085,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           // 원본 clearMask 는 autoFill(floodfill) 도 함께 정리했다 → 마진 시각화·
           //   floodfill 도 지운다. 색칠이 사라지면 그 마진은 무의미하므로 일관.
           disposeMarginVisualization();
+          // 색칠이 사라지면 그 아일랜드 시각화도 무의미 → 함께 정리 (2-3b 패턴).
+          disposeIslandVisualization();
           // 색칠이 있던 STL 마다 빈 목록 통지.
           for (const mesh of affected) {
             for (const [id, m] of meshMapRef.current) {
@@ -2912,6 +3110,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         clearDentalMargin() {
           // 마진 시각화 + floodfill 만 정리. 브러쉬 색칠(painted)은 유지.
           disposeMarginVisualization();
+        },
+        detectDentalIslands(layerHeightMm) {
+          return runDetectDentalIslands(layerHeightMm);
+        },
+        clearDentalIslands() {
+          // 아일랜드 마젠타 overlay + 결과 ref 만 정리. 색칠/마진은 유지.
+          disposeIslandVisualization();
         },
       }),
       // 핸들은 ref/stable 함수만 참조 → 정체성 고정을 위해 []. runFindDentalMargin/
