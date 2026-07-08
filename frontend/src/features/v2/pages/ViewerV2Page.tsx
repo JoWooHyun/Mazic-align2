@@ -27,6 +27,7 @@ import GizmoControls from "../components/GizmoControls";
 import EditModeControls, {
   type EditMode,
 } from "../components/EditModeControls";
+import DentalPanel from "../components/DentalPanel";
 import SliceSidePanel from "../components/SliceSidePanel";
 import GithubProjectDialog from "../components/GithubProjectDialog";
 import PrinterProfileSelect from "../components/PrinterProfileSelect";
@@ -108,9 +109,9 @@ const ViewerV2Page: React.FC = () => {
   // 네이티브 파일 열기용 숨김 input.
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [ghDialog, setGhDialog] = useState<"save" | "load" | null>(null);
-  const [panelTab, setPanelTab] = useState<"transform" | "support">(
-    "transform",
-  );
+  const [panelTab, setPanelTab] = useState<
+    "transform" | "support" | "dental"
+  >("transform");
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -119,6 +120,13 @@ const ViewerV2Page: React.FC = () => {
   const [alignFloorMode, setAlignFloorMode] = useState(false);
   const [editMode, setEditMode] = useState<EditMode>("select");
   const [bridgeMode, setBridgeMode] = useState(false);
+  // dental-brush 색칠 두께 (mm). 씬 SHIFT+휠 로도 갱신됨.
+  const [brushThicknessMm, setBrushThicknessMm] = useState(3);
+  // stlId → painted face index 목록 (세션 상태). margin/island 조각 입력.
+  // painted 는 IndexedDB 에 저장하지 않는다 (이 조각 범위 밖).
+  const [paintedFaces, setPaintedFaces] = useState<Record<string, number[]>>(
+    {},
+  );
   const [pendingBridge, setPendingBridge] = useState<{
     stlId: string;
     contact: [number, number, number];
@@ -1026,6 +1034,25 @@ const ViewerV2Page: React.FC = () => {
     });
   }, [projectId, supports, clearAllSupports, addSupports]);
 
+  // ----- Dental 브러쉬 색칠 -----
+  // 씬이 색칠 변경을 통지 → stlId 별 painted face 목록 갱신. 빈 목록이면 제거.
+  const handlePaintedFacesChange = useCallback(
+    (stlId: string, faceIds: number[]) => {
+      setPaintedFaces((prev) => {
+        const next = { ...prev };
+        if (faceIds.length === 0) delete next[stlId];
+        else next[stlId] = faceIds;
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleClearDentalPaint = useCallback(() => {
+    sceneHandleRef.current?.clearDentalPaint();
+    setPaintedFaces({});
+  }, []);
+
   // ----- Transform -----
   const handlePreviewTransform = useCallback(
     (id: string, t: TransformV2) => {
@@ -1465,6 +1492,9 @@ const ViewerV2Page: React.FC = () => {
               handleCommitTransform(id, oldT, newT);
               setAlignFloorMode(false); // 한 번 사용 후 자동 OFF
             }}
+            brushThicknessMm={brushThicknessMm}
+            onPaintedFacesChange={handlePaintedFacesChange}
+            onBrushThicknessChange={setBrushThicknessMm}
           />
 
           {/* 우측 상단 stack: 모든 overlay 컨트롤 / 정보 패널 */}
@@ -1499,11 +1529,14 @@ const ViewerV2Page: React.FC = () => {
               onChange={(m) => {
                 setEditMode(m);
                 setSelectedCp(null);
-                if (m === "select") {
+                // support 전용 상태는 support 모드가 아닐 때 정리.
+                if (m !== "support") {
                   setSelectedSupportId(null);
                   setBridgeMode(false);
                   setPendingBridge(null);
                 }
+                // dental 모드 진입 시 우측 패널을 Dental 탭으로.
+                if (m === "dental-brush") setPanelTab("dental");
               }}
             />
 
@@ -1692,9 +1725,9 @@ const ViewerV2Page: React.FC = () => {
               프로젝트 조회 실패: {error.message}
             </p>
           )}
-          {/* 탭: Transform / Support */}
+          {/* 탭: Transform / Support / Dental */}
           <div className="flex border-b border-gray-200 bg-gray-50 sticky top-0 z-10">
-            {(["transform", "support"] as const).map((t) => (
+            {(["transform", "support", "dental"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setPanelTab(t)}
@@ -1704,7 +1737,11 @@ const ViewerV2Page: React.FC = () => {
                     : "text-gray-500 hover:bg-gray-100"
                 }`}
               >
-                {t === "transform" ? "Transform" : "Support"}
+                {t === "transform"
+                  ? "Transform"
+                  : t === "support"
+                    ? "Support"
+                    : "Dental"}
               </button>
             ))}
           </div>
@@ -1715,12 +1752,30 @@ const ViewerV2Page: React.FC = () => {
                 onPreview={handlePreviewTransform}
                 onCommit={handleCommitTransform}
               />
-            ) : (
+            ) : panelTab === "support" ? (
               <SupportParamsPanel
                 onAutoGenerate={handleAutoGenerate}
                 onClearAll={handleClearAllSupports}
                 supportCount={supports.length}
                 busy={autoBusy}
+              />
+            ) : (
+              <DentalPanel
+                brushActive={editMode === "dental-brush"}
+                onToggleBrush={(active) => {
+                  setEditMode(active ? "dental-brush" : "select");
+                  setSelectedCp(null);
+                  setSelectedSupportId(null);
+                  setBridgeMode(false);
+                  setPendingBridge(null);
+                }}
+                brushThicknessMm={brushThicknessMm}
+                onBrushThicknessChange={setBrushThicknessMm}
+                onClearPaint={handleClearDentalPaint}
+                paintedFaceCount={Object.values(paintedFaces).reduce(
+                  (sum, ids) => sum + ids.length,
+                  0,
+                )}
               />
             )}
           </div>

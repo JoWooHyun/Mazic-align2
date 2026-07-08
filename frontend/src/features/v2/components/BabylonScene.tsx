@@ -18,6 +18,7 @@ import {
   PointerDragBehavior,
   PointerEventTypes,
   PositionGizmo,
+  Quaternion,
   Ray,
   RotationGizmo,
   ScaleGizmo,
@@ -50,7 +51,12 @@ import {
   manifoldToBabylonMesh,
 } from "../utils/manifold-csg";
 import type { Manifold, ManifoldToplevel } from "manifold-3d";
-import { Matrix, VertexBuffer } from "@babylonjs/core";
+import { Matrix, VertexBuffer, VertexData } from "@babylonjs/core";
+import {
+  computePaintedFaceIds,
+  makePaintPoint,
+  type PaintPoint,
+} from "../utils/dental/paint-mask";
 
 function buildBridgeClipKey(
   point: SupportPointV2,
@@ -261,6 +267,23 @@ interface BabylonSceneProps {
   alignFloorMode?: boolean;
   /** 바닥면 붙이기 face 클릭 결과: 회전 후의 새 TransformV2. */
   onAlignFaceToFloor?: (id: string, newTransform: TransformV2) => void;
+  /**
+   * 'dental-brush' 모드 브러쉬 두께 (mm). 색칠 반경 = 두께/2. 미지정 시 3mm.
+   * (원본 STLViewer 의 brushThickness prop — 기본 3.)
+   */
+  brushThicknessMm?: number;
+  /**
+   * 'dental-brush' 모드에서 색칠이 바뀔 때마다 통지 (v2 콜백 패턴).
+   * faceIds = 그 STL 의 painted face index 목록. margin-detect 의
+   * paintedFaceIds 입력 계약과 동일 (index buffer 상 삼각형 번호).
+   * painted 는 세션 상태 — IndexedDB 영속화는 이 조각 범위 밖.
+   */
+  onPaintedFacesChange?: (stlId: string, faceIds: number[]) => void;
+  /**
+   * 'dental-brush' 모드에서 SHIFT+휠로 브러쉬 두께를 바꿨을 때 통지.
+   * 패널의 두께 입력과 양방향 동기화용 (원본 onBrushThicknessChange 이식).
+   */
+  onBrushThicknessChange?: (mm: number) => void;
   className?: string;
 }
 
@@ -382,6 +405,17 @@ export interface BabylonSceneHandle {
     normal: [number, number, number];
     thickness: number;
   } | null;
+  /**
+   * 'dental-brush' 모드 색칠(마스크)을 모두 지운다. 원본 clearMask 대응.
+   * 오버레이 데칼 dispose + painted 점 초기화 + 각 STL 에 빈 목록 통지.
+   */
+  clearDentalPaint: () => void;
+  /**
+   * 주어진 STL 의 painted face index 집합. margin-detect 의 findMargin
+   * ({ paintedFaceIds }) 입력 계약과 동일 (index buffer 상 삼각형 번호).
+   * 색칠 없으면 빈 배열.
+   */
+  getPaintedFaceIds: (stlId: string) => number[];
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -412,6 +446,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       onSelectBridgeControlPoint,
       alignFloorMode,
       onAlignFaceToFloor,
+      brushThicknessMm = 3,
+      onPaintedFacesChange,
+      onBrushThicknessChange,
       className = "",
     },
     ref,
@@ -507,6 +544,18 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     alignFloorModeRef.current = !!alignFloorMode;
     const onAlignFaceToFloorRef = useRef(onAlignFaceToFloor);
     onAlignFaceToFloorRef.current = onAlignFaceToFloor;
+    // dental-brush: 브러쉬 두께 + painted 변경 콜백 (effect 재실행 없이 최신 참조).
+    const brushThicknessRef = useRef<number>(brushThicknessMm);
+    brushThicknessRef.current = brushThicknessMm;
+    const onPaintedFacesChangeRef = useRef(onPaintedFacesChange);
+    onPaintedFacesChangeRef.current = onPaintedFacesChange;
+    const onBrushThicknessChangeRef = useRef(onBrushThicknessChange);
+    onBrushThicknessChangeRef.current = onBrushThicknessChange;
+    // dental-brush painted 점 (세션 상태 원본 = 원본 maskRef 방식 이식).
+    // localPoint/localNormal/radius 로 저장 → STL 회전·이동을 자동 추적.
+    const paintPointsRef = useRef<PaintPoint[]>([]);
+    // painted 시각화 데칼 mesh (주황). painted 점과 index 1:1 대응.
+    const paintOverlaysRef = useRef<Mesh[]>([]);
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
     selectedSupportRef.current = selectedSupportId;
     const bridgeModeRef = useRef<boolean>(bridgeMode);
@@ -587,6 +636,17 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         const sid = selectedSupportRef.current;
         const sMesh = sid ? supportMeshMapRef.current.get(sid) ?? null : null;
         pg.attachedMesh = sMesh;
+        rg.attachedMesh = null;
+        sg.attachedMesh = null;
+        return;
+      }
+
+      // 'dental-brush' 등 non-select 모드: Gizmo 전부 detach. select 진입
+      //   유지된 선택으로 translate Gizmo 가 붙은 채 남아 브러쉬 색칠과
+      //   모델 이동이 동시에 일어나던 문제 차단. effect 5 가 editMode 변경
+      //   마다 syncGizmo 를 재호출하므로 select 복귀 시 자동 재attach.
+      if (editModeRef.current !== "select") {
+        pg.attachedMesh = null;
         rg.attachedMesh = null;
         sg.attachedMesh = null;
         return;
@@ -1083,6 +1143,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           return;
         }
 
+        // 'dental-brush' 모드: 표면 클릭은 브러쉬 색칠(6.5 effect 의 별도
+        // 포인터 옵저버)이 담당한다. 여기서 선택/해제하면 브러쉬 도중 모델
+        // 선택이 바뀌므로 아무 것도 하지 않고 종료.
+        if (editModeRef.current === "dental-brush") return;
+
         // 'select' 모드 (기본): 모델 선택 / 빈 공간 = 해제.
         // 단 alignFloorMode 활성 시 STL face 클릭 → 바닥면 정렬.
         const multi = evt.ctrlKey || evt.metaKey;
@@ -1152,6 +1217,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           mesh.dispose();
         }
         meshMapRef.current.clear();
+        // dental-brush painted 오버레이/점 정리 (scene.dispose 로도 mesh 는
+        // 사라지지만 ref 는 명시적으로 비운다).
+        paintOverlaysRef.current = [];
+        paintPointsRef.current = [];
         furnitureRef.current?.dispose();
         furnitureRef.current = null;
         hl.dispose();
@@ -1196,8 +1265,23 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
 
       for (const id of currentIds) {
         if (!nextIds.has(id)) {
-          meshMapRef.current.get(id)?.dispose();
+          const removedMesh = meshMapRef.current.get(id) ?? null;
+          // 이 STL 의 dental-brush 색칠(painted 점 + 오버레이 데칼) 정리.
+          //   오버레이 데칼은 STL mesh 의 child 라 dispose 로 함께 사라지지만
+          //   paintPointsRef/paintOverlaysRef 배열은 stale ref 로 남으므로
+          //   여기서 해당 mesh 엔트리를 제거해 stale painted 카운트를 막는다.
+          if (removedMesh) {
+            for (let i = paintPointsRef.current.length - 1; i >= 0; i--) {
+              if (paintPointsRef.current[i].mesh === removedMesh) {
+                paintPointsRef.current.splice(i, 1);
+                paintOverlaysRef.current.splice(i, 1);
+              }
+            }
+          }
+          removedMesh?.dispose();
           meshMapRef.current.delete(id);
+          // 이 STL 의 painted 목록도 비었음을 부모에 통지 (세션 상태 sync).
+          onPaintedFacesChangeRef.current?.(id, []);
           // manifold 객체도 dispose
           const m = stlManifoldMapRef.current.get(id);
           if (m) {
@@ -1777,12 +1861,14 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     // 6) editMode 변경 시:
     //    · STL 메쉬의 PointerDragBehavior detach/attach
     //    · support 메쉬의 isPickable 토글
+    //    · dental-brush 모드도 support 와 마찬가지로 STL 드래그 비활성
+    //      (표면 클릭이 색칠에 쓰이므로 이동/선택으로 소비되면 안 됨).
     useEffect(() => {
       for (const [id, mesh] of meshMapRef.current) {
         const drag = dragBehaviorMapRef.current.get(id);
         if (!drag) continue;
         const attached = mesh.behaviors.includes(drag);
-        if (editMode === "support" && attached) {
+        if (editMode !== "select" && attached) {
           mesh.removeBehavior(drag);
         } else if (editMode === "select" && !attached) {
           mesh.addBehavior(drag);
@@ -1792,6 +1878,371 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         sm.isPickable = editMode === "support";
       }
     }, [editMode, files, supports]);
+
+    // 6.5) dental-brush 모드 — 브러쉬로 STL 표면 영역 색칠 (마스크).
+    //   원본: frontend/src/components/STLViewer.tsx (지현규) supportTool==='mask'
+    //   경로의 useEffect (약 718~1271줄) 이식. addMaskPoint / eraseMaskAt /
+    //   포인터 옵저버 / 브러쉬 링 / SHIFT+휠 두께 조정 을 verbatim 에 가깝게 옮기고,
+    //   painted 상태는 paintPointsRef 에 저장 후 onPaintedFacesChange 로 통지한다.
+    //   (원본 maskRef → paintPointsRef, maskMarkersRef → paintOverlaysRef.)
+    useEffect(() => {
+      const scene = sceneRef.current;
+      const camera = cameraRef.current;
+      const engine = engineRef.current;
+      const canvas = canvasRef.current;
+      if (!scene || !camera || !engine || !canvas) return;
+      if (editMode !== "dental-brush") return;
+
+      canvas.style.cursor = "none";
+
+      // 메쉬의 로컬 +Y 축을 dir 방향으로 정렬 (원본 orientYTo verbatim).
+      const orientYTo = (m: Mesh, dir: Vector3): void => {
+        const d = dir.normalizeToNew();
+        const up = new Vector3(0, 1, 0);
+        const dt = Math.max(-1, Math.min(1, Vector3.Dot(up, d)));
+        if (dt > 0.999999) {
+          m.rotationQuaternion = Quaternion.Identity();
+        } else if (dt < -0.999999) {
+          m.rotationQuaternion = Quaternion.RotationAxis(
+            new Vector3(1, 0, 0),
+            Math.PI,
+          );
+        } else {
+          m.rotationQuaternion = Quaternion.RotationAxis(
+            Vector3.Cross(up, d).normalize(),
+            Math.acos(dt),
+          );
+        }
+      };
+
+      // 한 스트로크 동안 색칠/지우기로 영향 받은 mesh 를 모아둔다.
+      //   computePaintedFaceIds 는 O(전체 tri × painted 점) 전수 스캔이라
+      //   매 브러쉬 스텝(POINTERMOVE 당 최대 80 회)마다 돌리면 대형 스캔에서
+      //   프리즈. 따라서 스텝마다는 mesh 만 기록하고, 실제 재계산·통지는
+      //   스트로크 종료(POINTERUP / 단발 클릭)에서 mesh 당 1 회만 flush 한다.
+      //   판정 로직 자체는 무변경 — 호출 시점만 스트로크 단위로 이동.
+      const touchedMeshes = new Set<Mesh>();
+      const markTouched = (mesh: Mesh): void => {
+        touchedMeshes.add(mesh);
+      };
+      // 모아둔 touched mesh 마다 painted face 를 재계산해 통지 후 비운다.
+      const flushPaintedNotifications = (): void => {
+        if (touchedMeshes.size === 0) return;
+        for (const mesh of touchedMeshes) {
+          let stlId: string | undefined;
+          for (const [id, m] of meshMapRef.current) {
+            if (m === mesh) {
+              stlId = id;
+              break;
+            }
+          }
+          if (!stlId) continue;
+          const faces = computePaintedFaceIds(mesh, paintPointsRef.current);
+          onPaintedFacesChangeRef.current?.(stlId, Array.from(faces));
+        }
+        touchedMeshes.clear();
+      };
+
+      // mask 도구: 표면 법선에 맞춰 기울어지는 3D 브러쉬 링 (호버 시 표시).
+      const brushRing = MeshBuilder.CreateTorus(
+        "v2_brushRing",
+        { diameter: 1, thickness: 0.07, tessellation: 40 },
+        scene,
+      );
+      const rm = new StandardMaterial("v2_brushRingMat", scene);
+      rm.emissiveColor = new Color3(0.2, 0.85, 0.95);
+      rm.diffuseColor = new Color3(0, 0, 0);
+      rm.disableLighting = true;
+      rm.disableDepthWrite = true;
+      brushRing.material = rm;
+      brushRing.isPickable = false;
+      brushRing.renderingGroupId = 1;
+      brushRing.setEnabled(false);
+
+      // SHIFT + 마우스 휠 → 브러쉬 커서 크기 조정 (카메라 줌은 막음).
+      const maskWheel = (e: WheelEvent): void => {
+        if (!e.shiftKey) return; // SHIFT 없으면 일반 휠(카메라 줌) 그대로
+        e.preventDefault();
+        e.stopImmediatePropagation(); // Babylon 카메라 줌 입력 차단
+        const cur = brushThicknessRef.current;
+        const next = Math.max(0.5, Math.min(30, cur + (e.deltaY < 0 ? 1 : -1)));
+        if (next === cur) return;
+        brushThicknessRef.current = next; // 브러쉬 링 즉시 반영
+        onBrushThicknessChangeRef.current?.(next); // 패널 상태 동기화
+      };
+      canvas.addEventListener("wheel", maskWheel, {
+        capture: true,
+        passive: false,
+      });
+
+      // 현재 활성(선택)된 STL — 색칠은 이 메쉬에만 적용 (원본 getActiveMesh).
+      const getActiveMesh = (): Mesh | null => {
+        const ids = Array.from(selectedRef.current);
+        let id: string | undefined = ids[0];
+        if (!id) id = [...meshMapRef.current.keys()][0];
+        return id ? meshMapRef.current.get(id) ?? null : null;
+      };
+      // scene.pick 술어 — 활성 STL 메쉬만 picking 대상으로 한정.
+      const onlyActive = (m: { uniqueId: number }): boolean => {
+        const a = getActiveMesh();
+        return !!a && (m as unknown as Mesh) === a;
+      };
+
+      // mm → 화면 px (거리 dist 에서의 원근 투영) — 원본 mmToPx verbatim.
+      const mmToPx = (mm: number, dist: number): number =>
+        (mm * engine.getRenderHeight()) / (2 * dist * Math.tan(camera.fov / 2));
+
+      // ── 브러쉬 상태 ──
+      let brushing = false;
+      let lastBrush: { x: number; y: number } | null = null;
+
+      // mask — 보호 영역을 STL 표면에 데칼로 직접 색칠. 원본 addMaskPoint 이식.
+      const addMaskPoint = (x: number, y: number): void => {
+        const pick = scene.pick(x, y, onlyActive);
+        if (!pick?.hit || !pick.pickedPoint || !pick.pickedMesh) return;
+        // 데칼 투영 방향 — 원본은 smooth normal 우선. Babylon getNormal(true,true)
+        //   = 정점 보간(smooth) world 법선. 실패 시 face 법선 fallback.
+        let normal: Vector3 | null = pick.getNormal(true, true);
+        if (!normal || normal.lengthSquared() < 1e-9) {
+          normal = pick.getNormal(false, true);
+        }
+        if (!normal || normal.lengthSquared() < 1e-9) return;
+        normal = normal.normalizeToNew();
+        const viewDir = pick.pickedPoint.subtract(camera.position);
+        if (Vector3.Dot(normal, viewDir) > 0) normal = normal.negate();
+        const dia = Math.max(brushThicknessRef.current, 1);
+        // 데칼 투영 깊이 — 작게 잡아 반대편(뒷면)까지 뚫고 칠해지지 않게 한다.
+        const depthSize = Math.min(dia, 3);
+
+        // STL 표면 geometry 에 밀착하는 데칼로 색칠 (size.z = 투영 깊이).
+        const decal = MeshBuilder.CreateDecal("v2_maskDecal", pick.pickedMesh, {
+          position: pick.pickedPoint,
+          normal,
+          size: new Vector3(dia, dia, depthSize),
+        });
+
+        // 클릭한 면 각도와 비슷한 삼각형만 유지 → 다른 각도의 면으로 안 번짐.
+        const dpos = decal.getVerticesData("position");
+        const didx = decal.getIndices();
+        const dnorm = decal.getVerticesData("normal");
+        if (dpos && didx && dnorm) {
+          const COS = Math.cos((45 * Math.PI) / 180); // 45° 이내 면만
+          const depthLimit = depthSize * 0.55; // 클릭 표면 근처만 유지 → 뒷면 제외
+          const hit = pick.pickedPoint;
+          const wm = decal.computeWorldMatrix(true);
+          const kp: number[] = [];
+          const ki: number[] = [];
+          let k = 0;
+          for (let t = 0; t < didx.length; t += 3) {
+            const i0 = didx[t] * 3;
+            const i1 = didx[t + 1] * 3;
+            const i2 = didx[t + 2] * 3;
+            const a = Vector3.TransformCoordinates(
+              new Vector3(dpos[i0], dpos[i0 + 1], dpos[i0 + 2]),
+              wm,
+            );
+            const b = Vector3.TransformCoordinates(
+              new Vector3(dpos[i1], dpos[i1 + 1], dpos[i1 + 2]),
+              wm,
+            );
+            const c = Vector3.TransformCoordinates(
+              new Vector3(dpos[i2], dpos[i2 + 1], dpos[i2 + 2]),
+              wm,
+            );
+            const tn = Vector3.TransformNormal(
+              new Vector3(
+                dnorm[i0] + dnorm[i1] + dnorm[i2],
+                dnorm[i0 + 1] + dnorm[i1 + 1] + dnorm[i2 + 1],
+                dnorm[i0 + 2] + dnorm[i1 + 2] + dnorm[i2 + 2],
+              ),
+              wm,
+            );
+            if (tn.lengthSquared() < 1e-12) continue;
+            tn.normalize();
+            if (Vector3.Dot(tn, normal) < COS) continue;
+            const ctr = a.add(b).add(c).scale(1 / 3);
+            if (Vector3.Dot(ctr.subtract(hit), normal) < -depthLimit) continue;
+            for (const ii of [i0, i1, i2]) {
+              kp.push(dpos[ii], dpos[ii + 1], dpos[ii + 2]);
+            }
+            ki.push(k, k + 1, k + 2);
+            k += 3;
+          }
+          if (ki.length === 0) {
+            decal.dispose();
+            return;
+          }
+          const norms: number[] = [];
+          VertexData.ComputeNormals(kp, ki, norms);
+          const vd = new VertexData();
+          vd.positions = kp;
+          vd.indices = ki;
+          vd.normals = norms;
+          vd.applyToMesh(decal);
+        }
+
+        const maskMesh = pick.pickedMesh as Mesh;
+        // painted 점 저장용 normal — 시각용 smooth normal 이 아니라 picked face 의
+        //   face normal 사용. isMasked 의 정면 검사가 face normal 기반이라
+        //   일관성 유지 → 마진 찾기 painted set 이 원본과 동일하게 나온다.
+        let storeNormal = pick.getNormal(false, true);
+        if (!storeNormal || storeNormal.lengthSquared() < 1e-9) {
+          storeNormal = normal; // fallback
+        } else {
+          storeNormal = storeNormal.normalizeToNew();
+          if (Vector3.Dot(storeNormal, viewDir) > 0) {
+            storeNormal = storeNormal.negate();
+          }
+        }
+        paintPointsRef.current.push(
+          makePaintPoint(maskMesh, pick.pickedPoint, storeNormal, dia),
+        );
+        decal.isPickable = false;
+        // 모델과 같은 렌더링 그룹(0) + 깊이쓰기 ON → 뒷면 색칠 투과 방지.
+        const dm = new StandardMaterial("v2_maskMat", scene);
+        dm.emissiveColor = new Color3(0.96, 0.52, 0.13); // 주황 (#F5852B 계열)
+        dm.diffuseColor = new Color3(0, 0, 0);
+        dm.disableLighting = true;
+        dm.backFaceCulling = false;
+        dm.zOffset = -2;
+        decal.material = dm;
+        decal.setParent(pick.pickedMesh); // 모델과 함께 움직이도록
+        paintOverlaysRef.current.push(decal);
+        markTouched(maskMesh); // 통지는 스트로크 종료 시 flush.
+      };
+
+      // mask — Ctrl+드래그 지우개. 원본 eraseMaskAt 이식.
+      const eraseMaskAt = (x: number, y: number): void => {
+        const pick = scene.pick(x, y, onlyActive);
+        if (!pick?.hit || !pick.pickedPoint) return;
+        const p = pick.pickedPoint;
+        let eraseN: Vector3 | null = pick.getNormal(true, true);
+        if (!eraseN || eraseN.lengthSquared() < 1e-9) {
+          eraseN = pick.getNormal(false, true);
+        }
+        if (eraseN && eraseN.lengthSquared() < 1e-9) eraseN = null;
+        if (eraseN) {
+          eraseN = eraseN.normalizeToNew();
+          const vd = pick.pickedPoint.subtract(camera.position);
+          if (Vector3.Dot(eraseN, vd) > 0) eraseN = eraseN.negate();
+        }
+        const COS = Math.cos((30 * Math.PI) / 180);
+        const r = Math.max(brushThicknessRef.current / 2, 1);
+        for (let i = paintPointsRef.current.length - 1; i >= 0; i--) {
+          const entry = paintPointsRef.current[i];
+          const wm = entry.mesh.getWorldMatrix();
+          const wp = Vector3.TransformCoordinates(entry.localPoint, wm);
+          if (Vector3.Distance(wp, p) >= r + entry.radius) continue;
+          if (eraseN) {
+            const en = Vector3.TransformNormal(
+              entry.localNormal,
+              wm,
+            ).normalize();
+            if (Vector3.Dot(en, eraseN) < COS) continue;
+          }
+          markTouched(entry.mesh); // 통지는 스트로크 종료 시 flush.
+          paintOverlaysRef.current[i]?.dispose(false, true);
+          paintOverlaysRef.current.splice(i, 1);
+          paintPointsRef.current.splice(i, 1);
+        }
+      };
+
+      const obs = scene.onPointerObservable.add((pi) => {
+        const ev = pi.event as PointerEvent;
+
+        if (pi.type === PointerEventTypes.POINTERMOVE) {
+          // 커서(브러쉬 링) 갱신 + 브러쉬 페인팅.
+          const pick = scene.pick(scene.pointerX, scene.pointerY, onlyActive);
+          const dist =
+            pick?.hit && pick.pickedPoint
+              ? Vector3.Distance(camera.position, pick.pickedPoint)
+              : camera.radius;
+          const sizePx = Math.max(mmToPx(brushThicknessRef.current, dist), 4);
+
+          let ringShown = false;
+          if (pick?.hit && pick.pickedPoint) {
+            let n: Vector3 | null = pick.getNormal(true, true);
+            if (!n || n.lengthSquared() < 1e-9) n = pick.getNormal(false, true);
+            if (n && n.lengthSquared() < 1e-9) n = null;
+            if (n) {
+              n = n.normalizeToNew();
+              const vd = pick.pickedPoint.subtract(camera.position);
+              if (Vector3.Dot(n, vd) > 0) n = n.negate();
+              const d = Math.max(brushThicknessRef.current, 1);
+              brushRing.scaling.set(d, d, d);
+              brushRing.position = pick.pickedPoint.add(n.scale(0.1));
+              orientYTo(brushRing, n);
+              (brushRing.material as StandardMaterial).emissiveColor =
+                ev.ctrlKey
+                  ? new Color3(0.95, 0.25, 0.25) // 지우개
+                  : new Color3(0.2, 0.85, 0.95); // 칠하기
+              brushRing.setEnabled(true);
+              ringShown = true;
+            }
+          }
+          if (!ringShown) brushRing.setEnabled(false);
+
+          if (brushing) {
+            // lastBrush→현재 점 구간을 stepPx 간격으로 채운다 (연속 획).
+            const stepPx = Math.max(sizePx * 0.1, 2);
+            const paintAt = (px: number, py: number): void => {
+              if (ev.ctrlKey) eraseMaskAt(px, py);
+              else addMaskPoint(px, py);
+            };
+            if (!lastBrush) {
+              paintAt(scene.pointerX, scene.pointerY);
+              lastBrush = { x: scene.pointerX, y: scene.pointerY };
+            } else {
+              const dx = scene.pointerX - lastBrush.x;
+              const dy = scene.pointerY - lastBrush.y;
+              const d = Math.hypot(dx, dy);
+              if (d >= stepPx) {
+                const steps = Math.min(Math.floor(d / stepPx), 80);
+                for (let s = 1; s <= steps; s++) {
+                  const t = (s * stepPx) / d;
+                  paintAt(lastBrush.x + dx * t, lastBrush.y + dy * t);
+                }
+                const adv = (steps * stepPx) / d;
+                lastBrush = {
+                  x: lastBrush.x + dx * adv,
+                  y: lastBrush.y + dy * adv,
+                };
+              }
+            }
+          }
+        } else if (pi.type === PointerEventTypes.POINTERDOWN) {
+          // 좌클릭 → 칠하기 스트로크 시작.
+          if (ev.button === 0) {
+            brushing = true;
+            lastBrush = { x: scene.pointerX, y: scene.pointerY };
+            if (ev.ctrlKey) eraseMaskAt(scene.pointerX, scene.pointerY);
+            else addMaskPoint(scene.pointerX, scene.pointerY);
+          }
+        } else if (pi.type === PointerEventTypes.POINTERUP) {
+          // 스트로크 종료 — 이 스트로크에서 색칠/지운 mesh 들의 painted face 를
+          //   여기서 1 회만 재계산·통지 (단발 클릭도 DOWN→UP 이라 포함).
+          brushing = false;
+          lastBrush = null;
+          flushPaintedNotifications();
+        }
+        // 원본의 마진 floodfill 더블탭(POINTERDOUBLETAP)은 이 조각 범위 밖
+        // (마진/아일랜드는 2-3b/c) — 여기서는 색칠만 담당.
+      });
+
+      return () => {
+        // 스트로크 중 모드 전환 등으로 UP 을 못 받은 경우 대비 — 남은 touched
+        //   mesh 를 정리 통지 (통지 누락 방지).
+        flushPaintedNotifications();
+        scene.onPointerObservable.remove(obs);
+        canvas.style.cursor = "";
+        brushRing.dispose(false, true);
+        rm.dispose();
+        canvas.removeEventListener("wheel", maskWheel, true);
+        // 원본은 도구 종료 시 clearMask() 로 색칠을 지웠다. v2 에서는 모드
+        // 전환 시 painted(세션 상태)를 유지 — margin/island 조각이 같은 색칠을
+        // 재사용할 수 있도록. 명시적 지우기는 clearDentalPaint()(패널 버튼).
+      };
+    }, [editMode]);
 
     // 5) 외부 ref API
     useImperativeHandle(
@@ -2095,6 +2546,30 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             ],
             thickness,
           };
+        },
+        clearDentalPaint() {
+          // 오버레이 데칼 dispose + painted 점 초기화 (원본 clearMask 대응).
+          const affected = new Set<Mesh>();
+          for (const pt of paintPointsRef.current) affected.add(pt.mesh);
+          for (const ov of paintOverlaysRef.current) ov.dispose(false, true);
+          paintOverlaysRef.current = [];
+          paintPointsRef.current = [];
+          // 색칠이 있던 STL 마다 빈 목록 통지.
+          for (const mesh of affected) {
+            for (const [id, m] of meshMapRef.current) {
+              if (m === mesh) {
+                onPaintedFacesChangeRef.current?.(id, []);
+                break;
+              }
+            }
+          }
+        },
+        getPaintedFaceIds(stlId) {
+          const mesh = meshMapRef.current.get(stlId);
+          if (!mesh) return [];
+          return Array.from(
+            computePaintedFaceIds(mesh, paintPointsRef.current),
+          );
         },
       }),
       [],
