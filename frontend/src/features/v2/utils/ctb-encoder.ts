@@ -4,13 +4,42 @@ import {
   DEFAULT_LIFT_SPEED_MM_S,
   DEFAULT_RETRACT_SPEED_MM_S,
   DEFAULT_LIGHT_OFF_DELAY_SEC,
+  type PrinterProfileV2,
 } from "../types/printer";
 import { layerExposureSec } from "./exposure";
+import { estimatePrintTimeSec } from "./print-time";
 import type { SliceMask } from "./slice-rasterize";
 
 /** mm/s → mm/min (CTB 리프트/하강 속도 필드는 mm/min 단위). */
 function mmPerSecToMmPerMin(mmPerSec: number): number {
   return mmPerSec * 60;
+}
+
+/**
+ * CTB 조립 옵션(폴백 해결 완료) → estimatePrintTimeSec 가 읽는 프로파일 형태로 매핑.
+ *
+ * 헤더의 예상 출력 시간이 UI(SliceSidePanel)와 완전히 동일한 값이 되도록,
+ * 시간 공식은 print-time.ts 의 estimatePrintTimeSec 한 곳에서만 관리한다.
+ * estimatePrintTimeSec 는 아래 8개 노광/리프트/딜레이 필드만 읽으므로 나머지
+ * 필수 필드(id, name, lcd 해상도, pixelPitch, buildVolume)는 계산에 영향 없는 placeholder.
+ */
+function ctbOptionsToProfile(opts: CtbAssembleOptions): PrinterProfileV2 {
+  return {
+    id: "",
+    name: "",
+    lcdWidthPx: opts.resolutionX,
+    lcdHeightPx: opts.resolutionY,
+    pixelPitchUm: 0,
+    buildVolumeMm: [opts.bedSizeXMm, opts.bedSizeYMm, opts.bedSizeZMm],
+    exposureSec: opts.exposureSec,
+    bottomExposureSec: opts.bottomExposureSec,
+    bottomLayerCount: opts.bottomLayers,
+    transitionLayerCount: opts.transitionLayers,
+    liftDistanceMm: opts.liftDistanceMm,
+    liftSpeedMmS: opts.liftSpeedMmS,
+    retractSpeedMmS: opts.retractSpeedMmS,
+    lightOffDelaySec: opts.lightOffSec,
+  };
 }
 
 /**
@@ -229,7 +258,9 @@ export function assembleCtb(
   view.setUint32(p, layerTableOffset, true); p += 4;
   view.setUint32(p, layerCount, true); p += 4;
   view.setUint32(p, previewSmallOffset, true); p += 4; // preview "two" = small
-  view.setUint32(p, Math.round(layerCount * (exposureSec + lightOffSec)), true); p += 4; // print time
+  // 예상 출력 시간: UI(SliceSidePanel)와 동일하게 print-time.ts 공식으로 계산
+  // (레이어별 노광 보간 + lightOff + 리프트 왕복). 헤더 필드는 초 단위 Uint32.
+  view.setUint32(p, Math.round(estimatePrintTimeSec(layerCount, ctbOptionsToProfile(opts))), true); p += 4; // print time
   view.setUint32(p, 0, true); p += 4; // projector = cast
   view.setUint32(p, printParamsOffset, true); p += 4;
   view.setUint32(p, printParamsSize, true); p += 4;
