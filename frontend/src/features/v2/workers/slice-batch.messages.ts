@@ -52,6 +52,12 @@ export interface CtbRequest {
     bottomLayerCount?: number;
     transitionLayerCount?: number;
     lightOffDelaySec?: number;
+    /** 리프트 거리 (mm). 미지정 시 워커에서 DEFAULT_* 폴백. */
+    liftDistanceMm?: number;
+    /** 리프트 속도 (mm/s). 미지정 시 워커에서 DEFAULT_* 폴백. */
+    liftSpeedMmS?: number;
+    /** 하강 속도 (mm/s). 미지정 시 워커에서 DEFAULT_* 폴백. */
+    retractSpeedMmS?: number;
   };
 }
 
