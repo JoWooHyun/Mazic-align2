@@ -113,4 +113,29 @@ export interface SupportPointV2 {
    * 자동 마이그레이션.
    */
   coordSpace?: "world" | "stl-local";
+  /**
+   * 서포트 형태(렌더/생성 알고리즘) 판별 필드.
+   *   · undefined (또는 'trunk'): 기존 유승제 trunk/bridge 서포트.
+   *     기존 데이터·기존 코드 경로 완전 무변경 (하위 호환 보장).
+   *   · 'disc': 지현규 dental disc 서포트 (구형 팁 - 목 - 몸통 튜브).
+   *     렌더는 dental-support.ts 의 createSupport 로 분기된다.
+   *
+   * source ('auto'|'manual'|'bridge') 와 직교한다. disc 는 항상
+   * source='manual' (단점 배치)로 생성되지만, 판별은 variant 로 한다.
+   */
+  variant?: "trunk" | "disc";
+  /**
+   * variant='disc' 전용 — 배치 시점의 dental SupportSettings 스냅샷.
+   *
+   * disc mesh 생성(dental-support.ts createSupport)에 필요한 치수만
+   * 저장한다. 저장 시점 값을 그대로 보관 → 이후 전역 기본값이 바뀌어도
+   * 이미 배치된 disc 형상은 유지된다. variant!=='disc' 이면 무시/undefined.
+   */
+  discSettings?: {
+    tipTopDiameter: number;
+    tipBottomDiameter: number;
+    contactDepth: number;
+    supportAngle: number;
+    touchTipDistance: number;
+  };
 }

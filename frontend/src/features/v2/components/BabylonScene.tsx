@@ -62,7 +62,10 @@ import {
   type FindMarginResult,
   type FindMarginStats,
 } from "../utils/dental/margin-detect";
-import { readWorldTriangles } from "../utils/dental/dental-support";
+import {
+  readWorldTriangles,
+  createSupport as createDiscSupport,
+} from "../utils/dental/dental-support";
 import {
   detectSliceIslands,
   type SliceIslandResult,
@@ -100,8 +103,21 @@ function buildSupportKey(
   const c = localContact.map(f).join(",");
   const b = localBase.map(f).join(",");
   const cps = localCps ? localCps.map((p) => p.map(f).join(",")).join(";") : "";
+  // disc variant 는 dental 치수 스냅샷도 key 에 반영 (형상 결정 요소).
+  //   trunk/bridge 는 discSettings 가 없어 빈 문자열 → 기존 key 와 동일.
+  const ds = point.discSettings;
+  const disc = ds
+    ? [
+        ds.tipTopDiameter,
+        ds.tipBottomDiameter,
+        ds.contactDepth,
+        ds.supportAngle,
+        ds.touchTipDistance,
+      ].join(",")
+    : "";
   return [
     point.source,
+    point.variant ?? "trunk",
     c,
     b,
     cps,
@@ -111,6 +127,7 @@ function buildSupportKey(
     params.baseTransitionMm,
     params.tipTransitionMm,
     params.bridgeDiameterMm,
+    disc,
   ].join("|");
 }
 
@@ -1405,6 +1422,17 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         if (started.kind === "support") {
           const sMesh = supportMeshMapRef.current.get(started.id);
           if (!sMesh) return;
+          // disc 는 world-baked geometry (mesh.position = 원점)이라 trunk
+          //   처럼 position.x/z 로 base 이동을 표현할 수 없다. 좌표 손상을
+          //   막기 위해 disc 기둥 gizmo 이동은 무시한다 (선택·삭제는 유지).
+          //   재배치가 필요하면 삭제 후 다시 배치. (trunk 이동 경로 무변경.)
+          const sup = supportsRef.current.find((s) => s.id === started.id);
+          if (sup?.variant === "disc") {
+            // gizmo 가 옮긴 만큼 원위치로 되돌린다 (baked geometry 라
+            //   position=원점이 정상 상태 → 시각적 잔상 방지).
+            sMesh.position.set(0, 0, 0);
+            return;
+          }
           onMoveSupportRef.current(started.id, [
             sMesh.position.x,
             sMesh.position.z,
@@ -1938,6 +1966,50 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           continue;
         }
         if (existing) existing.dispose();
+
+        // disc variant — 지현규 dental disc 서포트. trunk/bridge 렌더
+        //   (createSupportMesh) 와 완전 분기. contact 는 world 좌표(manual
+        //   support 와 동일 규약)이며, createDiscSupport 가 그 지점부터
+        //   plate(Y=0)까지 world-space mesh 를 만든다. parent 없음 →
+        //   기존 manual/world support 와 동일하게 STL transform 시 재빌드.
+        if (p.variant === "disc") {
+          const ds = p.discSettings;
+          if (!ds) continue; // discSettings 없는 disc = 데이터 이상 → skip.
+          const discMesh = createDiscSupport(
+            scene,
+            new Vector3(p.contact[0], p.contact[1], p.contact[2]),
+            p.contactNormal
+              ? new Vector3(
+                  p.contactNormal[0],
+                  p.contactNormal[1],
+                  p.contactNormal[2],
+                )
+              : new Vector3(0, 1, 0),
+            ds,
+          );
+          if (!discMesh) continue; // 목이 너무 짧은 등 생성 실패 → skip.
+          // dental createSupport 는 호출마다 자체 StandardMaterial 을
+          //   새로 만든다. disc 는 parent 가 없어 rebuild skip 이 안 되고
+          //   effect 마다 전량 재생성되므로, mesh dispose 지점(1928/1968)
+          //   이 material 을 지우지 않으면 무한 누적된다. 개별 material 을
+          //   공용 supportMaterial 로 교체하고 원본을 즉시 dispose →
+          //   두 dispose 지점 모두에서 릭 없음 (mesh 만 지워도 안전).
+          const ownMat = discMesh.material;
+          discMesh.material = mat;
+          ownMat?.dispose();
+          // 선택/삭제(support 모드)용 metadata — createSupportMesh 와 동일
+          //   규약 (type/supportId/stlId) + rebuildKey.
+          discMesh.isPickable = editModeRef.current === "support";
+          discMesh.metadata = {
+            type: "support",
+            supportId: p.id,
+            stlId: p.stlId,
+            baseStlId: p.baseStlId,
+            rebuildKey: key,
+          };
+          map.set(p.id, discMesh);
+          continue;
+        }
 
         const m = createSupportMesh(
           scene,

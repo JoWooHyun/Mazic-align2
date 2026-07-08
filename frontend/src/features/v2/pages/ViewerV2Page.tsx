@@ -13,6 +13,7 @@ import { useUndoStore } from "../hooks/useUndoStore";
 import { SupportParamsPanel, useSupportParamsStore } from "../support";
 import * as supportRepo from "../data/supports.repo";
 import type { SupportPointV2 } from "../support/types";
+import { DEFAULT_SUPPORT_SETTINGS } from "../utils/dental/dental-support";
 import { downloadBlob } from "../utils/stl-export";
 import { sliceBatchService } from "../utils/slice-batch-service";
 import BabylonScene, {
@@ -120,6 +121,10 @@ const ViewerV2Page: React.FC = () => {
   const [alignFloorMode, setAlignFloorMode] = useState(false);
   const [editMode, setEditMode] = useState<EditMode>("select");
   const [bridgeMode, setBridgeMode] = useState(false);
+  // disc(디스크 서포트) 배치 서브 모드 — support 편집 모드 안에서만 의미.
+  //   bridge 와 상호 배타 (동시에 켤 수 없음). 켜져 있으면 모델 표면 클릭이
+  //   trunk 대신 지현규 dental disc 서포트를 배치한다.
+  const [discMode, setDiscMode] = useState(false);
   // dental-brush 색칠 두께 (mm). 씬 SHIFT+휠 로도 갱신됨.
   const [brushThicknessMm, setBrushThicknessMm] = useState(3);
   // stlId → painted face index 목록 (세션 상태). margin/island 조각 입력.
@@ -444,8 +449,25 @@ const ViewerV2Page: React.FC = () => {
         return;
       }
 
-      // 단점 모드 (기존).
+      // 단점 모드 (기존) / disc 모드 (지현규 dental disc).
+      //   둘 다 "모델 표면 클릭 → 단일 서포트 배치" 로 동작이 동일하고,
+      //   저장·undo·삭제 경로도 공유한다. 차이는 variant / discSettings 뿐.
       if (contact[1] <= 0.5) return;
+      // disc: dental createSupport 는 목 길이(tubeTop→bend)가 하한
+      //   (CONN 1.6 + 0.5) 미만이면 null 을 반환한다. 그대로 저장하면
+      //   mesh 없는 유령 DB 레코드가 남아 UI 로 삭제할 수 없으므로,
+      //   저장 전에 dental 과 동일한 계산으로 생성 가능 여부를 검증한다.
+      //   (모델 표면이 베드에 너무 가까울 때 조용히 무시 — 새 UI 없음.)
+      if (discMode) {
+        const ds = DEFAULT_SUPPORT_SETTINGS;
+        const sphereR = Math.max(
+          ds.tipTopDiameter / 2,
+          Math.max(ds.tipBottomDiameter / 2, 0.1),
+        );
+        const tubeTopY = contact[1] + ds.contactDepth - sphereR;
+        const bendY = Math.max(0.5, contact[1] - 4);
+        if (tubeTopY - bendY < 1.6 + 0.5) return; // 목 길이 하한 미달 → 배치 안 함.
+      }
       // base: contact 에서 -Y 로 가장 가까운 표면 (자기 모델 제외).
       // 다른 STL 위에 단점이 서 있으면 그 모델 상단에 base 부착되어
       // 기둥 직선이 다른 STL 을 통과하지 않게 된다.
@@ -465,6 +487,14 @@ const ViewerV2Page: React.FC = () => {
         source: "manual",
         addedAt: Date.now(),
         contactNormal: normal,
+        // disc 모드면 variant='disc' + 배치 시점 dental 치수 스냅샷.
+        // (trunk 는 variant 미지정 → 기존 코드 경로 그대로.)
+        ...(discMode
+          ? {
+              variant: "disc" as const,
+              discSettings: { ...DEFAULT_SUPPORT_SETTINGS },
+            }
+          : {}),
       };
       await addSupports([newPoint]);
       useUndoStore.getState().push({
@@ -478,7 +508,7 @@ const ViewerV2Page: React.FC = () => {
         },
       });
     },
-    [projectId, bridgeMode, pendingBridge, addSupports, refreshSupports],
+    [projectId, bridgeMode, discMode, pendingBridge, addSupports, refreshSupports],
   );
 
   const handleRemoveSupport = useCallback(
@@ -1623,6 +1653,7 @@ const ViewerV2Page: React.FC = () => {
                 if (m !== "support") {
                   setSelectedSupportId(null);
                   setBridgeMode(false);
+                  setDiscMode(false);
                   setPendingBridge(null);
                 }
                 // dental 모드 진입 시 우측 패널을 Dental 탭으로.
@@ -1668,6 +1699,12 @@ const ViewerV2Page: React.FC = () => {
                     : "첫 번째 지점을 클릭"}{" "}
                   · <kbd className="px-1 border rounded">Esc</kbd> = 취소
                 </span>
+              ) : discMode ? (
+                <span className="pointer-events-none">
+                  <strong>디스크 서포트 모드</strong> · 모델 표면 = 배치 ·
+                  기둥 클릭 = 선택 ·{" "}
+                  <kbd className="px-1 border rounded">Delete</kbd> = 삭제
+                </span>
               ) : (
                 <span className="pointer-events-none">
                   <strong>서포트 편집</strong> · 모델 표면 = 추가 · 기둥 클릭
@@ -1678,6 +1715,7 @@ const ViewerV2Page: React.FC = () => {
               <button
                 onClick={() => {
                   setBridgeMode((v) => !v);
+                  setDiscMode(false); // bridge 와 disc 는 상호 배타.
                   setPendingBridge(null);
                 }}
                 className={`px-2 py-0.5 text-xs border rounded transition-colors ${
@@ -1687,6 +1725,21 @@ const ViewerV2Page: React.FC = () => {
                 }`}
               >
                 Bridge
+              </button>
+              <button
+                onClick={() => {
+                  setDiscMode((v) => !v);
+                  setBridgeMode(false); // disc 와 bridge 는 상호 배타.
+                  setPendingBridge(null);
+                }}
+                className={`px-2 py-0.5 text-xs border rounded transition-colors ${
+                  discMode
+                    ? "bg-primary-600 text-white border-primary-600"
+                    : "border-primary-600 text-primary-700 hover:bg-primary-50"
+                }`}
+                title="지현규 dental disc 서포트 — 모델 표면 클릭으로 배치"
+              >
+                Disc
               </button>
               <button
                 onClick={() => void handleResetBridgeCurve()}
@@ -1857,6 +1910,7 @@ const ViewerV2Page: React.FC = () => {
                   setSelectedCp(null);
                   setSelectedSupportId(null);
                   setBridgeMode(false);
+                  setDiscMode(false);
                   setPendingBridge(null);
                 }}
                 brushThicknessMm={brushThicknessMm}
