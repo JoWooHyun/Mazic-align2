@@ -1,67 +1,35 @@
 @echo off
-chcp 65001 >nul
-setlocal enabledelayedexpansion
+REM MazicAlign - Start the dev server (frontend only, v2)
+REM Messages are in English on purpose to avoid console encoding issues.
+setlocal
 
 echo ========================================
-echo MazicAlign Development Server (Dev Mode)
+echo  MazicAlign - Start
 echo ========================================
 echo.
 
-REM Move to script directory
+REM Move to the folder where this script lives.
 cd /d "%~dp0"
 
-REM Check requirements
-echo Checking requirements...
-
-REM Check Node.js
+REM Check Node.js.
 where node >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [ERROR] Node.js is not installed or not in PATH
-    echo Please install Node.js from https://nodejs.org/
+    echo [ERROR] Node.js is not installed.
+    echo Please install the LTS version from https://nodejs.org/ and try again.
     echo.
     pause
     exit /b 1
 )
 
-REM Check npm
-where npm >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] npm is not installed or not in PATH
-    echo.
-    pause
-    exit /b 1
-)
-
-for /f "tokens=*" %%i in ('node --version') do set NODE_VER=%%i
-for /f "tokens=*" %%i in ('npm --version') do set NPM_VER=%%i
-echo [OK] Node.js %NODE_VER%
-echo [OK] npm %NPM_VER%
-echo.
-
-REM Check Backend Dependencies
-if not exist "backend\node_modules\" (
-    echo [WARNING] Backend dependencies not installed
-    echo Installing backend dependencies...
-    cd backend
-    call npm install
-    if %errorlevel% neq 0 (
-        echo [ERROR] Backend installation failed
-        cd ..
-        pause
-        exit /b 1
-    )
-    cd ..
-    echo.
-)
-
-REM Check Frontend Dependencies
+REM Auto-install if dependencies are missing (removes the install-order trap).
 if not exist "frontend\node_modules\" (
-    echo [WARNING] Frontend dependencies not installed
-    echo Installing frontend dependencies...
+    echo Dependencies not found. Installing first...
+    echo.
     cd frontend
     call npm install
     if %errorlevel% neq 0 (
-        echo [ERROR] Frontend installation failed
+        echo.
+        echo [ERROR] npm install failed. Check your internet connection and try again.
         cd ..
         pause
         exit /b 1
@@ -70,40 +38,30 @@ if not exist "frontend\node_modules\" (
     echo.
 )
 
-echo [OK] All dependencies installed
-echo.
+REM Find this PC's LAN IP (best effort) so others on the network can connect.
+set "LAN_IP="
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
+    if not defined LAN_IP set "LAN_IP=%%a"
+)
+if defined LAN_IP set "LAN_IP=%LAN_IP: =%"
 
-REM Set Directories
-set "BACKEND_DIR=%~dp0backend"
-set "FRONTEND_DIR=%~dp0frontend"
-
-REM Start Backend
-echo [1/2] Starting Backend Server (port 5173)...
-start "MazicAlign Backend" cmd /k "cd /d %BACKEND_DIR% && npm run dev"
-
-REM Wait for Backend
-echo       Waiting for backend to start...
-timeout /t 5 /nobreak >nul
-
-REM Start Frontend (Vite dev server on 5174 with proxy to backend 5173)
-echo [2/2] Starting Frontend Dev Server...
-start "MazicAlign Frontend" cmd /k "cd /d %FRONTEND_DIR% && npm run dev"
-
-REM Wait for Frontend
-timeout /t 8 /nobreak >nul
-
-REM Open Browser
-echo.
-echo Opening browser...
-start http://localhost:5173/v2
-
-echo.
 echo ========================================
-echo Dev servers running!
+echo  Server starting...
 echo ========================================
 echo.
-echo http://localhost:5173/v2
+echo  Open in your browser:
+echo    http://localhost:5173/v2
+if defined LAN_IP echo    http://%LAN_IP%:5173/v2   ^(other devices on this network^)
 echo.
-echo To stop: close the terminal windows, or run stop-dev.bat
+echo  To stop: close this window, or run stop-dev.bat
 echo.
-pause
+
+REM Open the browser a few seconds after the server has had time to start.
+REM Runs in a separate short-lived window so it does not block the server.
+start "" cmd /c "timeout /t 4 /nobreak >nul & start "" http://localhost:5173/v2"
+
+REM Run the Vite dev server in this window (blocks until stopped).
+REM --host exposes the server on the LAN. Port 5173 is fixed in vite.config.ts.
+cd frontend
+call npm run dev -- --host
+cd ..

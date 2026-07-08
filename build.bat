@@ -1,46 +1,61 @@
 @echo off
-chcp 65001 >nul
-setlocal enabledelayedexpansion
+REM MazicAlign - Build the production bundle (frontend only, v2)
+REM Messages are in English on purpose to avoid console encoding issues.
+setlocal
 
 echo ========================================
-echo MazicAlign Build Script
+echo  MazicAlign - Build
 echo ========================================
 echo.
 
+REM Move to the folder where this script lives.
 cd /d "%~dp0"
 
-REM 프론트엔드 빌드
-echo [1/2] Building Frontend...
+REM Check Node.js.
+where node >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] Node.js is not installed.
+    echo Please install the LTS version from https://nodejs.org/ and try again.
+    echo.
+    pause
+    exit /b 1
+)
+
+REM Auto-install if dependencies are missing (removes the install-order trap).
+if not exist "frontend\node_modules\" (
+    echo Dependencies not found. Installing first...
+    echo.
+    cd frontend
+    call npm install
+    if %errorlevel% neq 0 (
+        echo.
+        echo [ERROR] npm install failed. Check your internet connection and try again.
+        cd ..
+        pause
+        exit /b 1
+    )
+    cd ..
+    echo.
+)
+
+echo Building frontend...
+echo.
 cd frontend
 call npm run build
 if %errorlevel% neq 0 (
-    echo [ERROR] Frontend build failed
+    echo.
+    echo [ERROR] Build failed.
     cd ..
     pause
     exit /b 1
 )
 cd ..
-echo [OK] Frontend built successfully (frontend/dist/)
-echo.
-
-REM 백엔드 빌드
-echo [2/2] Building Backend...
-cd backend
-call npm run build
-if %errorlevel% neq 0 (
-    echo [ERROR] Backend build failed
-    cd ..
-    pause
-    exit /b 1
-)
-cd ..
-echo [OK] Backend built successfully (backend/dist/)
 echo.
 
 echo ========================================
-echo Build Complete!
+echo  Build complete.
 echo ========================================
 echo.
-echo Run start.bat to launch the application.
+echo Output: frontend\dist\
 echo.
 pause

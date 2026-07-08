@@ -3,7 +3,8 @@
 **로컬 PC 전용 3D STL 뷰어 · 슬라이서 플랫폼**
 
 인터넷 연결 없이 로컬 PC에서 완전히 동작하는 치과/교정용 3D STL 관리 시스템입니다.
-ZIP 압축 해제 → `install.bat` → `start.bat` 한 번으로 바로 사용 가능합니다.
+ZIP 압축 해제 → `start-dev.bat` 더블클릭 한 번으로 바로 사용 가능합니다.
+(v2는 프론트엔드만으로 완결 — 백엔드 서버 불요, 데이터는 브라우저 IndexedDB에 저장.)
 
 ---
 
@@ -66,11 +67,10 @@ MazicAlign/
 │   ├── data/                   # SQLite DB (자동 생성)
 │   └── uploads/                # STL 파일 저장 (자동 생성)
 │
-├── install.bat                  # 최초 1회: npm install
-├── build.bat                    # 빌드: frontend + backend
-├── start.bat                    # 서버 실행 (배포)
-├── start-dev.bat                # 개발 모드 (핫 리로드)
-├── stop.bat                     # 서버 종료
+├── install.bat                  # 최초 1회: frontend npm install
+├── start-dev.bat                # 실행 (없으면 자동 설치 후 dev 서버 기동)
+├── stop-dev.bat                 # 서버 종료 (포트 5173)
+├── build.bat                    # 빌드 (frontend/dist 생성)
 └── DESIGN.md                    # v2 재설계 기획 문서
 ```
 
@@ -92,25 +92,30 @@ MazicAlign/
 
 ## 빠른 시작
 
-### 배포판 (ZIP 압축 해제 후)
+### 더블클릭 (권장)
 
 ```
-1. install.bat   ← 최초 1회 (node_modules 설치, ~3분 소요)
-2. build.bat     ← 빌드 (frontend/dist + backend/dist 생성)
-3. start.bat     ← 서버 실행 → 브라우저 자동 오픈
+처음:  start-dev.bat   ← 의존성 자동 설치 후 dev 서버 기동 → 브라우저 자동 오픈
+이후:  start-dev.bat   ← 바로 dev 서버 기동
+종료:  창을 닫거나 stop-dev.bat
 ```
 
-### 개발 모드
+`install.bat` 로 의존성만 먼저 설치해 둘 수도 있지만, `start-dev.bat` 이
+없으면 자동으로 설치하므로 처음이라도 `start-dev.bat` 하나면 충분합니다.
+(설치 순서를 신경 쓸 필요 없음)
+
+### 수동 실행 (명령 프롬프트)
 
 ```cmd
-install.bat       ← 최초 1회
-start-dev.bat     ← Vite 핫 리로드 + 백엔드 동시 실행
+cd frontend
+npm install
+npm run dev
 ```
 
 ### 접속 주소
 
-- **서비스**: http://localhost:5173
-- **헬스 체크**: http://localhost:5173/health
+- **이 PC**: http://localhost:5173/v2
+- **같은 네트워크의 다른 기기**: http://<이 PC IP>:5173/v2 (실행 시 콘솔에 표시)
 
 ---
 
@@ -130,14 +135,14 @@ Node.js 설치: https://nodejs.org/ (LTS 버전)
 
 **서버가 시작되지 않음**
 ```
-install.bat → build.bat 순서로 실행했는지 확인
-backend/dist/index.js 존재 여부 확인
+Node.js LTS 설치 여부 확인 (https://nodejs.org/)
+frontend/node_modules 가 없으면 start-dev.bat 이 자동 설치함
 ```
 
-**포트 5173 충돌**
+**포트 5173 충돌** (`Port 5173 is already in use`)
 ```cmd
-stop.bat
-start.bat
+stop-dev.bat
+start-dev.bat
 ```
 
 **STL 파일이 뷰어에 표시되지 않음**
