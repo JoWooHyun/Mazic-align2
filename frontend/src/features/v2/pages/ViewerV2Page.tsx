@@ -127,6 +127,12 @@ const ViewerV2Page: React.FC = () => {
   const [paintedFaces, setPaintedFaces] = useState<Record<string, number[]>>(
     {},
   );
+  // 마진 찾기 결과 상태 (세션). null = 미실행. ok=false → 실패 사유 표시.
+  //   marginRef 자체는 BabylonScene 내부 — 여기서는 UI 표시/버튼 활성용 상태만.
+  const [marginStatus, setMarginStatus] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
   const [pendingBridge, setPendingBridge] = useState<{
     stlId: string;
     contact: [number, number, number];
@@ -1051,6 +1057,29 @@ const ViewerV2Page: React.FC = () => {
   const handleClearDentalPaint = useCallback(() => {
     sceneHandleRef.current?.clearDentalPaint();
     setPaintedFaces({});
+    // clearDentalPaint 는 씬에서 마진 시각화도 함께 정리하므로 상태도 초기화.
+    setMarginStatus(null);
+  }, []);
+
+  // ----- Dental 마진 찾기 (2-3b) -----
+  //   씬에서 색칠 영역 → findMargin → 초록 튜브 시각화. 성공/실패 사유를
+  //   패널 문구로 표시. painted 0 이면 패널 버튼이 비활성이라 여기 도달 X.
+  const handleFindMargin = useCallback(() => {
+    const res = sceneHandleRef.current?.findDentalMargin();
+    if (!res) return;
+    if (res.ok) {
+      setMarginStatus({
+        ok: true,
+        message: `마진 검출 완료 · 마진 엣지 ${res.stats.marginEdgeCount}개 (색칠 ${res.stats.paintedFaceCount}면)`,
+      });
+    } else {
+      setMarginStatus({ ok: false, message: res.reason });
+    }
+  }, []);
+
+  const handleClearMargin = useCallback(() => {
+    sceneHandleRef.current?.clearDentalMargin();
+    setMarginStatus(null);
   }, []);
 
   // ----- Transform -----
@@ -1776,6 +1805,9 @@ const ViewerV2Page: React.FC = () => {
                   (sum, ids) => sum + ids.length,
                   0,
                 )}
+                onFindMargin={handleFindMargin}
+                onClearMargin={handleClearMargin}
+                marginStatus={marginStatus}
               />
             )}
           </div>

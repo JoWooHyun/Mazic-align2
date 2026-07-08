@@ -1,12 +1,18 @@
 /**
  * DentalPanel — 우측 패널의 치과(dental) 도구 UI.
  *
- * Step 2-3a 범위: 브러쉬 색칠(마스크) 만.
+ * Step 2-3a 범위: 브러쉬 색칠(마스크).
  *   · "브러쉬로 영역 지정" 토글 — dental-brush editMode on/off.
  *   · 브러쉬 두께(mm) 입력 (씬에서 SHIFT+휠로도 조정 → 양방향 동기화).
  *   · "칠 지우기" — 색칠 전부 제거.
  *
- * 마진 찾기 / 아일랜드 검출 버튼은 2-3b/c 에서 추가 (아래 자리만 주석).
+ * Step 2-3b 범위: 마진 찾기.
+ *   · "마진 찾기" — 색칠 영역에서 마진 폐곡선 검출 → 초록 튜브 시각화
+ *     (painted 0 면 비활성). 성공: 마진 엣지 수 표시 / 실패: 사유 문구.
+ *   · "마진 지우기" — 마진 시각화 + floodfill 자동 색칠 제거 (색칠은 유지).
+ *   · 마진 안 더블클릭 → 내부 face floodfill (주황) — 씬에서 동작, 별도 버튼 없음.
+ *
+ * 아일랜드 검출 버튼은 2-3c 에서 추가 (아래 자리만 주석).
  * 스타일은 SupportParamsPanel 패턴을 따른다 (흰 카드 · 회색 라벨 · primary 버튼).
  */
 
@@ -28,6 +34,19 @@ interface DentalPanelProps {
   onClearPaint: () => void;
   /** 현재 색칠된 face 수 (있으면 표시 + "칠 지우기" 활성). */
   paintedFaceCount?: number;
+  /** "마진 찾기" — 색칠 영역에서 마진 검출·시각화 실행. */
+  onFindMargin: () => void;
+  /** "마진 지우기" — 마진 시각화 + floodfill 제거 (색칠은 유지). */
+  onClearMargin: () => void;
+  /**
+   * 마진 찾기 결과 상태 (없으면 미실행). ok=true → 마진 엣지 수/실패 사유는
+   * message 에 담아 표시. 마진이 있으면 "마진 지우기" 활성.
+   */
+  marginStatus?: {
+    ok: boolean;
+    /** 성공/실패 시 사용자에게 보여줄 문구 (원본 console 문구를 UI 문구로). */
+    message: string;
+  } | null;
   className?: string;
 }
 
@@ -38,6 +57,9 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
   onBrushThicknessChange,
   onClearPaint,
   paintedFaceCount = 0,
+  onFindMargin,
+  onClearMargin,
+  marginStatus = null,
   className = "",
 }) => {
   const commitThickness = (raw: number) => {
@@ -118,8 +140,43 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
         </button>
       </div>
 
-      {/* 2-3b: 마진 찾기 버튼 자리 · 2-3c: 아일랜드 검출 버튼 자리
-          (findMargin / island-detection 코어는 이미 이식됨 — UI 연결만 남음). */}
+      {/* 마진 찾기 (2-3b) */}
+      <div className="mt-5 pt-4 border-t border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-gray-700">마진</span>
+        </div>
+        <button
+          onClick={onFindMargin}
+          disabled={paintedFaceCount === 0}
+          className="w-full px-3 py-2 text-sm rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          마진 찾기
+        </button>
+        <p className="mt-2 text-xs text-gray-500">
+          색칠 영역에서 마진 라인을 찾아 초록 선으로 표시 · 마진 안쪽을{" "}
+          <kbd className="px-1 border rounded">더블클릭</kbd> = 자동 색칠
+        </p>
+
+        {marginStatus && (
+          <p
+            className={`mt-2 text-xs ${
+              marginStatus.ok ? "text-green-700" : "text-amber-600"
+            }`}
+          >
+            {marginStatus.message}
+          </p>
+        )}
+
+        <button
+          onClick={onClearMargin}
+          disabled={!marginStatus?.ok}
+          className="mt-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          마진 지우기
+        </button>
+      </div>
+
+      {/* 2-3c: 아일랜드 검출 버튼 자리 (island-detection 코어는 이미 이식됨). */}
     </div>
   );
 };

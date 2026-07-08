@@ -57,6 +57,11 @@ import {
   makePaintPoint,
   type PaintPoint,
 } from "../utils/dental/paint-mask";
+import {
+  findMargin,
+  type FindMarginResult,
+  type FindMarginStats,
+} from "../utils/dental/margin-detect";
 
 function buildBridgeClipKey(
   point: SupportPointV2,
@@ -416,6 +421,22 @@ export interface BabylonSceneHandle {
    * 색칠 없으면 빈 배열.
    */
   getPaintedFaceIds: (stlId: string) => number[];
+  /**
+   * 'dental-brush' 로 색칠한 영역에서 마진 폐곡선을 검출한다.
+   *   활성 STL(선택된 것, 없으면 첫 STL) + getPaintedFaceIds 계약 그대로 →
+   *   findMargin(margin-detect.ts) 호출. 성공 시 초록 튜브(원본 시각화 이식)를
+   *   생성해 setParent(mesh) 로 STL 회전을 추종하고 결과를 내부 marginRef 에
+   *   보관(floodfill 등 다음 조각이 사용). 실패 시 reason 반환 → 패널이 UI
+   *   문구로 변환. stats 는 성공 시에만.
+   */
+  findDentalMargin: () =>
+    | { ok: true; stats: FindMarginStats }
+    | { ok: false; reason: string };
+  /**
+   * 마진 시각화(초록 튜브) + 마진 결과 ref + floodfill 자동 색칠(주황) 을 모두
+   * 지운다. 브러쉬 색칠(painted) 자체는 건드리지 않는다 (clearDentalPaint 와 분리).
+   */
+  clearDentalMargin: () => void;
 }
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -556,6 +577,20 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const paintPointsRef = useRef<PaintPoint[]>([]);
     // painted 시각화 데칼 mesh (주황). painted 점과 index 1:1 대응.
     const paintOverlaysRef = useRef<Mesh[]>([]);
+    // 마진 찾기 결과 캐시 (원본 marginRef 이식). stlId 로 어떤 STL 의 마진인지
+    //   기록해 floodfill 이 활성 STL 의 마진만 사용하게 한다. null = 아직 미검출.
+    const marginRef = useRef<
+      | (FindMarginResult & { stlId: string })
+      | null
+    >(null);
+    // 마진 라인 시각화 mesh(초록 튜브). stlId 를 metadata 에 담아 재검출 시 교체.
+    const marginMarkersRef = useRef<Mesh[]>([]);
+    // 마진 floodfill 로 자동 색칠된 face 집합 (원본 autoFillFacesRef 이식).
+    //   ⚠️ painted(paintPointsRef) 계약과 별도 집합 — margin-detect/getPaintedFaceIds
+    //   입력에는 포함하지 않는다 (원본 isMasked 3번째 인자 경로, 이 조각 밖).
+    const autoFillFacesRef = useRef<Set<number>>(new Set());
+    // 마진 floodfill 자동 색칠 시각화 오버레이 mesh (주황). autoFillFacesRef 와 세트.
+    const autoFillOverlayRef = useRef<Mesh[]>([]);
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
     selectedSupportRef.current = selectedSupportId;
     const bridgeModeRef = useRef<boolean>(bridgeMode);
@@ -661,6 +696,274 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       pg.attachedMesh = mode === "translate" ? mesh : null;
       rg.attachedMesh = mode === "rotate" ? mesh : null;
       sg.attachedMesh = mode === "scale" ? mesh : null;
+    }
+
+    /**
+     * 활성 STL(선택된 것, 없으면 첫 STL) 의 id + mesh 를 반환. 마진/floodfill
+     * 이 브러쉬 색칠과 같은 STL 을 대상으로 하도록 원본 findMarginSignal /
+     * getActiveMesh 의 STL 선택 규칙을 그대로 따른다.
+     */
+    function getActiveStl(): { id: string; mesh: Mesh } | null {
+      const ids = Array.from(selectedRef.current);
+      let id: string | undefined = ids[0];
+      if (!id) id = [...meshMapRef.current.keys()][0];
+      if (!id) return null;
+      const mesh = meshMapRef.current.get(id);
+      return mesh ? { id, mesh } : null;
+    }
+
+    /**
+     * 마진 시각화(초록 튜브) + floodfill 자동 색칠(주황) 을 정리한다.
+     *   stlId 지정 시 그 STL 것만, 미지정 시 전부. marginRef 는 전부 지울 때만
+     *   null 로 (부분 정리는 재검출 흐름에서 같은 STL 튜브만 교체하는 용도).
+     */
+    function disposeMarginVisualization(stlId?: string): void {
+      marginMarkersRef.current = marginMarkersRef.current.filter((m) => {
+        if (stlId === undefined || m.metadata?.stlId === stlId) {
+          m.dispose(false, true);
+          return false;
+        }
+        return true;
+      });
+      // floodfill 오버레이는 stlId 별 metadata 로 구분해 정리.
+      autoFillOverlayRef.current = autoFillOverlayRef.current.filter((m) => {
+        if (stlId === undefined || m.metadata?.stlId === stlId) {
+          m.dispose(false, true);
+          return false;
+        }
+        return true;
+      });
+      if (stlId === undefined) {
+        marginRef.current = null;
+        autoFillFacesRef.current = new Set();
+      } else if (marginRef.current?.stlId === stlId) {
+        marginRef.current = null;
+        autoFillFacesRef.current = new Set();
+      }
+    }
+
+    /**
+     * 색칠 영역에서 마진을 찾아 초록 튜브로 시각화하고 결과를 marginRef 에 보관.
+     *   원본 findMarginSignal useEffect 의 [UI/씬 의존부] 이식 — 알고리즘 코어는
+     *   findMargin(margin-detect.ts, 잠금) 이 담당한다. 성공/실패를 반환해 호출자
+     *   (useImperativeHandle)가 패널로 전달한다.
+     */
+    function runFindDentalMargin():
+      | { ok: true; stats: FindMarginStats }
+      | { ok: false; reason: string } {
+      const scene = sceneRef.current;
+      if (!scene) return { ok: false, reason: "씬이 준비되지 않았습니다." };
+      const active = getActiveStl();
+      if (!active) {
+        // 원본 console.warn('마진 찾기: 대상 STL이 없습니다.') → UI 문구.
+        return { ok: false, reason: "대상 STL이 없습니다." };
+      }
+      const { id: stlId, mesh } = active;
+      // painted 계약 그대로 — 이 STL 의 색칠 face index (autoFill 제외 버전).
+      const paintedFaceIds = computePaintedFaceIds(mesh, paintPointsRef.current);
+
+      const res = findMargin({
+        mesh,
+        paintedFaceIds,
+        brushThickness: brushThicknessRef.current,
+      });
+      if (!res.ok) {
+        // 원본 각 early-return console.warn 문구를 사용자 UI 문구로 변환.
+        const reasonText: Record<typeof res.reason, string> = {
+          "no-geometry": "모델 지오메트리를 읽을 수 없습니다.",
+          "no-painted-faces":
+            "색칠 영역이 없습니다. 먼저 브러쉬로 마진 부근을 칠하세요.",
+          "no-seed":
+            "색칠 영역 안에서 마진(급격히 꺾이는 모서리)을 찾지 못했습니다. 마진 라인 위를 칠했는지 확인하세요.",
+          "empty-margin": "마진 라인을 구성하지 못했습니다.",
+        };
+        return { ok: false, reason: reasonText[res.reason] };
+      }
+
+      // 이 STL 의 기존 마진 시각화·floodfill 만 교체 (다른 STL 것은 유지).
+      disposeMarginVisualization(stlId);
+      marginRef.current = { ...res.result, stlId };
+
+      // 마진 라인 — 각 세그먼트를 얇은 튜브로 만들고 merge (원본 verbatim).
+      //   WebGL LineSystem 은 thickness 1px 고정 → 두꺼운 선 표현 불가 →
+      //   3D 튜브로 대체. 모델과 같은 렌더링 그룹 + 깊이 검사로 투과 없이 표시.
+      const tubeBatch: Mesh[] = [];
+      for (const e of res.result.edges) {
+        const len = Vector3.Distance(e.pa, e.pb);
+        if (len < 1e-6) continue;
+        const tube = MeshBuilder.CreateTube(
+          "v2_marginSeg",
+          {
+            path: [e.pa, e.pb],
+            radius: 0.025, // ≈ 0.05mm 두께 (절반)
+            tessellation: 6,
+            cap: Mesh.NO_CAP,
+          },
+          scene,
+        );
+        tubeBatch.push(tube);
+      }
+      if (tubeBatch.length > 0) {
+        const marginMesh = Mesh.MergeMeshes(
+          tubeBatch,
+          true,
+          true,
+          undefined,
+          false,
+          false,
+        );
+        if (marginMesh) {
+          marginMesh.name = "v2_marginLines";
+          marginMesh.isPickable = false;
+          marginMesh.renderingGroupId = 0;
+          marginMesh.metadata = { stlId };
+          const mat = new StandardMaterial("v2_marginMat", scene);
+          mat.emissiveColor = new Color3(0.2, 1, 0.4);
+          mat.diffuseColor = new Color3(0, 0, 0);
+          mat.disableLighting = true;
+          marginMesh.material = mat;
+          marginMesh.setParent(mesh); // STL 회전·이동 추종 (원본 이식).
+          marginMarkersRef.current.push(marginMesh);
+        }
+      }
+
+      // 원본 console.log 문구 이식 (통계 — 디버그용).
+      const s = res.result.stats;
+      console.log(
+        `[마진 찾기] 색칠 ${s.paintedFaceCount}면 · 시드 엣지 ${s.seedEdgeCount} · ` +
+          `전역 sharp 엣지 ${s.globalSharpEdgeCount} · 마진 엣지 ${s.marginEdgeCount} (spur-trim + corner-ext 후) · ` +
+          `corner extension ${s.cornerExtSteps}스텝 · 작은-컴포넌트 폐기 ${s.droppedTinyComps}엣지 · ` +
+          `endpoint bridge ${s.surfacePathCount}쌍(${s.bridgeSegCount}세그) · 직선폴백 ${s.straightFallbackCount}쌍 · ` +
+          `컴포넌트 간 bridge ${s.interCompPathCount}쌍 (region R=${s.seedRegionR.toFixed(1)}mm)`,
+      );
+
+      return { ok: true, stats: s };
+    }
+
+    /**
+     * 마진 안쪽 face floodfill — startFace 를 시작으로 마진 엣지(edgeKeys)를 차단
+     * 벽 삼아 BFS 로 내부 face 를 모으고 주황 오버레이로 채운다.
+     *   원본 fillFromFace 이식. 결과는 autoFillFacesRef (painted 계약과 별도 집합)
+     *   에 저장하고 오버레이 mesh 는 mesh.parent 로 부착해 회전을 추종한다.
+     */
+    function fillMarginFromFace(stlId: string, startFace: number): void {
+      const scene = sceneRef.current;
+      if (!scene) return;
+      const mesh = meshMapRef.current.get(stlId);
+      if (!mesh) return;
+      const margin = marginRef.current;
+      if (!margin || margin.stlId !== stlId || !margin.canon) {
+        // 원본 console.warn('마진 색칠: 먼저 "마진 찾기" 를 실행하세요.') 대응.
+        console.warn('마진 색칠: 먼저 "마진 찾기" 를 실행하세요.');
+        return;
+      }
+      const meshIndices = mesh.getIndices();
+      if (!meshIndices) return;
+      const canon = margin.canon;
+
+      // 마진 엣지(canonical "a,b") 를 차단 벽으로 BFS. (원본 fillFromFace verbatim —
+      //   3D 근접 차단(bridge wall)은 원본에서 이미 비활성이라 옮기지 않음.)
+      const ek = (a: number, b: number): string =>
+        a < b ? `${a},${b}` : `${b},${a}`;
+      const edgeToFaces = new Map<string, number[]>();
+      const triCount = meshIndices.length / 3;
+      for (let f = 0; f < triCount; f++) {
+        const ia = canon[meshIndices[f * 3]];
+        const ib = canon[meshIndices[f * 3 + 1]];
+        const ic = canon[meshIndices[f * 3 + 2]];
+        for (const [a, b] of [
+          [ia, ib],
+          [ib, ic],
+          [ic, ia],
+        ] as const) {
+          const k = ek(a, b);
+          let arr = edgeToFaces.get(k);
+          if (!arr) {
+            arr = [];
+            edgeToFaces.set(k, arr);
+          }
+          arr.push(f);
+        }
+      }
+      // BFS face → face, 마진 엣지 차단.
+      const filled = new Set<number>([startFace]);
+      const queue: number[] = [startFace];
+      let head = 0;
+      while (head < queue.length) {
+        const f = queue[head++];
+        const ia = canon[meshIndices[f * 3]];
+        const ib = canon[meshIndices[f * 3 + 1]];
+        const ic = canon[meshIndices[f * 3 + 2]];
+        const ef: [number, number][] = [
+          [ia, ib],
+          [ib, ic],
+          [ic, ia],
+        ];
+        for (const [a, b] of ef) {
+          const k = ek(a, b);
+          if (margin.edgeKeys.has(k)) continue; // 명시적 마진 엣지 = 차단 벽.
+          const adj = edgeToFaces.get(k);
+          if (!adj) continue;
+          for (const nb of adj) {
+            if (nb === f) continue;
+            if (filled.has(nb)) continue;
+            filled.add(nb);
+            queue.push(nb);
+          }
+        }
+      }
+      autoFillFacesRef.current = filled;
+
+      // 시각화 — 이 STL 의 이전 오버레이만 제거 후 새로 생성 (원본 이식).
+      autoFillOverlayRef.current = autoFillOverlayRef.current.filter((m) => {
+        if (m.metadata?.stlId === stlId) {
+          m.dispose(false, true);
+          return false;
+        }
+        return true;
+      });
+      const meshPositions = mesh.getVerticesData("position");
+      if (!meshPositions) return;
+      const positions: number[] = [];
+      const indices: number[] = [];
+      let vIdx = 0;
+      for (const f of filled) {
+        for (let kk = 0; kk < 3; kk++) {
+          const vi = meshIndices[f * 3 + kk];
+          positions.push(
+            meshPositions[vi * 3],
+            meshPositions[vi * 3 + 1],
+            meshPositions[vi * 3 + 2],
+          );
+        }
+        indices.push(vIdx, vIdx + 1, vIdx + 2);
+        vIdx += 3;
+      }
+      if (indices.length === 0) return;
+      const overlay = new Mesh("v2_maskAutoFill", scene);
+      const vd = new VertexData();
+      vd.positions = positions;
+      vd.indices = indices;
+      const norms: number[] = [];
+      VertexData.ComputeNormals(positions, indices, norms);
+      vd.normals = norms;
+      vd.applyToMesh(overlay);
+      const mat = new StandardMaterial("v2_maskAutoFillMat", scene);
+      mat.emissiveColor = new Color3(0.96, 0.52, 0.13); // 주황 (painted 와 동일 톤).
+      mat.diffuseColor = new Color3(0, 0, 0);
+      mat.disableLighting = true;
+      mat.backFaceCulling = false;
+      mat.zOffset = -1;
+      overlay.material = mat;
+      overlay.isPickable = false;
+      overlay.metadata = { stlId };
+      // 직접 parent 할당 — overlay vertex 가 LOCAL mesh 좌표라서 setParent 대신
+      //   parent= 로 attach 해야 worldMatrix = mesh.worldMatrix 로 올바르게 얹힌다.
+      overlay.parent = mesh;
+      autoFillOverlayRef.current.push(overlay);
+      console.log(
+        `[마진 색칠] 시작 face ${startFace} → 자동 색칠 ${filled.size}/${triCount}`,
+      );
     }
 
     // 1) 씬 부트스트랩
@@ -1221,6 +1524,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         // 사라지지만 ref 는 명시적으로 비운다).
         paintOverlaysRef.current = [];
         paintPointsRef.current = [];
+        // 마진 시각화/floodfill ref 도 명시적으로 비운다 (scene.dispose 후 stale
+        //   mesh 참조 방지).
+        marginMarkersRef.current = [];
+        autoFillOverlayRef.current = [];
+        marginRef.current = null;
+        autoFillFacesRef.current = new Set();
         furnitureRef.current?.dispose();
         furnitureRef.current = null;
         hl.dispose();
@@ -1278,6 +1587,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               }
             }
           }
+          // 이 STL 의 마진 시각화(초록 튜브) + floodfill 오버레이(주황) 도 정리.
+          //   튜브/오버레이는 mesh child 라 dispose 로 함께 사라지지만 ref/marginRef
+          //   가 stale 로 남으므로 명시적으로 제거.
+          disposeMarginVisualization(id);
           removedMesh?.dispose();
           meshMapRef.current.delete(id);
           // 이 STL 의 painted 목록도 비었음을 부모에 통지 (세션 상태 sync).
@@ -2224,9 +2537,28 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           brushing = false;
           lastBrush = null;
           flushPaintedNotifications();
+        } else if (pi.type === PointerEventTypes.POINTERDOUBLETAP) {
+          // 마진 안쪽 더블클릭 → floodfill 자동 색칠 (원본 fillFromFace 이식).
+          //   마진 ref 가 없으면 fillMarginFromFace 가 console.warn 후 무시.
+          if (ev.button !== 0) return;
+          const pick = scene.pick(scene.pointerX, scene.pointerY, onlyActive);
+          if (
+            !pick?.hit ||
+            !pick.pickedMesh ||
+            pick.faceId === undefined ||
+            pick.faceId < 0
+          )
+            return;
+          let sid: string | undefined;
+          for (const [id, m] of meshMapRef.current.entries()) {
+            if (m === pick.pickedMesh) {
+              sid = id;
+              break;
+            }
+          }
+          if (!sid) return;
+          fillMarginFromFace(sid, pick.faceId);
         }
-        // 원본의 마진 floodfill 더블탭(POINTERDOUBLETAP)은 이 조각 범위 밖
-        // (마진/아일랜드는 2-3b/c) — 여기서는 색칠만 담당.
       });
 
       return () => {
@@ -2554,6 +2886,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           for (const ov of paintOverlaysRef.current) ov.dispose(false, true);
           paintOverlaysRef.current = [];
           paintPointsRef.current = [];
+          // 원본 clearMask 는 autoFill(floodfill) 도 함께 정리했다 → 마진 시각화·
+          //   floodfill 도 지운다. 색칠이 사라지면 그 마진은 무의미하므로 일관.
+          disposeMarginVisualization();
           // 색칠이 있던 STL 마다 빈 목록 통지.
           for (const mesh of affected) {
             for (const [id, m] of meshMapRef.current) {
@@ -2571,7 +2906,18 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             computePaintedFaceIds(mesh, paintPointsRef.current),
           );
         },
+        findDentalMargin() {
+          return runFindDentalMargin();
+        },
+        clearDentalMargin() {
+          // 마진 시각화 + floodfill 만 정리. 브러쉬 색칠(painted)은 유지.
+          disposeMarginVisualization();
+        },
       }),
+      // 핸들은 ref/stable 함수만 참조 → 정체성 고정을 위해 []. runFindDentalMargin/
+      //   disposeMarginVisualization 은 refs 만 close-over 하는 순수 함수 선언이라
+      //   deps 에 넣지 않아도 안전 (다른 핸들 메서드와 동일 패턴).
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       [],
     );
 
