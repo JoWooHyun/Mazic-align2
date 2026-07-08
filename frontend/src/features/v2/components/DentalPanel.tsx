@@ -12,7 +12,11 @@
  *   · "마진 지우기" — 마진 시각화 + floodfill 자동 색칠 제거 (색칠은 유지).
  *   · 마진 안 더블클릭 → 내부 face floodfill (주황) — 씬에서 동작, 별도 버튼 없음.
  *
- * 아일랜드 검출 버튼은 2-3c 에서 추가 (아래 자리만 주석).
+ * Step 2-3c 범위: 아일랜드(미지지 영역) 검출.
+ *   · "아일랜드 검출" — 활성 STL 전체를 슬라이스해 미지지 영역을 마젠타로 표시.
+ *     결과 요약(총 island face 수 · 레이어 수 · island 있는 레이어 수) 표시.
+ *   · "아일랜드 지우기" — 마젠타 overlay 제거 (색칠/마진은 유지).
+ *   레이어별 상세 카운트는 이번 범위 밖(요약 수준).
  * 스타일은 SupportParamsPanel 패턴을 따른다 (흰 카드 · 회색 라벨 · primary 버튼).
  */
 
@@ -47,6 +51,23 @@ interface DentalPanelProps {
     /** 성공/실패 시 사용자에게 보여줄 문구 (원본 console 문구를 UI 문구로). */
     message: string;
   } | null;
+  /** "아일랜드 검출" — 활성 STL 전체에서 미지지 영역 검출·마젠타 시각화. */
+  onDetectIslands: () => void;
+  /** "아일랜드 지우기" — 마젠타 overlay 제거 (색칠/마진은 유지). */
+  onClearIslands: () => void;
+  /**
+   * 아일랜드 검출 결과 상태 (없으면 미실행). ok=true 면 요약 통계 표시 + "아일랜드
+   * 지우기" 활성. ok=false 면 실패 사유(message)만 표시.
+   */
+  islandStatus?:
+    | {
+        ok: true;
+        totalIslandFaces: number;
+        nSlices: number;
+        layersWithIsland: number;
+      }
+    | { ok: false; message: string }
+    | null;
   className?: string;
 }
 
@@ -60,6 +81,9 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
   onFindMargin,
   onClearMargin,
   marginStatus = null,
+  onDetectIslands,
+  onClearIslands,
+  islandStatus = null,
   className = "",
 }) => {
   const commitThickness = (raw: number) => {
@@ -176,7 +200,54 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
         </button>
       </div>
 
-      {/* 2-3c: 아일랜드 검출 버튼 자리 (island-detection 코어는 이미 이식됨). */}
+      {/* 아일랜드 검출 (2-3c) */}
+      <div className="mt-5 pt-4 border-t border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-gray-700">아일랜드</span>
+        </div>
+        <button
+          onClick={onDetectIslands}
+          className="w-full px-3 py-2 text-sm rounded bg-primary-600 text-white hover:bg-primary-700 transition-colors"
+        >
+          아일랜드 검출
+        </button>
+        <p className="mt-2 text-xs text-gray-500">
+          활성 STL 전체를 슬라이스해 미지지 영역(아일랜드)을 마젠타로 표시
+        </p>
+
+        {islandStatus &&
+          (islandStatus.ok ? (
+            <div className="mt-2 text-xs text-gray-600 space-y-0.5">
+              <div>
+                총 island 면{" "}
+                <span className="font-medium text-gray-900">
+                  {islandStatus.totalIslandFaces}
+                </span>
+                개
+              </div>
+              <div>
+                레이어 수{" "}
+                <span className="font-medium text-gray-900">
+                  {islandStatus.nSlices}
+                </span>{" "}
+                · island 있는 레이어{" "}
+                <span className="font-medium text-gray-900">
+                  {islandStatus.layersWithIsland}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-amber-600">{islandStatus.message}</p>
+          ))}
+
+        <button
+          onClick={onClearIslands}
+          disabled={!islandStatus?.ok}
+          className="mt-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          아일랜드 지우기
+        </button>
+      </div>
     </div>
   );
 };
