@@ -1,6 +1,17 @@
 import type { BabylonSceneHandle } from "../components/BabylonScene";
+import {
+  DEFAULT_LIFT_DISTANCE_MM,
+  DEFAULT_LIFT_SPEED_MM_S,
+  DEFAULT_RETRACT_SPEED_MM_S,
+  DEFAULT_LIGHT_OFF_DELAY_SEC,
+} from "../types/printer";
 import { layerExposureSec } from "./exposure";
 import type { SliceMask } from "./slice-rasterize";
+
+/** mm/s → mm/min (CTB 리프트/하강 속도 필드는 mm/min 단위). */
+function mmPerSecToMmPerMin(mmPerSec: number): number {
+  return mmPerSec * 60;
+}
 
 /**
  * CTB 조립에 필요한 파라미터 (Babylon 의존 없는 순수부).
@@ -19,6 +30,13 @@ export interface CtbAssembleOptions {
   bottomLayers: number;
   transitionLayers: number;
   lightOffSec: number;
+  // ---- 리프트/딜레이 (호출부에서 DEFAULT_* 폴백까지 해결한 값. 예상 시간과 동일 기준) ----
+  /** 리프트 거리 (mm). CTB LiftHeight/BottomLiftHeight 에 그대로 기록. */
+  liftDistanceMm: number;
+  /** 리프트 속도 (mm/s). 기록 시 mm/min 으로 환산. */
+  liftSpeedMmS: number;
+  /** 하강 속도 (mm/s). 기록 시 mm/min 으로 환산. */
+  retractSpeedMmS: number;
 }
 
 /**
@@ -56,6 +74,12 @@ export interface CtbExportOptions {
   /** 전환 레이어 개수. 바닥→일반 노광 선형 보간 구간. 기본 0 (전환 없음). */
   transitionLayerCount?: number;
   lightOffDelaySec?: number;
+  /** 리프트 거리 (mm). 미지정 시 DEFAULT_LIFT_DISTANCE_MM 폴백. */
+  liftDistanceMm?: number;
+  /** 리프트 속도 (mm/s). 미지정 시 DEFAULT_LIFT_SPEED_MM_S 폴백. */
+  liftSpeedMmS?: number;
+  /** 하강 속도 (mm/s). 미지정 시 DEFAULT_RETRACT_SPEED_MM_S 폴백. */
+  retractSpeedMmS?: number;
   onProgress?: (done: number, total: number) => void;
 }
 
@@ -74,7 +98,11 @@ export async function makeCtbV4(
   const bottomExposureSec = opts.bottomExposureSec ?? 30.0;
   const bottomLayers = opts.bottomLayerCount ?? 5;
   const transitionLayers = opts.transitionLayerCount ?? 0;
-  const lightOffSec = opts.lightOffDelaySec ?? 0.0;
+  // 리프트/딜레이는 DEFAULT_*(v1) 폴백 — CTB 기록과 예상 시간이 같은 값 기준이 되도록.
+  const lightOffSec = opts.lightOffDelaySec ?? DEFAULT_LIGHT_OFF_DELAY_SEC;
+  const liftDistanceMm = opts.liftDistanceMm ?? DEFAULT_LIFT_DISTANCE_MM;
+  const liftSpeedMmS = opts.liftSpeedMmS ?? DEFAULT_LIFT_SPEED_MM_S;
+  const retractSpeedMmS = opts.retractSpeedMmS ?? DEFAULT_RETRACT_SPEED_MM_S;
 
   // ---------- 1) 각 layer 의 RLE 인코딩 ----------
   const layerData: Uint8Array[] = [];
@@ -102,6 +130,9 @@ export async function makeCtbV4(
     bottomLayers,
     transitionLayers,
     lightOffSec,
+    liftDistanceMm,
+    liftSpeedMmS,
+    retractSpeedMmS,
   });
 }
 
@@ -117,8 +148,19 @@ export function assembleCtb(
   layerCount: number,
   opts: CtbAssembleOptions,
 ): Blob {
-  const { exposureSec, bottomExposureSec, bottomLayers, transitionLayers, lightOffSec } =
-    opts;
+  const {
+    exposureSec,
+    bottomExposureSec,
+    bottomLayers,
+    transitionLayers,
+    lightOffSec,
+    liftDistanceMm,
+    liftSpeedMmS,
+    retractSpeedMmS,
+  } = opts;
+  // CTB 속도 필드는 mm/min. 프로파일 속도는 mm/s 이므로 환산.
+  const liftSpeedMmMin = mmPerSecToMmPerMin(liftSpeedMmS);
+  const retractSpeedMmMin = mmPerSecToMmPerMin(retractSpeedMmS);
 
   // ---------- 2) 작은 / 큰 preview (단색 회색 placeholder) ----------
   const previewSmall = makeBlankPreview(400, 300);
@@ -224,11 +266,11 @@ export function assembleCtb(
 
   // ---------- 8) print parameters (60 bytes) ----------
   p = printParamsOffset;
-  view.setFloat32(p, 5.0, true); p += 4;  // bottom lift height mm
-  view.setFloat32(p, 60.0, true); p += 4; // bottom lift speed mm/min
-  view.setFloat32(p, 5.0, true); p += 4;  // lift height mm
-  view.setFloat32(p, 120.0, true); p += 4;// lift speed mm/min
-  view.setFloat32(p, 150.0, true); p += 4;// retract speed mm/min
+  view.setFloat32(p, liftDistanceMm, true); p += 4;   // bottom lift height mm
+  view.setFloat32(p, liftSpeedMmMin, true); p += 4;   // bottom lift speed mm/min
+  view.setFloat32(p, liftDistanceMm, true); p += 4;   // lift height mm
+  view.setFloat32(p, liftSpeedMmMin, true); p += 4;   // lift speed mm/min
+  view.setFloat32(p, retractSpeedMmMin, true); p += 4;// retract speed mm/min
   view.setFloat32(p, 0.0, true); p += 4;  // volume ml
   view.setFloat32(p, 0.0, true); p += 4;  // weight g
   view.setFloat32(p, 0.0, true); p += 4;  // cost
@@ -240,11 +282,11 @@ export function assembleCtb(
 
   // ---------- 9) slicer info (68 bytes for v3) ----------
   p = slicerInfoOffset;
-  view.setFloat32(p, 5.0, true); p += 4;   // BottomLiftHeight
-  view.setFloat32(p, 60.0, true); p += 4;  // BottomLiftSpeed
-  view.setFloat32(p, 5.0, true); p += 4;   // LiftHeight
-  view.setFloat32(p, 60.0, true); p += 4;  // LiftSpeed
-  view.setFloat32(p, 150.0, true); p += 4; // RetractSpeed
+  view.setFloat32(p, liftDistanceMm, true); p += 4;   // BottomLiftHeight
+  view.setFloat32(p, liftSpeedMmMin, true); p += 4;   // BottomLiftSpeed
+  view.setFloat32(p, liftDistanceMm, true); p += 4;   // LiftHeight
+  view.setFloat32(p, liftSpeedMmMin, true); p += 4;   // LiftSpeed
+  view.setFloat32(p, retractSpeedMmMin, true); p += 4;// RetractSpeed
   view.setFloat32(p, 0.0, true); p += 4;   // Volume
   view.setUint32(p, 1, true); p += 4;      // AntiAliasFlag (1 = on)
   view.setUint16(p, 0, true); p += 2;      // Padding

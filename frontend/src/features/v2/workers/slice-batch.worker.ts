@@ -10,6 +10,12 @@
  * 산출 바이트는 동기 경로와 동일하다. Babylon 은 import 하지 않는다.
  */
 import {
+  DEFAULT_LIFT_DISTANCE_MM,
+  DEFAULT_LIFT_SPEED_MM_S,
+  DEFAULT_RETRACT_SPEED_MM_S,
+  DEFAULT_LIGHT_OFF_DELAY_SEC,
+} from "../types/printer";
+import {
   assembleCtb,
   encodeRle1bpp,
 } from "../utils/ctb-encoder";
@@ -134,7 +140,11 @@ async function runCtb(req: CtbRequest): Promise<void> {
   const bottomExposureSec = ctb.bottomExposureSec ?? 30.0;
   const bottomLayers = ctb.bottomLayerCount ?? 5;
   const transitionLayers = ctb.transitionLayerCount ?? 0;
-  const lightOffSec = ctb.lightOffDelaySec ?? 0.0;
+  // 리프트/딜레이는 DEFAULT_*(v1) 폴백 — CTB 기록과 예상 시간이 같은 값 기준이 되도록.
+  const lightOffSec = ctb.lightOffDelaySec ?? DEFAULT_LIGHT_OFF_DELAY_SEC;
+  const liftDistanceMm = ctb.liftDistanceMm ?? DEFAULT_LIFT_DISTANCE_MM;
+  const liftSpeedMmS = ctb.liftSpeedMmS ?? DEFAULT_LIFT_SPEED_MM_S;
+  const retractSpeedMmS = ctb.retractSpeedMmS ?? DEFAULT_RETRACT_SPEED_MM_S;
 
   const layerData: Uint8Array[] = [];
   for (let i = 0; i < layerCount; i++) {
@@ -156,6 +166,9 @@ async function runCtb(req: CtbRequest): Promise<void> {
     bottomLayers,
     transitionLayers,
     lightOffSec,
+    liftDistanceMm,
+    liftSpeedMmS,
+    retractSpeedMmS,
   });
   const buffer = await blob.arrayBuffer();
   post(

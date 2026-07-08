@@ -933,6 +933,11 @@ const ViewerV2Page: React.FC = () => {
           bottomExposureSec: printerProfile.bottomExposureSec,
           bottomLayerCount: printerProfile.bottomLayerCount,
           transitionLayerCount: printerProfile.transitionLayerCount,
+          // 리프트/딜레이 — 미지정 시 워커에서 DEFAULT_*(v1) 폴백. CTB 기록과 예상 시간이 같은 값 기준.
+          lightOffDelaySec: printerProfile.lightOffDelaySec,
+          liftDistanceMm: printerProfile.liftDistanceMm,
+          liftSpeedMmS: printerProfile.liftSpeedMmS,
+          retractSpeedMmS: printerProfile.retractSpeedMmS,
         },
         (done, total) => setBatchExport({ busy: true, done, total }),
       );
