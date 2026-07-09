@@ -42,6 +42,16 @@ export interface PrinterProfileV2 {
 }
 
 /**
+ * 노광 기본값 — 프로파일/옵션에 노광 값이 없을 때 폴백에 사용.
+ * 인코더(ctb-encoder)·워커·예상 시간(print-time)·UI(SliceSidePanel)·
+ * 프로파일 편집(PrinterProfileDialog)이 모두 이 상수를 참조해 값이 갈라지지 않도록 한다.
+ */
+export const DEFAULT_EXPOSURE_SEC = 2.5;
+export const DEFAULT_BOTTOM_EXPOSURE_SEC = 30.0;
+export const DEFAULT_BOTTOM_LAYER_COUNT = 5;
+export const DEFAULT_TRANSITION_LAYER_COUNT = 0;
+
+/**
  * 리프트/딜레이 v1 기본값 — 프로파일에 값이 없을 때 폴백에 사용.
  * (v1 SlicerWorker 합산식의 기본 파라미터와 동일.)
  */
