@@ -7,6 +7,7 @@ import {
   DEFAULT_BOTTOM_LAYER_COUNT,
 } from "../types/printer";
 import { estimatePrintTimeSec } from "../utils/print-time";
+import { sliceBatchService } from "../utils/slice-batch-service";
 import type { BabylonSceneHandle } from "./BabylonScene";
 import SliceMaskPreview from "./SliceMaskPreview";
 
@@ -79,7 +80,13 @@ const SliceSidePanel: React.FC<Props> = ({
     const handle = sceneHandleRef.current;
     if (!handle) return;
     const gcode = handle.exportFdmGcode();
-    if (!gcode) return;
+    // gcode null = STL 이 없거나 슬라이스할 지오메트리가 없음. 무음이면 사용자가
+    //   버튼을 눌러도 아무 일이 없어 보이므로 안내한다.
+    if (!gcode) {
+      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
+      window.alert("내보낼 G-code 가 없습니다. 모델을 먼저 불러오세요.");
+      return;
+    }
     const blob = new Blob([gcode], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -227,6 +234,15 @@ const SliceSidePanel: React.FC<Props> = ({
                   }}
                 />
               </div>
+              {/* 취소 (감사 A4) — 워커 terminate → 진행 중 Promise reject.
+                  ViewerV2Page 의 export 핸들러가 finally 에서 busy 를 풀고,
+                  catch 는 "취소" 메시지를 조용히 넘긴다. */}
+              <button
+                onClick={() => sliceBatchService.cancel()}
+                className="mt-3 w-full px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 transition-colors"
+              >
+                취소
+              </button>
             </div>
           ) : (
             <div className="flex flex-col gap-2">

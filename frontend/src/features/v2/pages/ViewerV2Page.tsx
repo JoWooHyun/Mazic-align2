@@ -976,13 +976,27 @@ const ViewerV2Page: React.FC = () => {
         },
         (done, total) => setBatchExport({ busy: true, done, total }),
       );
-      if (!blob) return;
+      // blob null = 빈 씬(topY<=0) 등으로 슬라이스할 레이어가 없음. 무음으로 끝나면
+      //   사용자가 왜 파일이 안 나오는지 알 수 없으므로 안내한다.
+      if (!blob) {
+        // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
+        window.alert("내보낼 레이어가 없습니다. 모델이 빌드 영역 안에 있는지 확인하세요.");
+        return;
+      }
       const safe = (project?.name ?? "project").replace(
         /[\\/:*?"<>|]/g,
         "_",
       );
       const lh = slicePreview.layerHeightMm.toFixed(3).replace(".", "_");
       downloadBlob(blob, `${safe}_layers_${lh}mm.zip`);
+    } catch (e) {
+      // 취소(사용자가 취소 버튼) 로 인한 reject 는 정상 흐름이라 조용히 넘긴다.
+      //   그 외 오류만 사용자에게 안내 (unhandled rejection 방지 + 피드백).
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("취소")) {
+        // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
+        window.alert(`마스크 ZIP 내보내기에 실패했습니다.\n${msg}`);
+      }
     } finally {
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
@@ -1029,12 +1043,24 @@ const ViewerV2Page: React.FC = () => {
         },
         (done, total) => setBatchExport({ busy: true, done, total }),
       );
-      if (!blob) return;
+      // blob null = 빈 씬(topY<=0) 등으로 슬라이스할 레이어가 없음 (마스크 ZIP 과 동일).
+      if (!blob) {
+        // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
+        window.alert("내보낼 레이어가 없습니다. 모델이 빌드 영역 안에 있는지 확인하세요.");
+        return;
+      }
       const safe = (project?.name ?? "project").replace(
         /[\\/:*?"<>|]/g,
         "_",
       );
       downloadBlob(blob, `${safe}_v3.ctb`);
+    } catch (e) {
+      // 취소로 인한 reject 는 조용히, 그 외 오류만 안내 (마스크 ZIP 과 동일 정책).
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes("취소")) {
+        // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
+        window.alert(`.ctb 내보내기에 실패했습니다.\n${msg}`);
+      }
     } finally {
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
@@ -1208,6 +1234,13 @@ const ViewerV2Page: React.FC = () => {
 
       const ids = generated.map((p) => p.id);
       await addSupports(generated);
+
+      // 생성 성공 → 아일랜드 검출 상태 소진 (감사 B6). 씬 쪽은 autoSupportIslands
+      //   내부에서 마젠타 overlay + islandResultRef 를 이미 정리했다. 여기서 페이지
+      //   islandStatus 를 null 로 되돌리면 DentalPanel 의 "검출 영역 자동 서포트"
+      //   버튼이 자연스럽게 비활성화되어, 같은 자리에 중복 생성/stale 재사용을 막는다
+      //   (재생성하려면 명시적 재검출 필요). 마진 상태는 건드리지 않는다.
+      setIslandStatus(null);
 
       useUndoStore.getState().push({
         label: "island-auto-supports",
