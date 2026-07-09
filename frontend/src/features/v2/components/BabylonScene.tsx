@@ -66,10 +66,7 @@ import {
   readWorldTriangles,
   createSupport as createDiscSupport,
 } from "../utils/dental/dental-support";
-import {
-  detectSliceIslands,
-  type SliceIslandResult,
-} from "../utils/dental/island-detection";
+import { detectSliceIslands } from "../utils/dental/island-detection";
 import { guardContactAgainstMargin } from "../utils/dental/margin-guard";
 
 function buildBridgeClipKey(
@@ -523,6 +520,22 @@ export interface IslandStats {
   layerHeight: number;
 }
 
+/**
+ * islandResultRef 슬림 보관 타입 (감사 B7). detectSliceIslands 는 sliceCells /
+ * sliceFaceCells / perLayerIslandCells / perLayerIslandComponents 등 레이어×수만
+ * 셀 문자열을 담은 대형 중간산물을 반환하는데, 검출 이후 실제로 참조되는 건
+ * islandFaces(자동 서포트 faceFilter·재검증)와 stlId 뿐이다. 세션 내내 수백 MB
+ * 상주하지 않게 필요한 필드만 골라 보관한다. (island-detection.ts 반환은 그대로 —
+ * 보관만 슬림. 요약 통계는 검출 시점에 IslandStats 로 뽑아 반환하므로 중간산물이
+ * 필요 없다.)
+ */
+interface IslandResultSlim {
+  /** 어떤 STL 의 결과인지. 단일 슬롯 소유·정리 판정용. */
+  stlId: string;
+  /** ISLAND 로 판정된 face index 집합 — 자동 서포트 faceFilter/재검증에 사용. */
+  islandFaces: Set<number>;
+}
+
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
   function BabylonScene(
     {
@@ -679,11 +692,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     // 마진 floodfill 자동 색칠 시각화 오버레이 mesh (주황). autoFillFacesRef 와 세트.
     const autoFillOverlayRef = useRef<Mesh[]>([]);
     // 아일랜드 검출 결과 캐시 (원본 sliceDataRef 대응 축약). stlId 로 어떤 STL 의
-    //   결과인지 기록. null = 미검출.
-    const islandResultRef = useRef<
-      | (SliceIslandResult & { stlId: string })
-      | null
-    >(null);
+    //   결과인지 기록. null = 미검출. 대형 중간산물은 보관하지 않는다 (감사 B7 —
+    //   IslandResultSlim 참조). 시각화·통계는 검출 시점에 즉시 소비.
+    const islandResultRef = useRef<IslandResultSlim | null>(null);
     // 아일랜드 face 마젠타 overlay mesh. stlId 를 metadata 에 담아 정리 시 구분.
     const islandMarkersRef = useRef<Mesh[]>([]);
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
@@ -878,8 +889,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         return { ok: false, reason: reasonText[res.reason] };
       }
 
-      // 이 STL 의 기존 마진 시각화·floodfill 만 교체 (다른 STL 것은 유지).
-      disposeMarginVisualization(stlId);
+      // 모든 STL 의 기존 마진 시각화·floodfill 을 정리한다 (감사 B4). marginRef 는
+      //   단일 슬롯이므로 다른 STL 의 초록 튜브가 남으면 "보이지만 무효"가 된다
+      //   (A 검출 → B 검출 시 A 튜브 잔존). 검출 진입 시 전체를 지워 화면=단일 슬롯
+      //   유효 결과를 일치시킨다. floodfill 오버레이·autoFillFacesRef 도 함께 초기화.
+      //   (아일랜드는 다른 단일 슬롯 — 여기서 건드리지 않는다. 마진+아일랜드 공존이
+      //   autoSupportIslands 마진 가드의 전제이므로 교차 정리는 하지 않는다. 다중
+      //   STL 을 개별 슬롯으로 동시에 유지하려면 향후 Map 다중화가 옵션이나, 현재는
+      //   단일 슬롯 의미론을 유지한다.)
+      disposeMarginVisualization();
       marginRef.current = { ...res.result, stlId };
 
       // 마진 라인 — 각 세그먼트를 얇은 튜브로 만들고 merge (원본 verbatim).
@@ -1034,9 +1052,16 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       });
       const tDetect = performance.now() - t0;
 
-      // 이 STL 의 기존 island 시각화만 교체 (다른 STL 것은 유지).
-      disposeIslandVisualization(stlId);
-      islandResultRef.current = { ...result, stlId };
+      // 모든 STL 의 기존 island 시각화를 정리한다 (감사 B4). islandResultRef 는 단일
+      //   슬롯이므로 다른 STL 의 마젠타 overlay 가 남으면 "보이지만 무효"가 된다.
+      //   검출 진입 시 전체를 지워 화면=단일 슬롯 유효 결과를 일치시킨다. (마진은
+      //   다른 단일 슬롯 — 여기서 건드리지 않는다: 마진+아일랜드 공존이
+      //   autoSupportIslands 마진 가드의 전제. 위 runFindDentalMargin 주석 참조.)
+      disposeIslandVisualization();
+      // 슬림 보관 (감사 B7): islandFaces + stlId 만. result 의 나머지 대형 중간산물
+      //   (sliceCells/sliceFaceCells/perLayer*)은 아래 overlay·통계 계산에서 지역
+      //   변수 result 로 즉시 소비하고 폐기 — ref 로 세션 상주시키지 않는다.
+      islandResultRef.current = { stlId, islandFaces: result.islandFaces };
 
       // Island face overlay — 검출된 island face 의 실제 STL triangle 을 표면
       //   conforming 마젠타로 표시 (원본 시각화 verbatim). mesh index 버퍼에서
@@ -1815,6 +1840,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         autoFillOverlayRef.current = [];
         marginRef.current = null;
         autoFillFacesRef.current = new Set();
+        // 아일랜드 시각화/결과 ref 도 명시적으로 비운다 (감사 B8 — 위 마진 ref 와
+        //   동일 이유. scene.dispose 로 mesh 는 사라지나 ref 는 stale 로 남는다).
+        islandMarkersRef.current = [];
+        islandResultRef.current = null;
         furnitureRef.current?.dispose();
         furnitureRef.current = null;
         hl.dispose();
@@ -1990,6 +2019,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         if (!newIds.has(id)) {
           mesh.dispose();
           map.delete(id);
+          // Bridge subtract 결과 캐시도 함께 정리 (감사 B9). 캐시는 point.id 키라
+          //   (buildBridgeClipKey 호출부 set/get 참조) 삭제된 support 의 clip 산출물이
+          //   세션 내내 잔류하지 않게 한다. 삭제 후 같은 id 재사용은 없다.
+          bridgeClipCacheRef.current.delete(id);
         }
       }
 
