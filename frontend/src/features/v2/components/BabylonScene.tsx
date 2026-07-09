@@ -312,6 +312,14 @@ interface BabylonSceneProps {
    * 패널의 두께 입력과 양방향 동기화용 (원본 onBrushThicknessChange 이식).
    */
   onBrushThicknessChange?: (mm: number) => void;
+  /**
+   * 마진·아일랜드 검출 결과가 stale 이 되어 내부에서 무효화(dispose+ref null)
+   * 됐을 때 통지 (감사 B1/B3). 페이지는 이 stlId 의 marginStatus/islandStatus
+   * 를 초기 상태로 되돌려 "재검출 필요"를 명시적으로 표시한다.
+   *   무효화 트리거: (a) STL transform commit(회전·이동), (b) 색칠 실제 변경.
+   *   world 좌표 기반 검출 결과가 변형 후 옛 좌표를 참조하는 것을 막는다.
+   */
+  onDentalResultsInvalidated?: (stlId: string) => void;
   className?: string;
 }
 
@@ -478,6 +486,15 @@ export interface BabylonSceneHandle {
    */
   clearDentalIslands: () => void;
   /**
+   * 지정 STL 의 마진·아일랜드 검출 결과를 stale 로 간주해 일괄 무효화한다
+   * (감사 B1). world 좌표 기반 결과가 STL 변형 후 옛 좌표를 참조하는 것을 막는다.
+   *   호출 측(ViewerV2Page)의 transform 적용 수렴점(handleCommitTransform +
+   *   undo/redo)에서 호출한다 — gizmo/드래그/수치입력/바닥면정렬 모두 그 한 곳으로
+   *   수렴하므로 씬 내부가 아닌 페이지 측에서 단일 경로로 배선한다.
+   *   내부적으로 onDentalResultsInvalidated 콜백도 발화해 패널 상태를 리셋한다.
+   */
+  invalidateDentalResults: (stlId: string) => void;
+  /**
    * 검출→생성 파이프라인 (Step 2-4, ADR-3): 직전 아일랜드 검출 결과의 island face
    * 집합에만 자동 서포트 점을 생성해 반환한다.
    *   islandResultRef 의 island face 집합 → autoGenerateSupportPoints(…, {faceFilter})
@@ -537,6 +554,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       brushThicknessMm = 3,
       onPaintedFacesChange,
       onBrushThicknessChange,
+      onDentalResultsInvalidated,
       className = "",
     },
     ref,
@@ -637,6 +655,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     brushThicknessRef.current = brushThicknessMm;
     const onPaintedFacesChangeRef = useRef(onPaintedFacesChange);
     onPaintedFacesChangeRef.current = onPaintedFacesChange;
+    const onDentalResultsInvalidatedRef = useRef(onDentalResultsInvalidated);
+    onDentalResultsInvalidatedRef.current = onDentalResultsInvalidated;
     const onBrushThicknessChangeRef = useRef(onBrushThicknessChange);
     onBrushThicknessChangeRef.current = onBrushThicknessChange;
     // dental-brush painted 점 (세션 상태 원본 = 원본 maskRef 방식 이식).
@@ -715,6 +735,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         gizmoDragStartRef.current = null;
         if (!started || started.kind !== "stl") return;
         const end = readMeshTransform(mesh);
+        // 마진·아일랜드 무효화(감사 B1)는 onGizmoCommit === handleCommitTransform
+        // 으로 수렴하는 페이지 측에서 처리한다 (gizmo/드래그/수치입력/바닥면정렬 +
+        // undo/redo 를 한 경로로 통일 — 씬 내부 이중 배선 방지).
         onGizmoCommitRef.current(started.id, started.t, end);
       });
 
@@ -933,6 +956,29 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       } else if (islandResultRef.current?.stlId === stlId) {
         islandResultRef.current = null;
       }
+    }
+
+    /**
+     * 한 STL 의 마진·아일랜드 검출 결과를 stale 로 간주해 일괄 무효화한다
+     * (감사 B1/B3). world 좌표 기반 검출 결과가 STL 변형(회전·이동)이나
+     * 색칠 변경 후 옛 좌표를 참조하는 것을 막는다.
+     *   · disposeMarginVisualization(stlId): 초록 튜브 + marginRef + floodfill
+     *     오버레이(주황) + autoFillFacesRef 정리
+     *   · disposeIslandVisualization(stlId): 마젠타 overlay + islandResultRef 정리
+     *   · onDentalResultsInvalidated: 페이지의 marginStatus/islandStatus 리셋
+     *
+     * UX 변화: 사용자가 STL 을 회전/이동하거나 칠을 바꾸면 초록 튜브·마젠타가
+     * 즉시 사라지고 dental 패널이 초기 상태로 돌아간다 — "재검출 필요"가
+     * 명시적이 되어, 옛 좌표 기준으로 자동 서포트가 배치되는 사고를 막는다.
+     * (해당 STL 에 검출 결과가 없으면 아무 일도 하지 않는다.)
+     */
+    function invalidateDentalResults(stlId: string): void {
+      const hadMargin = marginRef.current?.stlId === stlId;
+      const hadIsland = islandResultRef.current?.stlId === stlId;
+      if (!hadMargin && !hadIsland) return;
+      disposeMarginVisualization(stlId);
+      disposeIslandVisualization(stlId);
+      onDentalResultsInvalidatedRef.current?.(stlId);
     }
 
     /**
@@ -1465,6 +1511,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           }
         }
         const end = readMeshTransform(mesh);
+        // 무효화(감사 B1)는 페이지 측 handleCommitTransform 수렴점에서 처리.
         onGizmoCommitRef.current(started.id, started.t, end);
       };
       [positionGizmo, rotationGizmo, scaleGizmo].forEach((giz) => {
@@ -2460,6 +2507,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     //    · support 메쉬의 isPickable 토글
     //    · dental-brush 모드도 support 와 마찬가지로 STL 드래그 비활성
     //      (표면 클릭이 색칠에 쓰이므로 이동/선택으로 소비되면 안 됨).
+    //    · dental-brush 모드에서만 카메라 좌클릭(0) 회전을 끈다 (감사 B2).
+    //      원본(babylon.utils createCamera)은 좌클릭을 buttons=[1,2] 로 전역
+    //      제외했으나, v2 는 select/support 의 좌드래그 회전 UX 를 유지하기
+    //      위해 모드 진입 시에만 0 을 빼고 이탈 시 [0,1,2] 로 원복한다.
     useEffect(() => {
       for (const [id, mesh] of meshMapRef.current) {
         const drag = dragBehaviorMapRef.current.get(id);
@@ -2473,6 +2524,18 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
       for (const sm of supportMeshMapRef.current.values()) {
         sm.isPickable = editMode === "support";
+      }
+
+      // 카메라 pointer input 의 버튼 매핑을 모드에 맞춰 조정한다.
+      // ArcRotateCameraPointersInput.buttons: 0=Left, 1=Middle, 2=Right.
+      // dental-brush 에서는 좌클릭 드래그가 색칠에 쓰이므로 카메라 회전에서
+      // 좌클릭을 제외(=[1,2])하고, 그 외 모드에서는 기본값([0,1,2])으로 원복.
+      const pointersInput = cameraRef.current?.inputs.attached.pointers as
+        | { buttons?: number[] }
+        | undefined;
+      if (pointersInput) {
+        pointersInput.buttons =
+          editMode === "dental-brush" ? [1, 2] : [0, 1, 2];
       }
     }, [editMode, files, supports]);
 
@@ -2522,6 +2585,32 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       const markTouched = (mesh: Mesh): void => {
         touchedMeshes.add(mesh);
       };
+
+      // 색칠 변경에 따른 마진·아일랜드 무효화(감사 B3)를 "지연" 실행하기 위한
+      //   stlId → setTimeout 핸들 맵.
+      //   ⚠️ 왜 지연인가: 마진→더블탭 채우기 워크플로우에서 더블클릭의 "첫 클릭"
+      //   이 painted 를 바꿔 POINTERUP flush 가 즉시 marginRef 를 null 로 만들면,
+      //   뒤이어 도착하는 POINTERDOUBLETAP 의 fillMarginFromFace 가 마진 없음으로
+      //   거부된다(회귀). 따라서 painted "통지"는 즉시 하되, "무효화"만 더블클릭
+      //   윈도우(Scene.DoubleClickDelay, 기본 300ms)만큼 미룬다. 그 사이 더블탭이
+      //   오면 무효화를 취소한다(=마진 유지 → floodfill 성공, 원본 워크플로우).
+      const pendingInvalidations = new Map<string, ReturnType<typeof setTimeout>>();
+      const cancelPendingInvalidation = (stlId: string): void => {
+        const t = pendingInvalidations.get(stlId);
+        if (t !== undefined) {
+          clearTimeout(t);
+          pendingInvalidations.delete(stlId);
+        }
+      };
+      const scheduleInvalidation = (stlId: string): void => {
+        cancelPendingInvalidation(stlId); // 중복 예약 방지 (직전 예약을 갱신).
+        const t = setTimeout(() => {
+          pendingInvalidations.delete(stlId);
+          invalidateDentalResults(stlId);
+        }, Scene.DoubleClickDelay);
+        pendingInvalidations.set(stlId, t);
+      };
+
       // 모아둔 touched mesh 마다 painted face 를 재계산해 통지 후 비운다.
       const flushPaintedNotifications = (): void => {
         if (touchedMeshes.size === 0) return;
@@ -2535,7 +2624,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           }
           if (!stlId) continue;
           const faces = computePaintedFaceIds(mesh, paintPointsRef.current);
+          // 통지는 즉시 (painted 상태 동기 유지).
           onPaintedFacesChangeRef.current?.(stlId, Array.from(faces));
+          // 무효화는 더블클릭 윈도우만큼 지연 예약 (위 주석 참고).
+          //   ⚠️ flush 는 사용자 브러쉬 스트로크(POINTERUP/단발 클릭)에서만 호출된다.
+          //   "마진 찾기"(runFindDentalMargin)는 painted 를 읽기만 하고 touchedMeshes
+          //   를 건드리지 않으므로 검출 직후 무효화 예약이 생기지 않는다.
+          scheduleInvalidation(stlId);
         }
         touchedMeshes.clear();
       };
@@ -2841,14 +2936,24 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             }
           }
           if (!sid) return;
+          // 더블탭 = floodfill 채우기 의도. 직전 첫 클릭의 POINTERUP flush 가
+          //   예약한 무효화를 취소해 marginRef 를 살려둔다 (감사 B3 회귀 방지).
+          //   floodfill 은 마진을 소비하되 유지하는 원본 워크플로우.
+          cancelPendingInvalidation(sid);
           fillMarginFromFace(sid, pick.faceId);
         }
       });
 
       return () => {
         // 스트로크 중 모드 전환 등으로 UP 을 못 받은 경우 대비 — 남은 touched
-        //   mesh 를 정리 통지 (통지 누락 방지).
+        //   mesh 를 정리 통지 (통지 누락 방지). 이 flush 가 무효화를 재예약할 수
+        //   있으므로 반드시 타이머 정리보다 "먼저" 호출한다.
         flushPaintedNotifications();
+        // 예약된 무효화 타이머 정리(방금 flush 가 만든 것 포함) — 언마운트 후
+        //   setState/disposed mesh 접근을 막는다. 모드 이탈 시엔 더블탭이 더 올 수
+        //   없으므로 드롭해도 무방하며, 재진입 후 색칠하면 다시 예약된다.
+        for (const t of pendingInvalidations.values()) clearTimeout(t);
+        pendingInvalidations.clear();
         scene.onPointerObservable.remove(obs);
         canvas.style.cursor = "";
         brushRing.dispose(false, true);
@@ -2858,6 +2963,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         // 전환 시 painted(세션 상태)를 유지 — margin/island 조각이 같은 색칠을
         // 재사용할 수 있도록. 명시적 지우기는 clearDentalPaint()(패널 버튼).
       };
+      // invalidateDentalResults 는 컴포넌트 본문 함수(매 렌더 재생성)라 deps 에
+      // 넣으면 editMode 무변경에도 브러쉬 effect 가 반복 재설정된다. editMode 만 의존.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [editMode]);
 
     // 5) 외부 ref API
@@ -3347,6 +3455,11 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         clearDentalIslands() {
           // 아일랜드 마젠타 overlay + 결과 ref 만 정리. 색칠/마진은 유지.
           disposeIslandVisualization();
+        },
+        invalidateDentalResults(stlId) {
+          // 페이지 측 transform 수렴점에서 호출. 마진·아일랜드 dispose+ref null +
+          // onDentalResultsInvalidated 콜백 (감사 B1). refs 만 참조라 [] 핸들 안전.
+          invalidateDentalResults(stlId);
         },
       }),
       // 핸들은 ref/stable 함수만 참조 → 정체성 고정을 위해 []. runFindDentalMargin/
