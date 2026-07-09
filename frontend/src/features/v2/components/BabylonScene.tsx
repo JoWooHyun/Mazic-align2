@@ -697,6 +697,23 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     const islandResultRef = useRef<IslandResultSlim | null>(null);
     // 아일랜드 face 마젠타 overlay mesh. stlId 를 metadata 에 담아 정리 시 구분.
     const islandMarkersRef = useRef<Mesh[]>([]);
+    // 색칠 변경에 따른 마진·아일랜드 무효화(감사 B3)를 "지연" 실행하기 위한
+    //   stlId → setTimeout 핸들 맵. **컴포넌트 레벨 ref 로 승격**했다: 이전에는
+    //   브러쉬 effect 클로저 안 지역 Map 이라 검출 함수(runFindDentalMargin/
+    //   runDetectDentalIslands)가 pending 을 취소할 수 없어, 칠→300ms 내 검출 시
+    //   방금 만든 유효 결과를 만료 타이머가 지우는 레이스가 있었다. ref 로 올려
+    //   검출 성공 경로에서도 cancelPendingInvalidation 을 호출할 수 있게 한다.
+    const pendingInvalidationsRef = useRef<
+      Map<string, ReturnType<typeof setTimeout>>
+    >(new Map());
+    // 컴포넌트 언마운트(씬 dispose 경로) 진행 표시. 브러쉬 effect cleanup 이
+    //   모드 전환(마운트 유지)과 언마운트를 구분하는 데 쓴다. 씬-셋업 effect([])
+    //   cleanup 이 언마운트에서만 실행되며 그 시작에서 true 로 세팅한다. 언마운트
+    //   시엔 뒤이어 전체 dispose 가 오므로 pending 타이머는 clearTimeout 만 하고
+    //   invalidate(=setState 유발) 는 호출하지 않는다. (React 는 언마운트 시 effect
+    //   cleanup 을 선언 순서대로 실행 — 씬-셋업 effect 가 브러쉬 effect 보다 먼저
+    //   선언돼 있어 브러쉬 cleanup 시점엔 이 플래그가 이미 true 다.)
+    const isUnmountingRef = useRef(false);
     const selectedSupportRef = useRef<string | null>(selectedSupportId);
     selectedSupportRef.current = selectedSupportId;
     const bridgeModeRef = useRef<boolean>(bridgeMode);
@@ -899,6 +916,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       //   단일 슬롯 의미론을 유지한다.)
       disposeMarginVisualization();
       marginRef.current = { ...res.result, stlId };
+      // 이 검출이 최신 painted 를 방금 소비했으므로, 색칠 스트로크가 예약해 둔
+      //   지연 무효화는 무의미해진다. 취소하지 않으면 300ms 뒤 만료 타이머가
+      //   방금 만든 이 유효 마진을 지워버린다(신선 결과 파괴 레이스).
+      cancelPendingInvalidation(stlId);
 
       // 마진 라인 — 각 세그먼트를 얇은 튜브로 만들고 merge (원본 verbatim).
       //   WebGL LineSystem 은 thickness 1px 고정 → 두꺼운 선 표현 불가 →
@@ -1000,6 +1021,41 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     }
 
     /**
+     * 예약된 지연 무효화 타이머를 취소한다 (해당 stlId 것만).
+     *   · 더블탭 floodfill 경로: 첫 클릭이 예약한 무효화를 취소해 marginRef 유지
+     *     (감사 B3 회귀 방지, 원본 워크플로우).
+     *   · 검출 성공 경로: 검출이 최신 painted 를 이미 소비했으므로 그 예약은
+     *     무의미 — 만료 시 방금 만든 유효 결과를 지우는 레이스를 없앤다.
+     *   pendingInvalidationsRef(컴포넌트 레벨) 를 참조하므로 브러쉬 effect 안팎
+     *   어디서든(검출 함수 포함) 호출 가능하다.
+     */
+    function cancelPendingInvalidation(stlId: string): void {
+      const t = pendingInvalidationsRef.current.get(stlId);
+      if (t !== undefined) {
+        clearTimeout(t);
+        pendingInvalidationsRef.current.delete(stlId);
+      }
+    }
+
+    /**
+     * 색칠 변경에 따른 무효화를 더블클릭 윈도우(Scene.DoubleClickDelay, 기본
+     * 300ms)만큼 미뤄 예약한다.
+     *   ⚠️ 왜 지연인가: 마진→더블탭 채우기 워크플로우에서 더블클릭의 "첫 클릭"
+     *   이 painted 를 바꿔 POINTERUP flush 가 즉시 marginRef 를 null 로 만들면,
+     *   뒤이어 도착하는 POINTERDOUBLETAP 의 fillMarginFromFace 가 마진 없음으로
+     *   거부된다(회귀). 따라서 painted "통지"는 즉시 하되, "무효화"만 미룬다. 그
+     *   사이 더블탭이 오거나 검출이 실행되면 cancelPendingInvalidation 으로 취소.
+     */
+    function scheduleInvalidation(stlId: string): void {
+      cancelPendingInvalidation(stlId); // 중복 예약 방지 (직전 예약을 갱신).
+      const t = setTimeout(() => {
+        pendingInvalidationsRef.current.delete(stlId);
+        invalidateDentalResults(stlId);
+      }, Scene.DoubleClickDelay);
+      pendingInvalidationsRef.current.set(stlId, t);
+    }
+
+    /**
      * 활성 STL 전체에 대해 슬라이스 기반 아일랜드(미지지 영역)를 검출하고 마젠타
      * overlay 로 시각화한다.
      *   원본 STLViewer 의 detectIslandsSignal useEffect [씬/시각화 의존부] 이식 —
@@ -1062,6 +1118,10 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       //   (sliceCells/sliceFaceCells/perLayer*)은 아래 overlay·통계 계산에서 지역
       //   변수 result 로 즉시 소비하고 폐기 — ref 로 세션 상주시키지 않는다.
       islandResultRef.current = { stlId, islandFaces: result.islandFaces };
+      // 마진 검출과 동일 이유 — 이 검출이 최신 painted 를 소비했으므로 색칠이
+      //   예약한 지연 무효화를 취소한다. 없으면 만료 타이머가 방금 만든 이 유효
+      //   아일랜드 결과를 지운다(신선 결과 파괴 레이스).
+      cancelPendingInvalidation(stlId);
 
       // Island face overlay — 검출된 island face 의 실제 STL triangle 을 표면
       //   conforming 마젠타로 표시 (원본 시각화 verbatim). mesh index 버퍼에서
@@ -1799,6 +1859,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       window.addEventListener("resize", onResize);
 
       return () => {
+        // 언마운트 표시 — 이 cleanup 은 deps [] 이라 언마운트에서만 실행된다.
+        //   React 는 언마운트 시 effect cleanup 을 선언 순서대로 실행하므로, 이
+        //   씬-셋업 effect(먼저 선언)의 cleanup 이 브러쉬 effect(나중 선언) cleanup
+        //   보다 먼저 돌아 이 플래그가 true 로 세팅된다. 브러쉬 cleanup 은 이 값을
+        //   보고 pending 무효화를 "즉시 실행" 대신 "타이머만 정리"로 처리한다
+        //   (언마운트 중 부모 setState 방지 — 뒤이어 전체 dispose 가 온다).
+        isUnmountingRef.current = true;
         window.removeEventListener("resize", onResize);
         positionGizmoRef.current?.dispose();
         rotationGizmoRef.current?.dispose();
@@ -2630,30 +2697,14 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         touchedMeshes.add(mesh);
       };
 
-      // 색칠 변경에 따른 마진·아일랜드 무효화(감사 B3)를 "지연" 실행하기 위한
-      //   stlId → setTimeout 핸들 맵.
-      //   ⚠️ 왜 지연인가: 마진→더블탭 채우기 워크플로우에서 더블클릭의 "첫 클릭"
-      //   이 painted 를 바꿔 POINTERUP flush 가 즉시 marginRef 를 null 로 만들면,
-      //   뒤이어 도착하는 POINTERDOUBLETAP 의 fillMarginFromFace 가 마진 없음으로
-      //   거부된다(회귀). 따라서 painted "통지"는 즉시 하되, "무효화"만 더블클릭
-      //   윈도우(Scene.DoubleClickDelay, 기본 300ms)만큼 미룬다. 그 사이 더블탭이
-      //   오면 무효화를 취소한다(=마진 유지 → floodfill 성공, 원본 워크플로우).
-      const pendingInvalidations = new Map<string, ReturnType<typeof setTimeout>>();
-      const cancelPendingInvalidation = (stlId: string): void => {
-        const t = pendingInvalidations.get(stlId);
-        if (t !== undefined) {
-          clearTimeout(t);
-          pendingInvalidations.delete(stlId);
-        }
-      };
-      const scheduleInvalidation = (stlId: string): void => {
-        cancelPendingInvalidation(stlId); // 중복 예약 방지 (직전 예약을 갱신).
-        const t = setTimeout(() => {
-          pendingInvalidations.delete(stlId);
-          invalidateDentalResults(stlId);
-        }, Scene.DoubleClickDelay);
-        pendingInvalidations.set(stlId, t);
-      };
+      // 지연 무효화(감사 B3)의 상태·헬퍼는 컴포넌트 레벨로 승격됐다:
+      //   pendingInvalidationsRef / scheduleInvalidation / cancelPendingInvalidation.
+      //   (검출 함수가 pending 을 취소할 수 있어야 신선 결과 파괴 레이스를 막을 수
+      //   있기 때문 — 지역 클로저에 가두면 불가.) 여기서는 그대로 호출만 한다.
+      //   cleanup 에서 순회할 Map 을 effect 본문에서 미리 캡처한다 (react-hooks/
+      //   exhaustive-deps 권고 — ref 가 보유한 Map 은 컴포넌트 생애 내내 동일
+      //   객체라, 이후 스케줄러가 이 Map 을 mutate 해도 같은 참조로 반영된다).
+      const pendingInvalidations = pendingInvalidationsRef.current;
 
       // 모아둔 touched mesh 마다 painted face 를 재계산해 통지 후 비운다.
       const flushPaintedNotifications = (): void => {
@@ -2993,10 +3044,21 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         //   mesh 를 정리 통지 (통지 누락 방지). 이 flush 가 무효화를 재예약할 수
         //   있으므로 반드시 타이머 정리보다 "먼저" 호출한다.
         flushPaintedNotifications();
-        // 예약된 무효화 타이머 정리(방금 flush 가 만든 것 포함) — 언마운트 후
-        //   setState/disposed mesh 접근을 막는다. 모드 이탈 시엔 더블탭이 더 올 수
-        //   없으므로 드롭해도 무방하며, 재진입 후 색칠하면 다시 예약된다.
-        for (const t of pendingInvalidations.values()) clearTimeout(t);
+        // 예약된 무효화 타이머 처리 — 드롭하지 않는다.
+        //   · 모드 전환(마운트 유지): pending 을 clearTimeout 후 즉시 실행
+        //     (invalidateDentalResults). 모드 이탈 후엔 더블탭이 불가능하므로 지연할
+        //     이유가 없고, 이렇게 해야 "칠→300ms 내 모드 이탈"에서도 그 칠 변경의
+        //     무효화가 보장된다(감사 B3). 방금 flush 가 새로 예약한 것도 포함된다.
+        //   · 언마운트(씬 dispose 경로): 뒤이어 전체 dispose 가 오므로 invalidate
+        //     (setState 유발) 를 부르면 언마운트 중 부모 상태 갱신이 된다. 타이머만
+        //     clearTimeout 하고 콜백은 발화하지 않는다 — dispose 가 mesh/ref 를 모두
+        //     정리한다. isUnmountingRef 로 두 경우를 구분한다.
+        const unmounting = isUnmountingRef.current;
+        // effect 본문에서 캡처해 둔 pendingInvalidations(동일 Map 참조)를 순회.
+        for (const [stlId, t] of pendingInvalidations) {
+          clearTimeout(t);
+          if (!unmounting) invalidateDentalResults(stlId);
+        }
         pendingInvalidations.clear();
         scene.onPointerObservable.remove(obs);
         canvas.style.cursor = "";
