@@ -165,6 +165,8 @@ const ViewerV2Page: React.FC = () => {
     idx: number;
   } | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
+  // 검출 영역 자동 서포트(2-4) 생성 진행 중 — 버튼 비활성/문구용.
+  const [islandSupportBusy, setIslandSupportBusy] = useState(false);
   const [slicePreview, setSlicePreview] = useState<{
     on: boolean;
     layerIdx: number;
@@ -1173,6 +1175,46 @@ const ViewerV2Page: React.FC = () => {
     setIslandStatus(null);
   }, []);
 
+  // ----- 검출 영역 자동 서포트 (Step 2-4, ADR-3: 검출→생성 파이프라인) -----
+  //   아일랜드 검출 결과의 island 영역에만 자동 서포트를 생성한다. BabylonScene 이
+  //   faceFilter + 마진 가드까지 적용해 점을 반환하면, 여기서 기존 자동 생성 배선
+  //   (addSupports → undo push)과 동일 패턴으로 저장한다.
+  const handleAutoSupportIslands = useCallback(async () => {
+    if (!projectId || islandSupportBusy) return;
+    setIslandSupportBusy(true);
+    try {
+      const generated =
+        sceneHandleRef.current?.autoSupportIslands(projectId, supportParams) ??
+        null;
+      // null = 아일랜드 검출 결과 없음. 빈 배열 = 검출됐으나 생성점 0 (가드 배제 등).
+      if (!generated || generated.length === 0) return;
+
+      const ids = generated.map((p) => p.id);
+      await addSupports(generated);
+
+      useUndoStore.getState().push({
+        label: "island-auto-supports",
+        undo: async () => {
+          for (const id of ids) {
+            await supportRepo.deleteSupport(id);
+          }
+          await refreshSupports();
+        },
+        redo: async () => {
+          await addSupports(generated);
+        },
+      });
+    } finally {
+      setIslandSupportBusy(false);
+    }
+  }, [
+    projectId,
+    islandSupportBusy,
+    supportParams,
+    addSupports,
+    refreshSupports,
+  ]);
+
   // ----- Transform -----
   const handlePreviewTransform = useCallback(
     (id: string, t: TransformV2) => {
@@ -1926,6 +1968,8 @@ const ViewerV2Page: React.FC = () => {
                 onDetectIslands={handleDetectIslands}
                 onClearIslands={handleClearIslands}
                 islandStatus={islandStatus}
+                onAutoSupportIslands={handleAutoSupportIslands}
+                autoSupportBusy={islandSupportBusy}
               />
             )}
           </div>
