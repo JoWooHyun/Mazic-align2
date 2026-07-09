@@ -1,8 +1,5 @@
-import type { BabylonSceneHandle } from "../components/BabylonScene";
 import { layerExposureSec } from "./exposure";
-import type { SliceMask } from "./slice-rasterize";
-import { maskToPngBlob } from "./mask-png";
-import { makeZipStore, type ZipEntry } from "./zip-store";
+import type { ZipEntry } from "./zip-store";
 
 export interface BatchSliceOptions {
   layerHeightMm: number;
@@ -28,8 +25,8 @@ export interface BatchSliceOptions {
  * 이미 PNG 로 인코딩된 레이어 바이트 배열 + 파라미터로 ZIP STORE 에 넣을
  * ZipEntry 배열(manifest.json + layer_*.png)을 조립한다.
  *
- * Babylon / 캔버스에 의존하지 않는 순수 함수 — 메인스레드(exportLayersAsPngZip)와
- * 워커가 공유한다. manifest 필드/파일명 규칙은 분리 전과 동일.
+ * Babylon / 캔버스에 의존하지 않는 순수 함수 — 워커가 PNG 를 인코딩해 호출한다.
+ * manifest 필드/파일명 규칙은 분리 전과 동일.
  */
 export function buildPngZipEntries(
   pngs: Uint8Array[],
@@ -72,43 +69,4 @@ export function buildPngZipEntries(
   }
 
   return entries;
-}
-
-/**
- * sceneTop 까지 layerHeight 간격으로 모든 레이어 마스크를 만들어
- * PNG 로 인코딩 → ZIP STORE 1 개로 묶는다.
- *
- * 메모리 관리: 마스크 자체는 즉시 PNG 로 변환 후 버린다. 큰 해상도 +
- * 수백 레이어도 동시에 메모리에 1 layer 만 들고 있다.
- *
- * 파일명: layer_00001.png … (1-based, leading zero padded)
- * 첫 번째 파일로 메타 텍스트 manifest.json 동봉.
- */
-export async function exportLayersAsPngZip(
-  sceneHandle: BabylonSceneHandle,
-  opts: BatchSliceOptions,
-): Promise<Blob | null> {
-  const topY = sceneHandle.getSceneTopY();
-  if (topY <= 0) return null;
-  const layerCount = Math.max(1, Math.ceil(topY / opts.layerHeightMm));
-
-  const pngs: Uint8Array[] = [];
-
-  for (let i = 0; i < layerCount; i++) {
-    const sliceY = (i + 0.5) * opts.layerHeightMm;
-    const mask: SliceMask = sceneHandle.getSliceMask(
-      sliceY,
-      opts.widthPx,
-      opts.heightPx,
-    );
-    pngs.push(await maskToPngBlob(mask));
-    opts.onProgress?.(i + 1, layerCount);
-
-    // 다음 microtask 로 yield — 큰 작업 중 UI 가 멈추지 않게.
-    if (i % 8 === 7) {
-      await new Promise<void>((r) => setTimeout(r, 0));
-    }
-  }
-
-  return makeZipStore(buildPngZipEntries(pngs, layerCount, opts, topY));
 }

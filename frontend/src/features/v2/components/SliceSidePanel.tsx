@@ -1,6 +1,11 @@
 import { useMemo } from "react";
 
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
+import {
+  DEFAULT_EXPOSURE_SEC,
+  DEFAULT_BOTTOM_EXPOSURE_SEC,
+  DEFAULT_BOTTOM_LAYER_COUNT,
+} from "../types/printer";
 import { estimatePrintTimeSec } from "../utils/print-time";
 import type { BabylonSceneHandle } from "./BabylonScene";
 import SliceMaskPreview from "./SliceMaskPreview";
@@ -150,9 +155,9 @@ const SliceSidePanel: React.FC<Props> = ({
           </div>
           <p className="text-xs text-gray-400 mt-1">
             기준: {printerProfile.name} · 노광{" "}
-            {(printerProfile.exposureSec ?? 2.5).toFixed(1)}s · 바닥{" "}
-            {printerProfile.bottomLayerCount ?? 5}층{" "}
-            {(printerProfile.bottomExposureSec ?? 30).toFixed(1)}s · 레진 ~1.1
+            {(printerProfile.exposureSec ?? DEFAULT_EXPOSURE_SEC).toFixed(1)}s ·
+            바닥 {printerProfile.bottomLayerCount ?? DEFAULT_BOTTOM_LAYER_COUNT}층{" "}
+            {(printerProfile.bottomExposureSec ?? DEFAULT_BOTTOM_EXPOSURE_SEC).toFixed(1)}s · 레진 ~1.1
             g/cm³
           </p>
         </Card>

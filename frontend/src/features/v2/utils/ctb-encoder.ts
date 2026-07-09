@@ -1,11 +1,4 @@
-import type { BabylonSceneHandle } from "../components/BabylonScene";
-import {
-  DEFAULT_LIFT_DISTANCE_MM,
-  DEFAULT_LIFT_SPEED_MM_S,
-  DEFAULT_RETRACT_SPEED_MM_S,
-  DEFAULT_LIGHT_OFF_DELAY_SEC,
-  type PrinterProfileV2,
-} from "../types/printer";
+import type { PrinterProfileV2 } from "../types/printer";
 import { layerExposureSec } from "./exposure";
 import { estimatePrintTimeSec } from "./print-time";
 import type { SliceMask } from "./slice-rasterize";
@@ -44,8 +37,7 @@ function ctbOptionsToProfile(opts: CtbAssembleOptions): PrinterProfileV2 {
 
 /**
  * CTB 조립에 필요한 파라미터 (Babylon 의존 없는 순수부).
- * makeCtbV4 는 sceneHandle 에서 마스크를 얻은 뒤 이 옵션으로 assembleCtb 를 호출.
- * 워커는 자체적으로 마스크를 만들어 encodeRle1bpp → assembleCtb 로 동일 산출.
+ * 워커는 자체적으로 마스크를 만들어 encodeRle1bpp → assembleCtb 로 산출.
  */
 export interface CtbAssembleOptions {
   layerHeightMm: number;
@@ -88,87 +80,13 @@ export interface CtbAssembleOptions {
  *   run > 127 은 같은 색의 byte 를 반복 출력.
  */
 
-export interface CtbExportOptions {
-  layerHeightMm: number;
-  resolutionX: number;
-  resolutionY: number;
-  bedSizeXMm: number;
-  bedSizeYMm: number;
-  bedSizeZMm: number;
-  /** 노광 시간 (초). 일반 SLA 기준 2.5s. */
-  exposureSec?: number;
-  /** 바닥 레이어 노광 시간. 보통 30s. */
-  bottomExposureSec?: number;
-  bottomLayerCount?: number;
-  /** 전환 레이어 개수. 바닥→일반 노광 선형 보간 구간. 기본 0 (전환 없음). */
-  transitionLayerCount?: number;
-  lightOffDelaySec?: number;
-  /** 리프트 거리 (mm). 미지정 시 DEFAULT_LIFT_DISTANCE_MM 폴백. */
-  liftDistanceMm?: number;
-  /** 리프트 속도 (mm/s). 미지정 시 DEFAULT_LIFT_SPEED_MM_S 폴백. */
-  liftSpeedMmS?: number;
-  /** 하강 속도 (mm/s). 미지정 시 DEFAULT_RETRACT_SPEED_MM_S 폴백. */
-  retractSpeedMmS?: number;
-  onProgress?: (done: number, total: number) => void;
-}
-
 const MAGIC_CTB = 0x12fd0086;
 const VERSION = 3; // ChiTuBox 1.9.5 호환을 위해 v3 (binary, anti_alias=1)
-
-export async function makeCtbV4(
-  sceneHandle: BabylonSceneHandle,
-  opts: CtbExportOptions,
-): Promise<Blob | null> {
-  const topY = sceneHandle.getSceneTopY();
-  if (topY <= 0) return null;
-
-  const layerCount = Math.max(1, Math.ceil(topY / opts.layerHeightMm));
-  const exposureSec = opts.exposureSec ?? 2.5;
-  const bottomExposureSec = opts.bottomExposureSec ?? 30.0;
-  const bottomLayers = opts.bottomLayerCount ?? 5;
-  const transitionLayers = opts.transitionLayerCount ?? 0;
-  // 리프트/딜레이는 DEFAULT_*(v1) 폴백 — CTB 기록과 예상 시간이 같은 값 기준이 되도록.
-  const lightOffSec = opts.lightOffDelaySec ?? DEFAULT_LIGHT_OFF_DELAY_SEC;
-  const liftDistanceMm = opts.liftDistanceMm ?? DEFAULT_LIFT_DISTANCE_MM;
-  const liftSpeedMmS = opts.liftSpeedMmS ?? DEFAULT_LIFT_SPEED_MM_S;
-  const retractSpeedMmS = opts.retractSpeedMmS ?? DEFAULT_RETRACT_SPEED_MM_S;
-
-  // ---------- 1) 각 layer 의 RLE 인코딩 ----------
-  const layerData: Uint8Array[] = [];
-  for (let i = 0; i < layerCount; i++) {
-    const z = (i + 0.5) * opts.layerHeightMm;
-    const mask = sceneHandle.getSliceMask(
-      z,
-      opts.resolutionX,
-      opts.resolutionY,
-    );
-    layerData.push(encodeRle1bpp(mask));
-    opts.onProgress?.(i + 1, layerCount);
-    if (i % 8 === 7) await new Promise<void>((r) => setTimeout(r, 0));
-  }
-
-  return assembleCtb(layerData, layerCount, {
-    layerHeightMm: opts.layerHeightMm,
-    resolutionX: opts.resolutionX,
-    resolutionY: opts.resolutionY,
-    bedSizeXMm: opts.bedSizeXMm,
-    bedSizeYMm: opts.bedSizeYMm,
-    bedSizeZMm: opts.bedSizeZMm,
-    exposureSec,
-    bottomExposureSec,
-    bottomLayers,
-    transitionLayers,
-    lightOffSec,
-    liftDistanceMm,
-    liftSpeedMmS,
-    retractSpeedMmS,
-  });
-}
 
 /**
  * 이미 RLE 인코딩된 레이어 데이터 배열 + 파라미터로 최종 .ctb ArrayBuffer 를 조립.
  *
- * Babylon 에 의존하지 않는 순수 함수 — 메인스레드(makeCtbV4)와 워커가 공유한다.
+ * Babylon 에 의존하지 않는 순수 함수 — 워커가 마스크를 만들어 호출한다.
  * 산출 바이트는 분리 전과 동일 (헤더/preview/파라미터/layer table/layer data 순).
  * 단, slicer info 의 TimestampMinutes 필드는 호출 시각(분)을 담으므로 호출마다 달라진다.
  */

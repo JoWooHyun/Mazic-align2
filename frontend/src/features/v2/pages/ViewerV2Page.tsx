@@ -34,7 +34,13 @@ import GithubProjectDialog from "../components/GithubProjectDialog";
 import PrinterProfileSelect from "../components/PrinterProfileSelect";
 import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
-import type { PrinterProfileV2 } from "../types/printer";
+import {
+  DEFAULT_EXPOSURE_SEC,
+  DEFAULT_BOTTOM_EXPOSURE_SEC,
+  DEFAULT_BOTTOM_LAYER_COUNT,
+  DEFAULT_TRANSITION_LAYER_COUNT,
+  type PrinterProfileV2,
+} from "../types/printer";
 import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
 import { transformPointBetween } from "../utils/transform";
 import {
@@ -67,10 +73,11 @@ function profileExposure(p: PrinterProfileV2):
     p.transitionLayerCount !== undefined;
   if (!hasAny) return undefined;
   return {
-    bottomLayerCount: p.bottomLayerCount ?? 5,
-    transitionLayerCount: p.transitionLayerCount ?? 0,
-    bottomExposureSec: p.bottomExposureSec ?? 30.0,
-    exposureSec: p.exposureSec ?? 2.5,
+    bottomLayerCount: p.bottomLayerCount ?? DEFAULT_BOTTOM_LAYER_COUNT,
+    transitionLayerCount:
+      p.transitionLayerCount ?? DEFAULT_TRANSITION_LAYER_COUNT,
+    bottomExposureSec: p.bottomExposureSec ?? DEFAULT_BOTTOM_EXPOSURE_SEC,
+    exposureSec: p.exposureSec ?? DEFAULT_EXPOSURE_SEC,
   };
 }
 

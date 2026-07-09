@@ -10,6 +10,10 @@
  * 산출 바이트는 동기 경로와 동일하다. Babylon 은 import 하지 않는다.
  */
 import {
+  DEFAULT_EXPOSURE_SEC,
+  DEFAULT_BOTTOM_EXPOSURE_SEC,
+  DEFAULT_BOTTOM_LAYER_COUNT,
+  DEFAULT_TRANSITION_LAYER_COUNT,
   DEFAULT_LIFT_DISTANCE_MM,
   DEFAULT_LIFT_SPEED_MM_S,
   DEFAULT_RETRACT_SPEED_MM_S,
@@ -135,11 +139,12 @@ async function runCtb(req: CtbRequest): Promise<void> {
     Math.ceil(options.topY / options.layerHeightMm),
   );
 
-  // 기존 인코더와 동일한 기본값 처리 (makeCtbV4 의 ?? 기본과 일치).
-  const exposureSec = ctb.exposureSec ?? 2.5;
-  const bottomExposureSec = ctb.bottomExposureSec ?? 30.0;
-  const bottomLayers = ctb.bottomLayerCount ?? 5;
-  const transitionLayers = ctb.transitionLayerCount ?? 0;
+  // 노광/리프트 기본값은 printer.ts 의 DEFAULT_* 상수로 폴백 — 예상 시간·UI 와 동일 기준.
+  const exposureSec = ctb.exposureSec ?? DEFAULT_EXPOSURE_SEC;
+  const bottomExposureSec = ctb.bottomExposureSec ?? DEFAULT_BOTTOM_EXPOSURE_SEC;
+  const bottomLayers = ctb.bottomLayerCount ?? DEFAULT_BOTTOM_LAYER_COUNT;
+  const transitionLayers =
+    ctb.transitionLayerCount ?? DEFAULT_TRANSITION_LAYER_COUNT;
   // 리프트/딜레이는 DEFAULT_*(v1) 폴백 — CTB 기록과 예상 시간이 같은 값 기준이 되도록.
   const lightOffSec = ctb.lightOffDelaySec ?? DEFAULT_LIGHT_OFF_DELAY_SEC;
   const liftDistanceMm = ctb.liftDistanceMm ?? DEFAULT_LIFT_DISTANCE_MM;

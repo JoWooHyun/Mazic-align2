@@ -15,6 +15,10 @@
  */
 
 import {
+  DEFAULT_EXPOSURE_SEC,
+  DEFAULT_BOTTOM_EXPOSURE_SEC,
+  DEFAULT_BOTTOM_LAYER_COUNT,
+  DEFAULT_TRANSITION_LAYER_COUNT,
   DEFAULT_LIFT_DISTANCE_MM,
   DEFAULT_LIFT_SPEED_MM_S,
   DEFAULT_RETRACT_SPEED_MM_S,
@@ -22,12 +26,6 @@ import {
   type PrinterProfileV2,
 } from "../types/printer";
 import { layerExposureSec } from "./exposure";
-
-// 노광 설정 기본값 — 프로파일 미지정 시 폴백 (ctb-encoder / ViewerV2Page 와 동일).
-const DEFAULT_EXPOSURE_SEC = 2.5;
-const DEFAULT_BOTTOM_EXPOSURE_SEC = 30.0;
-const DEFAULT_BOTTOM_LAYER_COUNT = 5;
-const DEFAULT_TRANSITION_LAYER_COUNT = 0;
 
 /**
  * 프로파일 기반 예상 출력 시간(초)을 계산한다.
