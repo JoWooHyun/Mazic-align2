@@ -20,20 +20,36 @@
  *    마스크는 픽셀 좌표라 Z 플립, G-code 는 데카르트라 무플립 — 실기
  *    검증 필요.)
  *
- * 레이어 Z 오프셋:
- *   v1 SliceEngine.slice() 는 startZ = minZ + layerHeight, z = startZ +
- *   i*layerHeight (레이어 "상단" 기준, i=0 이 이미 layerHeight 만큼 올라간
- *   위치) 로 계산한다. 여기서 minZ 는 v1 에서 "모델의 실제 최저 Z"였다.
+ * 레이어 Z 오프셋 (v1 SliceEngine 정정 이식 — 감사 A1):
+ *   이전 v2 는 z(i) = minZ + (i+1)*layerHeight 로 첫 층(Z=minZ ~
+ *   minZ+layerHeight)을 통째로 건너뛰었다. 이는 v1 이 이미 커밋 f7208ed
+ *   에서 고친 "첫 레이어 누락" 버그의 재도입이었다(주석의 v1 인용도 반대로
+ *   되어 있었다). v1 SliceEngine.slice() 의 실제(수정된) 공식은:
+ *     startZ = minZ,  z(i) = startZ + i*layerHeight  (i = 0-based)
+ *     sliceZ = z + EPSILON            // 공면 삼각형 회피용 미세 섭동
+ *     totalLayers = ceil((maxZ - minZ) / layerHeight) + 1
+ *   즉 i=0 은 최저면 바로 위(z = minZ)에서 샘플링되어 첫 출력 층에 모델·
+ *   서포트 foot 단면이 그대로 포함된다.
+ *
  *   v2 는 호출 측(BabylonScene.tsx 의 exportFdmGcode)이 대상 mesh 들의
- *   실제 world bounding 최저 Y 를 range.yMin 으로 넘기므로, v1 의 minZ
- *   자리에 range.yMin 을 그대로 대입해 동일한 "레이어 상단" 공식을
- *   적용한다:
- *     z(i) = range.yMin + (i + 1) * layerHeight   (i = 0-based layer index)
+ *   실제 world bounding 최저 Y 를 range.yMin 으로(= v1 의 minZ) 넘기므로
+ *   그 자리에 그대로 대입해 동일 공식을 적용한다:
+ *     z(i) = range.yMin + i * layerHeight          // G-code 층 Z(공칭)
+ *     sampleY = z + EPSILON                          // 실제 슬라이스 평면
+ *
+ *   ※ 이 수정으로 G-code 산출물이 의도적으로 달라진다(첫 층 추가 + 전체
+ *      레이어 Z 가 layerHeight 만큼 하향). 회귀가 아니라 v1 과의 정합을
+ *      회복하는 의도적 변경이다.
+ *   ※ DLP/CTB 경로((i + 0.5) 중앙 샘플링)는 별개 규약이므로 여기서 건드리지
+ *      않는다.
  */
 import type { Mesh } from '@babylonjs/core';
 import { sliceMeshAtY, chainSegments } from '../slice-section';
 import { GCodeGenerator } from './gcode-generator';
 import { FdmSettings, Point } from './types';
+
+/** 공면 삼각형 회피용 Z 섭동 (v1 SliceEngine 의 EPSILON = 1e-5 와 동일). */
+const SLICE_EPSILON = 1e-5;
 
 export interface FdmSliceRange {
     /** 슬라이스 시작 높이 (mm). 대상 mesh 들의 world bounding 최저 Y. */
@@ -77,16 +93,21 @@ export function generateFdmGcode(
     const generator = new GCodeGenerator(settings);
     const { layerHeight } = settings;
 
-    const totalLayers = Math.ceil((range.yMax - range.yMin) / layerHeight);
+    // v1 SliceEngine 과 동일: ceil(높이/lh) + 1 (첫 층 포함).
+    const totalLayers = Math.ceil((range.yMax - range.yMin) / layerHeight) + 1;
 
     let fullGcode = generator.generateHeader();
 
     for (let i = 0; i < totalLayers; i++) {
-        // v1 SliceEngine 과 동일한 "레이어 상단" 공식: z(i) = base + (i+1)*layerHeight.
-        const z = range.yMin + (i + 1) * layerHeight;
-        if (z > range.yMax + 1e-6) break;
+        // v1 SliceEngine 정정 공식(감사 A1): z(i) = base + i*layerHeight.
+        // i=0 이 최저면(z = yMin) → 첫 층이 누락되지 않는다.
+        const z = range.yMin + i * layerHeight;
+        // 실제 슬라이스 평면은 공면 삼각형 회피를 위해 EPSILON 만큼 섭동한다
+        // (v1 의 sliceZ = z + EPSILON). 층 Z 좌표는 공칭 z 를 그대로 쓴다.
+        const sampleY = z + SLICE_EPSILON;
+        if (sampleY > range.yMax) break;
 
-        const worldPolys = sliceLayerPolygons(meshes, z);
+        const worldPolys = sliceLayerPolygons(meshes, sampleY);
         const gcodePolys = toGcodePolygons(worldPolys, settings.buildWidth, settings.buildDepth);
 
         const { gcode } = generator.generateLayer(gcodePolys, z, i);

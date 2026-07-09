@@ -1129,6 +1129,16 @@ const ViewerV2Page: React.FC = () => {
     setIslandStatus(null);
   }, []);
 
+  // BabylonScene 이 STL 변형·색칠 변경으로 마진·아일랜드 검출 결과를 내부에서
+  //   무효화했을 때(감사 B1/B3) 호출된다. 씬 쪽 시각화·ref 는 이미 정리됐으므로
+  //   여기서는 UI 상태만 초기 상태로 되돌려 "재검출 필요"를 명시적으로 표시한다.
+  //   marginStatus/islandStatus 는 현재 단일 슬롯(B4 기지 한계)이라 stlId 무관하게
+  //   둘 다 리셋한다 (콜백 시그니처의 stlId 는 향후 다중 슬롯 대비용으로만 전달됨).
+  const handleDentalResultsInvalidated = useCallback(() => {
+    setMarginStatus(null);
+    setIslandStatus(null);
+  }, []);
+
   // ----- Dental 마진 찾기 (2-3b) -----
   //   씬에서 색칠 영역 → findMargin → 초록 튜브 시각화. 성공/실패 사유를
   //   패널 문구로 표시. painted 0 이면 패널 버튼이 비활성이라 여기 도달 X.
@@ -1225,6 +1235,10 @@ const ViewerV2Page: React.FC = () => {
 
   const handleCommitTransform = useCallback(
     (id: string, start: TransformV2, end: TransformV2) => {
+      // STL 이 변형됐으므로 world 좌표 기반 마진·아일랜드 검출 결과를 무효화한다
+      //   (감사 B1). gizmo/드래그/수치입력(TransformPanel)/바닥면정렬이 모두 이
+      //   handleCommitTransform 으로 수렴하므로 무효화를 여기 한 곳에 배선한다.
+      sceneHandleRef.current?.invalidateDentalResults(id);
       // 즉시 DB 반영. (그 사이 메쉬는 이미 preview 로 반영돼 있음)
       void updateTransform(id, end);
 
@@ -1403,12 +1417,16 @@ const ViewerV2Page: React.FC = () => {
       useUndoStore.getState().push({
         label: "transform",
         undo: async () => {
+          // undo 도 STL 을 다시 이동시키므로 검출 결과 무효화 (감사 B1).
+          sceneHandleRef.current?.invalidateDentalResults(id);
           await updateTransform(id, start);
           await Promise.all(
             oldStates.map(({ id: sid, patch }) => patchSupport(sid, patch)),
           );
         },
         redo: async () => {
+          // redo 도 마찬가지로 무효화 (감사 B1).
+          sceneHandleRef.current?.invalidateDentalResults(id);
           await updateTransform(id, end);
           await Promise.all(
             newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
@@ -1657,6 +1675,7 @@ const ViewerV2Page: React.FC = () => {
             brushThicknessMm={brushThicknessMm}
             onPaintedFacesChange={handlePaintedFacesChange}
             onBrushThicknessChange={setBrushThicknessMm}
+            onDentalResultsInvalidated={handleDentalResultsInvalidated}
           />
 
           {/* 우측 상단 stack: 모든 overlay 컨트롤 / 정보 패널 */}
