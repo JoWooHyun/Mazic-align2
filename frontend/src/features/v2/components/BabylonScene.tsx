@@ -70,6 +70,7 @@ import {
   detectSliceIslands,
   type SliceIslandResult,
 } from "../utils/dental/island-detection";
+import { guardContactAgainstMargin } from "../utils/dental/margin-guard";
 
 function buildBridgeClipKey(
   point: SupportPointV2,
@@ -476,6 +477,21 @@ export interface BabylonSceneHandle {
    * 아일랜드 마젠타 overlay + 결과 ref 를 지운다. 브러쉬 색칠/마진 은 유지.
    */
   clearDentalIslands: () => void;
+  /**
+   * 검출→생성 파이프라인 (Step 2-4, ADR-3): 직전 아일랜드 검출 결과의 island face
+   * 집합에만 자동 서포트 점을 생성해 반환한다.
+   *   islandResultRef 의 island face 집합 → autoGenerateSupportPoints(…, {faceFilter})
+   *   로 후보 접점을 island face 위로 제한 → 같은 STL 의 마진 결과(marginRef)가
+   *   있으면 각 접점에 margin-guard(guardContactAgainstMargin)를 적용해 마진 라인
+   *   비침범을 보장 → 통과한 점만 반환. 저장은 호출 측(ViewerV2Page)에서 IndexedDB
+   *   commit — 기존 generateAutoSupports 패턴과 동일.
+   *
+   * 아일랜드 검출 결과가 없으면 null (패널이 "먼저 아일랜드 검출" 안내).
+   */
+  autoSupportIslands: (
+    projectId: string,
+    params: SupportParams,
+  ) => SupportPointV2[] | null;
 }
 
 /** 아일랜드 검출 요약 통계 (패널 표시용). 원본 onIslandDetectionComplete 페이로드 축약. */
@@ -2887,6 +2903,148 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             out.push(...pts);
           }
           return out;
+        },
+        autoSupportIslands(projectId, params) {
+          const scene = sceneRef.current;
+          if (!scene) return null;
+          const island = islandResultRef.current;
+          // 아일랜드 검출 결과가 없으면 파이프라인 시작점이 없음 → null.
+          if (!island || island.islandFaces.size === 0) return null;
+
+          const stlId = island.stlId;
+          const mesh = meshMapRef.current.get(stlId);
+          if (!mesh) return null;
+
+          // island face 집합 = faceFilter — 후보 접점을 검출 영역 위로만 제한.
+          const others = Array.from(meshMapRef.current.entries())
+            .filter(([id]) => id !== stlId)
+            .map(([, m]) => m);
+          const pts = autoGenerateSupportPoints(
+            scene,
+            mesh,
+            others,
+            params,
+            projectId,
+            stlId,
+            { faceFilter: island.islandFaces },
+          );
+
+          // 같은 STL 의 마진 결과가 있으면 각 접점에 margin-guard 적용 —
+          //   마진 라인 밖으로 밀어내고, 확보 못 하면 배제 (원본 scopedSupport 이식).
+          //   원본 bodyR = settings.tipBottomDiameter (disc 팁 아랫면 지름 = 마진에
+          //   가장 가까운 접점 부위). v2 SupportParams 에는 tipBottomDiameter 필드가
+          //   없어, 접점(팁) 지름인 tipDiameterMm 를 그 대응값으로 쓴다. (마진 가드는
+          //   접점 근방 클리어런스이므로 팁 지름이 가장 근접한 의미 대응.)
+          const margin =
+            marginRef.current && marginRef.current.stlId === stlId
+              ? marginRef.current
+              : null;
+          if (!margin) {
+            console.log(
+              `[검출 영역 자동 서포트] island face ${island.islandFaces.size}면 → ` +
+                `생성 ${pts.length}개 (마진 없음 — 가드 미적용)`,
+            );
+            return pts;
+          }
+
+          const bodyR = params.tipDiameterMm;
+          // 재검증용 mesh AABB — 아래→위 ray 발사 범위 (auto-generate 와 동일 규약).
+          mesh.computeWorldMatrix(true);
+          mesh.refreshBoundingInfo();
+          const bb = mesh.getBoundingInfo().boundingBox;
+          const reYTop = bb.maximumWorld.y + 1;
+          const reYBelow = bb.minimumWorld.y - 1;
+          const reRayLen = reYTop - reYBelow;
+          const reUp = new Vector3(0, 1, 0);
+          const otherMeshes = Array.from(meshMapRef.current.entries())
+            .filter(([id]) => id !== stlId)
+            .map(([, m]) => m);
+          const PEN = 0.3; // auto-generate 와 동일 — contact 를 표면 안쪽으로 push.
+
+          const guarded: SupportPointV2[] = [];
+          let excluded = 0;
+          let moved = 0;
+          for (const p of pts) {
+            const adj = guardContactAgainstMargin(
+              p.contact,
+              margin.points,
+              bodyR,
+            );
+            if (!adj) {
+              excluded++;
+              continue;
+            }
+            const didMove =
+              Math.abs(adj[0] - p.contact[0]) > 1e-6 ||
+              Math.abs(adj[2] - p.contact[2]) > 1e-6;
+            if (!didMove) {
+              // XZ 불변 → 원본 접점 그대로 (표면 재검증 불필요).
+              guarded.push(p);
+              continue;
+            }
+
+            // ── 이동 후 표면 재검증 (원본 STLViewer scopedSupport 3482-3490 이식) ──
+            //   가드 push 로 XZ 가 바뀌면 그 새 XZ 에서 표면을 다시 raycast 해 Y 를
+            //   재스냅한다. v2 데이터는 IndexedDB 최종 커밋이라 뒤에서 보정 기회가
+            //   없으므로, 히트 없음/island 이탈이면 어중간한 보정 대신 폐기한다.
+            //   ray 방향은 auto-generate 와 동일(아래→위)로 맞춰 face 번호 체계 일치.
+            const reOrigin = new Vector3(adj[0], reYBelow, adj[2]);
+            const reInfo = scene.pickWithRay(
+              new Ray(reOrigin, reUp, reRayLen),
+              (m) => m === mesh,
+            );
+            // 1) 히트 없으면 폐기.
+            if (!reInfo?.hit || !reInfo.pickedPoint) {
+              excluded++;
+              continue;
+            }
+            // 2) island faceFilter 재확인 — 이동으로 검출 영역 밖이면 폐기.
+            if (
+              reInfo.faceId < 0 ||
+              !island.islandFaces.has(reInfo.faceId)
+            ) {
+              excluded++;
+              continue;
+            }
+            const reNormal = reInfo.getNormal(true, true);
+            if (!reNormal) {
+              excluded++;
+              continue;
+            }
+            // 3) 새 pickedPoint/normal 로 contact 재계산 (PEN 0.3 push 규약 포함).
+            const cX = reInfo.pickedPoint.x - reNormal.x * PEN;
+            const cY = reInfo.pickedPoint.y - reNormal.y * PEN;
+            const cZ = reInfo.pickedPoint.z - reNormal.z * PEN;
+            // 4) base 동기화 — 새 contact XZ 로. 원본 base Y 가 0(플레이트)이면 그대로
+            //    유지, 다른 STL 표면(base Y>0)이었으면 새 XZ 에서 base Y 재확인.
+            let baseY = 0;
+            if (p.base[1] > 0 && otherMeshes.length > 0 && cY > 0) {
+              const downRay = new Ray(
+                new Vector3(cX, cY - 0.01, cZ),
+                new Vector3(0, -1, 0),
+                cY,
+              );
+              for (const om of otherMeshes) {
+                const hit = om.intersects(downRay, false);
+                if (hit.hit && hit.pickedPoint && hit.pickedPoint.y > baseY) {
+                  baseY = hit.pickedPoint.y;
+                }
+              }
+            }
+            moved++;
+            guarded.push({
+              ...p,
+              contact: [cX, cY, cZ],
+              base: [cX, baseY, cZ],
+            });
+          }
+          console.log(
+            `[검출 영역 자동 서포트] island face ${island.islandFaces.size}면 → ` +
+              `후보 ${pts.length}개 · 마진 가드 이동 ${moved} · 배제 ${excluded} → ` +
+              `생성 ${guarded.length}개 (marginPoints ${margin.points.length}개 · ` +
+              `가드 ${bodyR.toFixed(2)}mm + 0.5mm)`,
+          );
+          return guarded;
         },
         exportStl() {
           const stl = Array.from(meshMapRef.current.values());

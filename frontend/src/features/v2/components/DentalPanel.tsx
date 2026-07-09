@@ -17,6 +17,10 @@
  *     결과 요약(총 island face 수 · 레이어 수 · island 있는 레이어 수) 표시.
  *   · "아일랜드 지우기" — 마젠타 overlay 제거 (색칠/마진은 유지).
  *   레이어별 상세 카운트는 이번 범위 밖(요약 수준).
+ *
+ * Step 2-4 범위: 검출→생성 파이프라인 (ADR-3, 지현규 판단 → 유승제 생성).
+ *   · "검출 영역 자동 서포트" — 아일랜드 검출 결과가 있을 때만 활성. 검출된 island
+ *     영역에만 자동 서포트를 생성(마진 있으면 마진 가드 적용)한다. 원클릭 배선.
  * 스타일은 SupportParamsPanel 패턴을 따른다 (흰 카드 · 회색 라벨 · primary 버튼).
  */
 
@@ -68,6 +72,13 @@ interface DentalPanelProps {
       }
     | { ok: false; message: string }
     | null;
+  /**
+   * "검출 영역 자동 서포트" (Step 2-4) — 검출된 아일랜드 영역에만 자동 서포트 생성.
+   * 아일랜드 검출이 성공(islandStatus.ok)했을 때만 활성.
+   */
+  onAutoSupportIslands: () => void;
+  /** 검출 영역 자동 서포트 생성 진행 중 여부 (버튼 비활성/문구). */
+  autoSupportBusy?: boolean;
   className?: string;
 }
 
@@ -84,6 +95,8 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
   onDetectIslands,
   onClearIslands,
   islandStatus = null,
+  onAutoSupportIslands,
+  autoSupportBusy = false,
   className = "",
 }) => {
   const commitThickness = (raw: number) => {
@@ -247,6 +260,30 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
         >
           아일랜드 지우기
         </button>
+      </div>
+
+      {/* 검출 영역 자동 서포트 (2-4) — 아일랜드 검출 결과가 있을 때만 활성 */}
+      <div className="mt-5 pt-4 border-t border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-gray-700">
+            검출 영역 자동 서포트
+          </span>
+        </div>
+        <button
+          onClick={onAutoSupportIslands}
+          disabled={
+            autoSupportBusy ||
+            !islandStatus?.ok ||
+            islandStatus.totalIslandFaces === 0
+          }
+          className="w-full px-3 py-2 text-sm rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {autoSupportBusy ? "생성 중…" : "검출 영역에 자동 서포트"}
+        </button>
+        <p className="mt-2 text-xs text-gray-500">
+          검출된 아일랜드 영역에만 자동으로 서포트를 배치 · 마진이 있으면 마진 라인
+          비침범 가드 적용
+        </p>
       </div>
     </div>
   );

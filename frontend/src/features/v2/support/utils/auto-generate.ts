@@ -24,7 +24,19 @@ export function autoGenerateSupportPoints(
   params: SupportParams,
   projectId: string,
   stlId: string,
+  opts?: {
+    /**
+     * 후보 접점(contact)을 이 face index 집합 위로만 제한한다 (index buffer 상
+     * 삼각형 번호 = picking faceId). 지현규 island 검출 결과의 island face 집합을
+     * 넘겨 "검출 영역에만 자동 서포트" 를 만드는 데 쓴다.
+     *
+     * 미지정(undefined) 시 기존 동작과 산출 완전 동일 — 기존 그리드/오버행 판정
+     * 로직은 무변경이며, 이 필터는 후보 생성 지점에 가산적(추가) 조건으로만 작동.
+     */
+    faceFilter?: Set<number>;
+  },
 ): SupportPointV2[] {
+  const faceFilter = opts?.faceFilter;
   mesh.refreshBoundingInfo();
   const bb = mesh.getBoundingInfo().boundingBox;
   const minX = bb.minimumWorld.x;
@@ -55,6 +67,13 @@ export function autoGenerateSupportPoints(
         predicate as (m: Mesh) => boolean,
       );
       if (!info?.hit || !info.pickedPoint) continue;
+
+      // faceFilter 지정 시 — 후보 접점이 그 face 집합 위여야만 통과 (가산적 조건).
+      //   info.faceId 는 readWorldTriangles/island-detection 의 faceIndex 와 같은
+      //   index buffer 삼각형 번호라 island face 집합과 직접 대조된다. 미지정 시
+      //   이 블록은 스킵되어 기존 산출과 완전 동일.
+      if (faceFilter && (info.faceId < 0 || !faceFilter.has(info.faceId)))
+        continue;
 
       const normal = info.getNormal(true, true);
       if (!normal) continue;
