@@ -2037,7 +2037,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         //   기존 manual/world support 와 동일하게 STL transform 시 재빌드.
         if (p.variant === "disc") {
           const ds = p.discSettings;
-          if (!ds) continue; // discSettings 없는 disc = 데이터 이상 → skip.
+          // discSettings 없는 disc = 데이터 이상 → skip. existing 은 위에서 이미
+          //   dispose 됐으므로 map 에서도 지워 disposed mesh 가 잔류하지 않게 한다
+          //   (감사 B5 — export/슬라이스가 map 값을 순회하므로 잔류 시 유령 mesh).
+          if (!ds) {
+            map.delete(p.id);
+            continue;
+          }
           const discMesh = createDiscSupport(
             scene,
             new Vector3(p.contact[0], p.contact[1], p.contact[2]),
@@ -2050,7 +2056,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               : new Vector3(0, 1, 0),
             ds,
           );
-          if (!discMesh) continue; // 목이 너무 짧은 등 생성 실패 → skip.
+          // 목이 너무 짧은 등 생성 실패 → skip. existing dispose 후 map 잔류를
+          //   막아 disposed mesh 가 export/슬라이스 경로에 남지 않게 한다 (감사 B5).
+          if (!discMesh) {
+            map.delete(p.id);
+            continue;
+          }
           // dental createSupport 는 호출마다 자체 StandardMaterial 을
           //   새로 만든다. disc 는 parent 가 없어 rebuild skip 이 안 되고
           //   effect 마다 전량 재생성되므로, mesh dispose 지점(1928/1968)
@@ -3052,6 +3063,13 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               `[검출 영역 자동 서포트] island face ${island.islandFaces.size}면 → ` +
                 `생성 ${pts.length}개 (마진 없음 — 가드 미적용)`,
             );
+            // 생성 성공 시 island 검출 상태를 소진 (감사 B6): 마젠타 overlay +
+            //   islandResultRef 를 정리해 같은 자리에 중복 생성/stale 결과 재사용을
+            //   막는다. 페이지 islandStatus 리셋은 handleAutoSupportIslands 가 담당
+            //   → 버튼 자연 비활성 (재클릭하려면 재검출). 빈 배열이면 소진하지 않아
+            //   사용자가 파라미터를 바꿔 재시도할 수 있게 한다. 마진 결과는 건드리지
+            //   않는다 (island 만 소진).
+            if (pts.length > 0) disposeIslandVisualization(stlId);
             return pts;
           }
 
@@ -3152,6 +3170,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
               `생성 ${guarded.length}개 (marginPoints ${margin.points.length}개 · ` +
               `가드 ${bodyR.toFixed(2)}mm + 0.5mm)`,
           );
+          // 생성 성공 시 island 검출 상태 소진 (감사 B6 — 위 마진 없음 분기와 동일).
+          //   마진 결과(marginRef)는 유지, island overlay/ref 만 정리한다.
+          if (guarded.length > 0) disposeIslandVisualization(stlId);
           return guarded;
         },
         exportStl() {
