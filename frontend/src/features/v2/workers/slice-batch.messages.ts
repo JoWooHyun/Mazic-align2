@@ -3,8 +3,13 @@
  *
  * 씬(Babylon Mesh)은 워커로 못 넘어가므로 메인이 world 삼각형 배열
  * (Float32Array, 삼각형당 9 float)을 직렬화해 넘긴다. 워커는 이 배열만으로
- * 레이어 루프 + rasterize + PNG/CTB 인코딩 + ZIP 조립을 수행한다.
+ * 레이어 루프 + rasterize + PNG/CTB 인코딩 + ZIP 조립 또는 G-code 조립을
+ * 수행한다.
+ *
+ * FdmSettings 는 gcode/types.ts 의 순수 타입(Babylon 무의존)이라 워커
+ * 번들에 @babylonjs/core 를 끌어오지 않는다 (type-only import).
  */
+import type { FdmSettings } from "../utils/gcode/types";
 
 /** 워커가 자를 대상 메시 하나 — world 좌표 삼각형 flat 배열. */
 export interface WorkerMeshGeometry {
@@ -61,7 +66,18 @@ export interface CtbRequest {
   };
 }
 
-export type SliceBatchRequest = PngZipRequest | CtbRequest;
+/** FDM G-code 산출 요청. */
+export interface GcodeRequest {
+  kind: "gcode";
+  /** world 삼각형 배열들 (transferable). */
+  meshes: WorkerMeshGeometry[];
+  /** gcode/types.ts 의 FdmSettings (buildWidth/buildDepth 포함). */
+  settings: FdmSettings;
+  /** 슬라이스 높이 범위 (mm). 대상 mesh 들의 world bounding 최저/최고 Y. */
+  range: { yMin: number; yMax: number };
+}
+
+export type SliceBatchRequest = PngZipRequest | CtbRequest | GcodeRequest;
 
 /** 진행률 알림 (done / total 레이어). */
 export interface WorkerProgress {
@@ -70,7 +86,7 @@ export interface WorkerProgress {
   total: number;
 }
 
-/** 완료 — 산출 바이너리 (ArrayBuffer, transferable). */
+/** 완료 — 산출 바이너리 (ArrayBuffer, transferable). PNG-ZIP / CTB 경로. */
 export interface WorkerDone {
   type: "done";
   /** 산출물 바이트. PNG-ZIP 또는 CTB. topY<=0(빈 씬)이면 null. */
@@ -79,10 +95,20 @@ export interface WorkerDone {
   mime: string;
 }
 
+/** 완료 — G-code 문자열. 대상 mesh 가 없거나 슬라이스 범위가 없으면 null. */
+export interface WorkerGcodeDone {
+  type: "gcode-done";
+  gcode: string | null;
+}
+
 /** 오류. */
 export interface WorkerError {
   type: "error";
   message: string;
 }
 
-export type SliceBatchResponse = WorkerProgress | WorkerDone | WorkerError;
+export type SliceBatchResponse =
+  | WorkerProgress
+  | WorkerDone
+  | WorkerGcodeDone
+  | WorkerError;

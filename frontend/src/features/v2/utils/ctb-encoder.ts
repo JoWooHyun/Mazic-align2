@@ -137,8 +137,7 @@ export function assembleCtb(
 
   const layerTableOffset = off;
   const LAYER_DEF_SIZE = 36;
-  off += layerTableOffset + LAYER_DEF_SIZE * layerCount - layerTableOffset;
-  // 위 두 줄 = layerTableOffset + LAYER_DEF_SIZE * layerCount;
+  // layer table 다음이 layer data 시작 offset. (레이어 정의 배열: layerCount × 36B)
   off = layerTableOffset + LAYER_DEF_SIZE * layerCount;
 
   // 각 layer data 의 절대 offset 미리 계산.

@@ -990,13 +990,13 @@ const ViewerV2Page: React.FC = () => {
       const lh = slicePreview.layerHeightMm.toFixed(3).replace(".", "_");
       downloadBlob(blob, `${safe}_layers_${lh}mm.zip`);
     } catch (e) {
-      // 취소(사용자가 취소 버튼) 로 인한 reject 는 정상 흐름이라 조용히 넘긴다.
-      //   그 외 오류만 사용자에게 안내 (unhandled rejection 방지 + 피드백).
+      // 사용자 취소(CancelError)는 정상 흐름이라 조용히 넘긴다. 그 외 오류만
+      //   사용자에게 안내 (unhandled rejection 방지 + 피드백).
+      //   취소 판별은 메시지 문자열이 아니라 name 으로 한다(마감 검수 권고).
+      if (e instanceof Error && e.name === "CancelError") return;
       const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.includes("취소")) {
-        // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-        window.alert(`마스크 ZIP 내보내기에 실패했습니다.\n${msg}`);
-      }
+      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
+      window.alert(`마스크 ZIP 내보내기에 실패했습니다.\n${msg}`);
     } finally {
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
@@ -1055,12 +1055,12 @@ const ViewerV2Page: React.FC = () => {
       );
       downloadBlob(blob, `${safe}_v3.ctb`);
     } catch (e) {
-      // 취소로 인한 reject 는 조용히, 그 외 오류만 안내 (마스크 ZIP 과 동일 정책).
+      // 취소(CancelError)는 조용히, 그 외 오류만 안내 (마스크 ZIP 과 동일 정책).
+      //   취소 판별은 메시지 문자열이 아니라 name 으로 한다(마감 검수 권고).
+      if (e instanceof Error && e.name === "CancelError") return;
       const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.includes("취소")) {
-        // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-        window.alert(`.ctb 내보내기에 실패했습니다.\n${msg}`);
-      }
+      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
+      window.alert(`.ctb 내보내기에 실패했습니다.\n${msg}`);
     } finally {
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
@@ -1070,6 +1070,57 @@ const ViewerV2Page: React.FC = () => {
     slicePreview.layerHeightMm,
     batchExport.busy,
     printerProfile,
+  ]);
+
+  // ----- FDM G-code 내보내기 (감사 A5 — 워커로 이동) -----
+  // 이전엔 SliceSidePanel 이 메인스레드 동기(exportFdmGcode)로 조립해 대형
+  // 모델에서 수십 초 프리즈 + busy 가드 부재였다. 이제 마스크 ZIP/CTB 와 동일한
+  // 워커 브릿지(진행률/취소/busy 가드)를 재사용한다.
+  const handleExportGcode = useCallback(async () => {
+    const handle = sceneHandleRef.current;
+    if (!handle || files.length === 0) return;
+    if (batchExport.busy) return;
+
+    // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열 + 범위 + 설정을 준비.
+    const input = handle.getFdmSliceInput();
+    if (!input) {
+      // 모델이 없거나 유효 슬라이스 범위가 없음 (동기 경로의 null 반환과 동일 상황).
+      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
+      window.alert("내보낼 G-code 가 없습니다. 모델을 먼저 불러오세요.");
+      return;
+    }
+
+    setBatchExport({ busy: true, done: 0, total: 0 });
+    try {
+      const gcode = await sliceBatchService.exportGcode(
+        input.meshes,
+        input.settings,
+        input.range,
+        (done, total) => setBatchExport({ busy: true, done, total }),
+      );
+      // gcode null = 슬라이스할 레이어가 없음 (getFdmSliceInput 이 이미 걸러내므로
+      //   보통 도달하지 않지만, 방어적으로 안내).
+      if (!gcode) {
+        window.alert("내보낼 G-code 가 없습니다. 모델을 먼저 불러오세요.");
+        return;
+      }
+      const blob = new Blob([gcode], { type: "text/plain" });
+      const safe = (project?.name ?? "project").replace(/[\\/:*?"<>|]/g, "_");
+      downloadBlob(blob, `${safe}.gcode`);
+    } catch (e) {
+      // 사용자 취소(CancelError)는 정상 흐름 — 조용히 넘긴다. 그 외 오류만 안내.
+      //   (메시지 문자열이 아니라 name 으로 판별 — 마감 검수 권고.)
+      if (e instanceof Error && e.name === "CancelError") return;
+      const msg = e instanceof Error ? e.message : String(e);
+      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
+      window.alert(`G-code 내보내기에 실패했습니다.\n${msg}`);
+    } finally {
+      setBatchExport({ busy: false, done: 0, total: 0 });
+    }
+  }, [
+    files.length,
+    project?.name,
+    batchExport.busy,
   ]);
 
   // ----- STL 내보내기 -----
@@ -1955,6 +2006,7 @@ const ViewerV2Page: React.FC = () => {
               setSlicePreview((s) => ({ ...s, layerHeightMm: mm }))
             }
             onExportMasksZip={() => void handleExportMasksZip()}
+            onExportGcode={() => void handleExportGcode()}
             onExportCtb={() => void handleExportCtb()}
             batchBusy={batchExport.busy}
             batchDone={batchExport.done}

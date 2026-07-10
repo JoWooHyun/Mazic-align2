@@ -38,6 +38,7 @@ interface Props {
   onLayerHeightChange: (mm: number) => void;
 
   onExportMasksZip: () => void;
+  onExportGcode: () => void;
   onExportCtb: () => void;
   batchBusy: boolean;
   batchDone: number;
@@ -63,6 +64,7 @@ const SliceSidePanel: React.FC<Props> = ({
   onLayerIdxChange,
   onLayerHeightChange,
   onExportMasksZip,
+  onExportGcode,
   onExportCtb,
   batchBusy,
   batchDone,
@@ -74,27 +76,9 @@ const SliceSidePanel: React.FC<Props> = ({
   // 예상 출력 시간 추정에 쓰는 현재 프린터 프로파일 (노광 + 리프트/딜레이).
   const printerProfile = useCurrentProfile();
 
-  // G-code 내보내기: DEFAULT_FDM_SETTINGS 로 슬라이스한 전체 문자열을
-  // .gcode 텍스트 파일로 즉시 다운로드. 설정 UI 는 이번 범위 아님.
-  const handleExportGcode = () => {
-    const handle = sceneHandleRef.current;
-    if (!handle) return;
-    const gcode = handle.exportFdmGcode();
-    // gcode null = STL 이 없거나 슬라이스할 지오메트리가 없음. 무음이면 사용자가
-    //   버튼을 눌러도 아무 일이 없어 보이므로 안내한다.
-    if (!gcode) {
-      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-      window.alert("내보낼 G-code 가 없습니다. 모델을 먼저 불러오세요.");
-      return;
-    }
-    const blob = new Blob([gcode], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "print.gcode";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  // G-code 내보내기는 감사 A5 로 워커 경로로 이동했다. 조립·다운로드·에러
+  // 처리는 ViewerV2Page 의 handleExportGcode(onExportGcode)가 마스크 ZIP/CTB
+  // 와 동일한 워커 브릿지(진행률/취소/busy 가드)로 처리한다.
 
   // 출력 시간·레진 추정. modelCount / layerCount / sceneTopY 가 바뀔
   // 때만 다시 계산. mesh transform 이 바뀌면 sceneTopY 가 함께 갱신
@@ -254,7 +238,7 @@ const SliceSidePanel: React.FC<Props> = ({
                 마스크 ZIP
               </button>
               <button
-                onClick={handleExportGcode}
+                onClick={onExportGcode}
                 disabled={modelCount === 0}
                 className="px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
