@@ -6,15 +6,30 @@
  */
 import SliceBatchWorker from "../workers/slice-batch.worker?worker";
 
+import type { FdmSettings } from "./gcode/types";
 import type {
   CtbRequest,
+  GcodeRequest,
   PngZipRequest,
+  SliceBatchRequest,
   SliceBatchResponse,
   WorkerMeshGeometry,
   WorkerSliceOptions,
 } from "../workers/slice-batch.messages";
 
 export type BatchProgress = (done: number, total: number) => void;
+
+/**
+ * 사용자 취소(worker terminate)로 인한 reject 를 나타내는 에러.
+ * 호출자는 e.name === "CancelError" 로 판별한다(메시지 문자열 의존 제거 —
+ * 마감 검수 권고).
+ */
+export class CancelError extends Error {
+  constructor(message = "배치 슬라이스 작업이 취소되었습니다") {
+    super(message);
+    this.name = "CancelError";
+  }
+}
 
 /** world 삼각형 배열들의 transferable 목록 (ArrayBuffer). */
 function transfersOf(meshes: WorkerMeshGeometry[]): Transferable[] {
@@ -37,10 +52,11 @@ class SliceBatchService {
       this.worker = null;
     }
     // 진행 중이던 Promise 가 있으면 고아로 두지 않고 reject — busy 고착 방지.
+    // 취소 판별은 메시지 문자열이 아니라 CancelError(name) 로 한다.
     if (this.pendingReject) {
       const reject = this.pendingReject;
       this.pendingReject = null;
-      reject(new Error("배치 슬라이스 작업이 취소되었습니다"));
+      reject(new CancelError());
     }
   }
 
@@ -65,11 +81,41 @@ class SliceBatchService {
     return this.run(req, transfersOf(meshes), onProgress);
   }
 
+  /**
+   * FDM G-code 내보내기 (감사 A5 — 메인스레드 프리즈 해소).
+   * 대상 mesh 가 없거나 슬라이스 범위(range.yMax<=yMin)가 비면 null.
+   * 진행률·취소는 PNG-ZIP/CTB 경로와 동일 인프라(onProgress / cancel) 재사용.
+   */
+  exportGcode(
+    meshes: WorkerMeshGeometry[],
+    settings: FdmSettings,
+    range: GcodeRequest["range"],
+    onProgress?: BatchProgress,
+  ): Promise<string | null> {
+    const req: GcodeRequest = { kind: "gcode", meshes, settings, range };
+    return this.run(req, transfersOf(meshes), onProgress);
+  }
+
+  /**
+   * 워커 요청을 실행하고 종료 응답(done / gcode-done)을 결과로 resolve 한다.
+   * PNG-ZIP/CTB 는 Blob|null, G-code 는 string|null 을 돌려주므로 반환 타입은
+   * 요청 종류에서 추론한다(오버로드).
+   */
   private run(
     req: PngZipRequest | CtbRequest,
     transfer: Transferable[],
     onProgress?: BatchProgress,
-  ): Promise<Blob | null> {
+  ): Promise<Blob | null>;
+  private run(
+    req: GcodeRequest,
+    transfer: Transferable[],
+    onProgress?: BatchProgress,
+  ): Promise<string | null>;
+  private run(
+    req: SliceBatchRequest,
+    transfer: Transferable[],
+    onProgress?: BatchProgress,
+  ): Promise<Blob | string | null> {
     return new Promise((resolve, reject) => {
       this.terminate(); // 이전 작업이 남아 있으면 정리(고아 Promise reject 포함).
       const worker = new SliceBatchWorker();
@@ -91,6 +137,11 @@ class SliceBatchService {
                 ? null
                 : new Blob([msg.buffer], { type: msg.mime }),
             );
+            break;
+          case "gcode-done":
+            this.pendingReject = null;
+            this.terminate();
+            resolve(msg.gcode);
             break;
           case "error":
             this.pendingReject = null;

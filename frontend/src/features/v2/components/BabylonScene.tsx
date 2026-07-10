@@ -162,7 +162,6 @@ import {
   rasterizePolygons,
   type SliceMask,
 } from "../utils/slice-rasterize";
-import { generateFdmGcode } from "../utils/gcode/slice-adapter";
 import {
   DEFAULT_FDM_SETTINGS,
   type FdmSettings,
@@ -366,11 +365,18 @@ export interface BabylonSceneHandle {
    */
   getBuildVolumeMm3: () => { model: number; support: number };
   /**
-   * 씬의 모든 STL + 서포트 mesh 를 (exportStl 과 동일한 집합) FDM
-   * G-code 로 슬라이스한 전체 문자열. 모델이 0 개면 null.
+   * FDM G-code 를 Web Worker 로 조립하기 위한 입력을 준비한다 (감사 A5).
+   * exportStl 과 동일한 mesh 집합(STL + 서포트)을 world 삼각형 배열로 추출하고,
+   * 슬라이스 높이 범위(world bounding 최저/최고 Y)와 병합된 FdmSettings 를 함께
+   * 돌려준다. 실제 슬라이스·G-code 조립은 워커가 수행한다(메인스레드 프리즈 방지).
+   * 모델이 0 개거나 유효 슬라이스 범위가 없으면 null.
    * settings 미지정 필드는 DEFAULT_FDM_SETTINGS 로 채운다.
    */
-  exportFdmGcode: (settings?: Partial<FdmSettings>) => string | null;
+  getFdmSliceInput: (settings?: Partial<FdmSettings>) => {
+    meshes: { triangles: Float32Array }[];
+    settings: FdmSettings;
+    range: { yMin: number; yMax: number };
+  } | null;
   /**
    * world 좌표 한 점을 그 STL 의 local 좌표로 변환.
    * supports 마이그레이션 (world → stl-local) 에 사용.
@@ -3276,7 +3282,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           if (stl.length === 0) return null;
           return meshesToStlBlob([...stl, ...supports]);
         },
-        exportFdmGcode(settings) {
+        getFdmSliceInput(settings) {
           // exportStl 과 동일한 mesh 집합 (STL + 서포트).
           const stl = Array.from(meshMapRef.current.values());
           const supports = Array.from(supportMeshMapRef.current.values());
@@ -3303,7 +3309,16 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
             ...settings,
           };
 
-          return generateFdmGcode(meshes, merged, { yMin, yMax });
+          // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열로 직렬화.
+          // (generateFdmGcode 의 Mesh 버전이 하던 추출과 동일 — extractWorldTriangles.)
+          const out: { triangles: Float32Array }[] = [];
+          for (const mesh of meshes) {
+            const tris = extractWorldTriangles(mesh);
+            if (tris.length > 0) out.push({ triangles: tris });
+          }
+          if (out.length === 0) return null;
+
+          return { meshes: out, settings: merged, range: { yMin, yMax } };
         },
         getSliceMask(sliceY, widthPx, heightPx) {
           const polys = [];

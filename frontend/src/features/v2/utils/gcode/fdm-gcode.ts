@@ -1,9 +1,14 @@
 /**
- * v2 슬라이스 결과(월드 좌표 polygon)를 GCodeGenerator 입력으로 변환.
+ * FDM G-code 조립 코어 — Babylon 의존이 전혀 없는 순수 함수.
+ *
+ * 메인스레드(BabylonScene 이 getFdmSliceInput 에서 world 삼각형 추출)와 Web
+ * Worker(직렬화된 삼각형 배열만 보유) 양쪽에서 공유한다. Babylon 을 import
+ * 하지 않으므로 워커 번들이 @babylonjs/core 를 끌어오지 않는다
+ * (slice-geometry.ts ↔ slice-section.ts 와 동일한 순수/Babylon 분리 패턴).
  *
  * 좌표 매핑:
- *   Babylon 은 Y-up. slice-section.ts 의 sliceMeshAtY(mesh, y) 는 world
- *   (X, Z) 평면 좌표를, y(높이) 는 별도 인자로 받는다.
+ *   Babylon 은 Y-up. slice-geometry.ts 의 sliceTrianglesAtY(triangles, y) 는
+ *   world (X, Z) 평면 좌표를, y(높이) 는 별도 인자로 받는다.
  *     Babylon (X, Z) → G-code (X, Y)
  *     Babylon Y (높이) → G-code Z
  *
@@ -31,7 +36,7 @@
  *   즉 i=0 은 최저면 바로 위(z = minZ)에서 샘플링되어 첫 출력 층에 모델·
  *   서포트 foot 단면이 그대로 포함된다.
  *
- *   v2 는 호출 측(BabylonScene.tsx 의 exportFdmGcode)이 대상 mesh 들의
+ *   v2 는 호출 측(BabylonScene.tsx 의 getFdmSliceInput)이 대상 mesh 들의
  *   실제 world bounding 최저 Y 를 range.yMin 으로(= v1 의 minZ) 넘기므로
  *   그 자리에 그대로 대입해 동일 공식을 적용한다:
  *     z(i) = range.yMin + i * layerHeight          // G-code 층 Z(공칭)
@@ -43,8 +48,7 @@
  *   ※ DLP/CTB 경로((i + 0.5) 중앙 샘플링)는 별개 규약이므로 여기서 건드리지
  *      않는다.
  */
-import type { Mesh } from '@babylonjs/core';
-import { sliceMeshAtY, chainSegments } from '../slice-section';
+import { chainSegments, sliceTrianglesAtY } from '../slice-geometry';
 import { GCodeGenerator } from './gcode-generator';
 import { FdmSettings, Point } from './types';
 
@@ -57,6 +61,9 @@ export interface FdmSliceRange {
     /** 슬라이스 종료 높이 (mm). 대상 mesh 들의 world bounding 최고 Y. */
     yMax: number;
 }
+
+/** generateFdmGcodeFromTriangles 진행률 콜백 (완료 레이어 / 전체 레이어). */
+export type FdmGcodeProgress = (done: number, total: number) => void;
 
 /** world (X, Z) 좌표 polygon 들을 G-code 좌표계 Point[][] 로 변환 (코너 원점 오프셋). */
 function toGcodePolygons(
@@ -72,23 +79,38 @@ function toGcodePolygons(
 }
 
 /**
- * 여러 mesh 를 한 레이어 높이 y 에서 슬라이스하고, 세그먼트를 합쳐 하나의
- * polygon 집합으로 체이닝한다 (여러 모델이 같은 레이어에 함께 존재하는
- * 경우를 대비).
+ * 여러 삼각형 배열을 한 레이어 높이 y 에서 슬라이스하고, 세그먼트를 합쳐
+ * 하나의 polygon 집합으로 체이닝한다 (여러 모델이 같은 레이어에 함께
+ * 존재하는 경우를 대비).
+ *
+ * `triangleMeshes` 는 world 좌표 삼각형 flat 배열(삼각형당 9 float)들.
+ * Babylon 없이 순수 계산하므로 메인스레드·워커 양쪽에서 동일하게 쓴다.
  */
-function sliceLayerPolygons(meshes: Mesh[], y: number): { points: [number, number][] }[] {
-    const segs = meshes.flatMap(mesh => sliceMeshAtY(mesh, y));
+function sliceLayerPolygons(
+    triangleMeshes: Float32Array[],
+    y: number,
+): { points: [number, number][] }[] {
+    const segs = triangleMeshes.flatMap(tris => sliceTrianglesAtY(tris, y));
     return chainSegments(segs);
 }
 
 /**
- * FDM G-code 전체를 생성한다.
+ * FDM G-code 전체를 생성한다 (Babylon 비의존 순수 함수).
  * header + (레이어별 preamble+layer) + footer 순으로 조립.
+ *
+ * 입력이 world 삼각형 배열(Float32Array[])이므로 Web Worker 로 그대로 넘겨
+ * 실행할 수 있다. BabylonScene.getFdmSliceInput 이 각 Mesh 의 world 삼각형을
+ * extractWorldTriangles 로 뽑아 이 함수(워커 경유)에 넘기므로, 삼각형이
+ * 동일하면 산출 문자열도 동일하다.
+ *
+ * onProgress 는 각 레이어 완료 시 호출된다(워커 progress 통지용). 순수
+ * 계산 자체에는 영향이 없으므로 산출물은 콜백 유무와 무관하게 동일하다.
  */
-export function generateFdmGcode(
-    meshes: Mesh[],
+export function generateFdmGcodeFromTriangles(
+    triangleMeshes: Float32Array[],
     settings: FdmSettings,
     range: FdmSliceRange,
+    onProgress?: FdmGcodeProgress,
 ): string {
     const generator = new GCodeGenerator(settings);
     const { layerHeight } = settings;
@@ -107,11 +129,13 @@ export function generateFdmGcode(
         const sampleY = z + SLICE_EPSILON;
         if (sampleY > range.yMax) break;
 
-        const worldPolys = sliceLayerPolygons(meshes, sampleY);
+        const worldPolys = sliceLayerPolygons(triangleMeshes, sampleY);
         const gcodePolys = toGcodePolygons(worldPolys, settings.buildWidth, settings.buildDepth);
 
         const { gcode } = generator.generateLayer(gcodePolys, z, i);
         fullGcode += gcode;
+
+        onProgress?.(i + 1, totalLayers);
     }
 
     fullGcode += generator.generateFooter();

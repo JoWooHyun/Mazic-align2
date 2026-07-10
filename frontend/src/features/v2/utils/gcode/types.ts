@@ -32,7 +32,7 @@ export interface FdmSettings {
 
     // FDM (Material)
     fdmSpeed: number;         // mm/s (XY Speed)
-    fdmExtrusionRate: number; // mm/s (Extruder Speed)
+    fdmExtrusionRate: number; // 압출량 배율 (무차원, 1.0 = 계산값 그대로). calculateExtrusion 에서 곱하는 계수.
     nozzleDiameter: number;   // mm
     wallCount: number;        // Count
     infillPercentage: number; // 0-100

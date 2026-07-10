@@ -19,6 +19,7 @@ import {
   DEFAULT_RETRACT_SPEED_MM_S,
   DEFAULT_LIGHT_OFF_DELAY_SEC,
 } from "../types/printer";
+import { generateFdmGcodeFromTriangles } from "../utils/gcode/fdm-gcode";
 import {
   assembleCtb,
   encodeRle1bpp,
@@ -34,6 +35,7 @@ import { makeZipStore } from "../utils/zip-store";
 
 import type {
   CtbRequest,
+  GcodeRequest,
   PngZipRequest,
   SliceBatchRequest,
   SliceBatchResponse,
@@ -46,6 +48,23 @@ const ctx = self as unknown as DedicatedWorkerGlobalScope;
 function post(msg: SliceBatchResponse, transfer?: Transferable[]) {
   if (transfer) ctx.postMessage(msg, transfer);
   else ctx.postMessage(msg);
+}
+
+/**
+ * progress 통지 스로틀러 (감사 A11). 레이어마다 postMessage 를 쏘면 대형
+ * 모델에서 메인스레드 리스너가 과부하되므로 최소 간격을 둔다.
+ *
+ * 규칙: 직전 통지 후 minIntervalMs 미만이면 스킵하되, done === total
+ * (마지막 레이어)은 반드시 통지한다 — 진행바가 100%에서 멈추지 않도록.
+ */
+function makeProgressThrottle(minIntervalMs = 50) {
+  let lastAt = 0;
+  return (done: number, total: number) => {
+    const now = Date.now();
+    if (done < total && now - lastAt < minIntervalMs) return;
+    lastAt = now;
+    post({ type: "progress", done, total });
+  };
 }
 
 /** 한 레이어의 union 마스크 — getSliceMask(메인) 와 동일 절차. */
@@ -102,12 +121,13 @@ async function runPngZip(req: PngZipRequest): Promise<void> {
     Math.ceil(options.topY / options.layerHeightMm),
   );
 
+  const reportProgress = makeProgressThrottle();
   const pngs: Uint8Array[] = [];
   for (let i = 0; i < layerCount; i++) {
     const sliceY = (i + 0.5) * options.layerHeightMm;
     const mask = sliceLayerMask(meshes, sliceY, options);
     pngs.push(await maskToPngBytes(mask));
-    post({ type: "progress", done: i + 1, total: layerCount });
+    reportProgress(i + 1, layerCount);
   }
 
   const entries = buildPngZipEntries(
@@ -151,12 +171,13 @@ async function runCtb(req: CtbRequest): Promise<void> {
   const liftSpeedMmS = ctb.liftSpeedMmS ?? DEFAULT_LIFT_SPEED_MM_S;
   const retractSpeedMmS = ctb.retractSpeedMmS ?? DEFAULT_RETRACT_SPEED_MM_S;
 
+  const reportProgress = makeProgressThrottle();
   const layerData: Uint8Array[] = [];
   for (let i = 0; i < layerCount; i++) {
     const z = (i + 0.5) * options.layerHeightMm;
     const mask = sliceLayerMask(meshes, z, options);
     layerData.push(encodeRle1bpp(mask));
-    post({ type: "progress", done: i + 1, total: layerCount });
+    reportProgress(i + 1, layerCount);
   }
 
   const blob = assembleCtb(layerData, layerCount, {
@@ -182,6 +203,31 @@ async function runCtb(req: CtbRequest): Promise<void> {
   );
 }
 
+/**
+ * FDM G-code 조립 (감사 A5 — 메인스레드 프리즈 해소).
+ *
+ * 순수 함수 generateFdmGcodeFromTriangles 를 그대로 호출하므로 산출 문자열은
+ * 동기(메인스레드) 경로와 정의상 동일하다. 진행률은 레이어 완료 콜백을 통해
+ * 스로틀링해 통지한다.
+ */
+function runGcode(req: GcodeRequest): void {
+  const { meshes, settings, range } = req;
+  // 대상 mesh 가 없거나 슬라이스 범위가 비면 산출물 없음 (동기 경로와 동일 판정).
+  if (meshes.length === 0 || range.yMax <= range.yMin) {
+    post({ type: "gcode-done", gcode: null });
+    return;
+  }
+  const triangleMeshes = meshes.map((m) => m.triangles);
+  const reportProgress = makeProgressThrottle();
+  const gcode = generateFdmGcodeFromTriangles(
+    triangleMeshes,
+    settings,
+    range,
+    (done, total) => reportProgress(done, total),
+  );
+  post({ type: "gcode-done", gcode });
+}
+
 ctx.addEventListener(
   "message",
   async (event: MessageEvent<SliceBatchRequest>) => {
@@ -189,8 +235,10 @@ ctx.addEventListener(
     try {
       if (req.kind === "pngzip") {
         await runPngZip(req);
-      } else {
+      } else if (req.kind === "ctb") {
         await runCtb(req);
+      } else {
+        runGcode(req);
       }
     } catch (err) {
       post({
