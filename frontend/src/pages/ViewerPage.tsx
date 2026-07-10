@@ -14,6 +14,7 @@ import SupportPanel from '@components/SupportPanel';
 import SlicerPanel from '@components/Slicer/SlicerPanel';
 import SlicePreview from '@components/Slicer/SlicePreview';
 import LocalFileBrowser from '@components/LocalFileBrowser';
+import V1FreezeBanner from '@components/V1FreezeBanner';
 import { slicerService } from '@services/slicer/SlicerService';
 import { importSTLFromPath, getAdjustmentLogsBySTLId } from '@services/stl.service';
 import { SliceSettings, LayerData } from '@services/slicer/types';
@@ -1166,6 +1167,7 @@ const ViewerPage: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col">
+      <V1FreezeBanner />
       {/* Header */}
       <header className="bg-white shadow-sm z-10">
         <div className="px-6 py-4">
