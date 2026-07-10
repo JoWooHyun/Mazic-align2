@@ -53,6 +53,12 @@ metadata:
 - `VISIT_CAP` = 10000 — UI freeze 방지
 - 이 가중치로 path 가 ridge 따라감 (margin 외 detour 차단)
 
+### 기타 인라인 상수 (2026-07-09 추기 — v2 이식 감사에서 표 누락 발견, 원본 코드 값 그대로 등재. 지현규 확인 요망)
+- `PLATE_EXCL` = 0.6mm — 플레이트 근접 face 제외 높이
+- `MARGIN_SAMPLE_STEP` = 0.2mm — 마진 점 dense sampling 간격
+- (v2 이식 관련) margin-guard 의 `bodyR` 이 v2 에서는 UI 조절값 `tipDiameterMm`(기본 0.4) 에 연동됨
+  — 원본은 고정 `tipBottomDiameter` 0.5. Issue #16 안건 4 로 지현규 답변 대기 중
+
 ## 변경 시 위험 패턴 (과거 사고)
 - SHARP_DEG_GLOBAL 낮춤 (12 → 7~9°) → 평행 chain spaghetti / 거미줄
 - DIR_TOL_DEG 높임 (45 → 60+°) → 노이즈 우회
