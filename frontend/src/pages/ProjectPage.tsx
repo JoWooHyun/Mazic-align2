@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@hooks/useAuth';
 import { useProjects } from '@hooks/useProjects';
+import V1FreezeBanner from '@components/V1FreezeBanner';
 
 /**
  * 프로젝트 관리 페이지
@@ -45,6 +46,7 @@ const ProjectPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <V1FreezeBanner />
       {/* Header */}
       <header className="bg-white shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">

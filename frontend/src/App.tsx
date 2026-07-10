@@ -7,7 +7,8 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Navigate to="/projects" replace />} />
+        {/* 루트 진입은 v2로 — v1은 동결(ADR-2). 기존 v1 경로는 직접 접근만 유지 */}
+        <Route path="/" element={<Navigate to="/v2/projects" replace />} />
         <Route path="/projects" element={<ProjectPage />} />
         <Route path="/viewer/:projectId" element={<ViewerPage />} />
 
