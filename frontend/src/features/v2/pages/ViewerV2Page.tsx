@@ -20,7 +20,6 @@ import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
 } from "../components/BabylonScene";
-import LocalFileBrowser from "../components/LocalFileBrowser";
 import ViewControls from "../components/ViewControls";
 import StlFileList from "../components/StlFileList";
 import TransformPanel from "../components/TransformPanel";
@@ -111,7 +110,6 @@ const ViewerV2Page: React.FC = () => {
   const supportsRef = useRef(supports);
   supportsRef.current = supports;
 
-  const [browserOpen, setBrowserOpen] = useState(false);
   // 뷰어 영역 드래그앤드롭 오버레이 표시 여부.
   const [isDragOver, setIsDragOver] = useState(false);
   // 네이티브 파일 열기용 숨김 input.
@@ -1533,25 +1531,35 @@ const ViewerV2Page: React.FC = () => {
   }
 
   // ----- 파일 추가/삭제 -----
-  async function handlePicked(file: { name: string; blob: Blob }) {
-    setBrowserOpen(false);
-    const created = await addStlFile(file.name, file.blob);
-    setSelectedIds(new Set([created.id]));
-  }
-
   // 브라우저 네이티브 파일 열기 / 드래그앤드롭 공통 저장 경로.
-  // handlePicked 와 동일하게 addStlFile → repo.createStlFile → IndexedDB.
+  // addStlFile → repo.createStlFile → IndexedDB.
   // 여러 파일을 순차 저장하고 새로 추가된 파일 전체를 선택 상태로 만든다.
   async function addNativeFiles(fileList: File[]) {
     const stlFiles = fileList.filter((f) =>
       f.name.toLowerCase().endsWith(".stl"),
     );
+    // .stl 이 아니라 걸러진 파일이 있으면 어떤 파일이 제외됐는지 알린다.
+    const rejected = fileList.filter(
+      (f) => !f.name.toLowerCase().endsWith(".stl"),
+    );
+    if (rejected.length > 0) {
+      window.alert(
+        `STL 파일이 아닙니다: ${rejected.map((f) => f.name).join(", ")}`,
+      );
+    }
+    // 전체가 걸러졌으면 위 알림만 하고 종료 (무음 실패 방지).
     if (stlFiles.length === 0) return;
     const newIds: string[] = [];
     for (const file of stlFiles) {
-      // File 은 Blob 의 서브타입이라 blob 으로 그대로 전달 가능.
-      const created = await addStlFile(file.name, file);
-      newIds.push(created.id);
+      try {
+        // File 은 Blob 의 서브타입이라 blob 으로 그대로 전달 가능.
+        const created = await addStlFile(file.name, file);
+        newIds.push(created.id);
+      } catch (err) {
+        // IndexedDB 저장 실패 등 — 어떤 파일이 왜 실패했는지 알린다.
+        const msg = err instanceof Error ? err.message : String(err);
+        window.alert(`파일을 저장하지 못했습니다: ${file.name} — ${msg}`);
+      }
     }
     if (newIds.length > 0) setSelectedIds(new Set(newIds));
   }
@@ -1586,6 +1594,14 @@ const ViewerV2Page: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragOver(false);
+    // dataTransfer.files 가 비면 OneDrive 온라인 전용 파일이나 바로가기를
+    // 드롭한 경우일 수 있다 (리드 환경 진단용 안내).
+    if (e.dataTransfer.files.length === 0) {
+      window.alert(
+        "가져올 파일이 없습니다 — OneDrive 온라인 전용 파일이거나 바로가기일 수 있습니다",
+      );
+      return;
+    }
     const dropped = Array.from(e.dataTransfer.files);
     void addNativeFiles(dropped);
   };
@@ -1680,16 +1696,10 @@ const ViewerV2Page: React.FC = () => {
             </button>
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 transition-colors"
+              className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors"
               title="브라우저 파일 선택 창으로 내 PC 의 STL 을 엽니다 (백엔드 불필요)"
             >
-              내 PC에서 열기
-            </button>
-            <button
-              onClick={() => setBrowserOpen(true)}
-              className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors"
-            >
-              STL 불러오기
+              STL 열기
             </button>
           </div>
         </div>
@@ -1710,7 +1720,7 @@ const ViewerV2Page: React.FC = () => {
           files={files}
           selectedIds={selectedIds}
           onPick={(id, opts) => handlePick(id, opts)}
-          onAdd={() => setBrowserOpen(true)}
+          onAdd={() => fileInputRef.current?.click()}
           onRemove={handleRemove}
           loading={filesLoading}
         />
@@ -1921,7 +1931,7 @@ const ViewerV2Page: React.FC = () => {
           {files.length === 0 && !isDragOver && (
             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-center pointer-events-none">
               <div className="bg-white/90 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-600">
-                좌측 '+ 추가' · 상단 '내 PC에서 열기' · STL 을 여기로 드래그하여
+                좌측 '+ 추가' · 상단 'STL 열기' · STL 을 여기로 드래그하여
                 가져오세요.
               </div>
             </div>
@@ -2086,13 +2096,6 @@ const ViewerV2Page: React.FC = () => {
           </div>
         </aside>
       </div>
-
-      {browserOpen && (
-        <LocalFileBrowser
-          onSelect={handlePicked}
-          onClose={() => setBrowserOpen(false)}
-        />
-      )}
 
       <PrinterProfileDialog
         open={profileDialogOpen}
