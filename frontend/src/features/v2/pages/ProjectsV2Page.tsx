@@ -34,8 +34,25 @@ const ProjectsV2Page: React.FC = () => {
     await remove(id);
   }
 
+  // 목록 화면에는 뷰어가 없어 STL 을 드롭할 대상이 없다. 기본 동작을
+  // 막지 않으면 브라우저가 파일을 그대로 열어버리므로 preventDefault 하고
+  // 프로젝트를 먼저 열도록 안내한다.
+  const handlePageDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+  const handlePageDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files.length > 0) {
+      window.alert("프로젝트를 먼저 열고 뷰어에 드롭하세요");
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div
+      className="min-h-screen bg-gray-50"
+      onDragOver={handlePageDragOver}
+      onDrop={handlePageDrop}
+    >
       <header className="bg-white border-b">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold text-primary-600">MazicAlign</h1>

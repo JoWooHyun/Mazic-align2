@@ -1994,9 +1994,6 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       }
 
       const newFiles = files.filter((f) => !currentIds.has(f.id));
-      console.log(
-        `[stl-useEffect] currentIds=${currentIds.size} files=${files.length} newFiles=${newFiles.length}`,
-      );
       const wasEmpty = currentIds.size === 0;
 
       Promise.all(
