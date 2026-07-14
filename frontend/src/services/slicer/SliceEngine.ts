@@ -31,9 +31,11 @@ export class SliceEngine {
             if (z > maxZ) maxZ = z;
         }
 
-        // Adjust start Z to be slightly above the bottom + epsilon
-        const startZ = minZ + layerHeight;
-        const totalLayers = Math.ceil((maxZ - minZ) / layerHeight);
+        // 첫 층은 최저면(minZ)에서 시작한다 — 과거 startZ = minZ + layerHeight 로 되돌아가
+        // 첫 층 단면이 통째로 누락(서포트가 첫 층에 안 잡히는 회귀)된 사고가 두 번 있었음.
+        // 정본: f7208ed. v2 이식(features/v2/utils/gcode/fdm-gcode.ts)도 이 공식 기준.
+        const startZ = minZ;
+        const totalLayers = Math.ceil((maxZ - minZ) / layerHeight) + 1;
 
         console.log(`[SliceEngine] Slicing from Z=${minZ} to ${maxZ}, layers=${totalLayers}`);
 
