@@ -44,6 +44,11 @@ interface DentalPanelProps {
   paintedFaceCount?: number;
   /** "마진 찾기" — 색칠 영역에서 마진 검출·시각화 실행. */
   onFindMargin: () => void;
+  /**
+   * 마진 찾기 실행 중 여부 — 동기 실행이라 진행률은 없지만, 클릭 직후 버튼을
+   * "찾는 중…" + disabled 로 바꿔 UI 가 멈춘 게 아님을 보인다(감사 #2).
+   */
+  marginBusy?: boolean;
   /** "마진 지우기" — 마진 시각화 + floodfill 제거 (색칠은 유지). */
   onClearMargin: () => void;
   /**
@@ -57,6 +62,11 @@ interface DentalPanelProps {
   } | null;
   /** "아일랜드 검출" — 활성 STL 전체에서 미지지 영역 검출·마젠타 시각화. */
   onDetectIslands: () => void;
+  /**
+   * 아일랜드 검출 실행 중 여부 — 동기 실행(수백 초)이라 진행률은 없지만, 클릭
+   * 직후 버튼을 "검출 중…" + disabled 로 바꿔 UI 가 멈춘 게 아님을 보인다(감사 #1).
+   */
+  islandBusy?: boolean;
   /** "아일랜드 지우기" — 마젠타 overlay 제거 (색칠/마진은 유지). */
   onClearIslands: () => void;
   /**
@@ -79,6 +89,11 @@ interface DentalPanelProps {
   onAutoSupportIslands: () => void;
   /** 검출 영역 자동 서포트 생성 진행 중 여부 (버튼 비활성/문구). */
   autoSupportBusy?: boolean;
+  /**
+   * 검출 영역 자동 서포트 완료 결과 문구 (감사 #5). null = 미실행/정리됨.
+   * 예: "서포트 12개 생성됨 …". 성공/배제 모두 이 문구로 통지.
+   */
+  autoSupportResult?: string | null;
   className?: string;
 }
 
@@ -90,13 +105,16 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
   onClearPaint,
   paintedFaceCount = 0,
   onFindMargin,
+  marginBusy = false,
   onClearMargin,
   marginStatus = null,
   onDetectIslands,
+  islandBusy = false,
   onClearIslands,
   islandStatus = null,
   onAutoSupportIslands,
   autoSupportBusy = false,
+  autoSupportResult = null,
   className = "",
 }) => {
   const commitThickness = (raw: number) => {
@@ -184,10 +202,10 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
         </div>
         <button
           onClick={onFindMargin}
-          disabled={paintedFaceCount === 0}
+          disabled={paintedFaceCount === 0 || marginBusy}
           className="w-full px-3 py-2 text-sm rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          마진 찾기
+          {marginBusy ? "찾는 중…" : "마진 찾기"}
         </button>
         <p className="mt-2 text-xs text-gray-500">
           색칠 영역에서 마진 라인을 찾아 초록 선으로 표시 · 마진 안쪽을{" "}
@@ -220,9 +238,10 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
         </div>
         <button
           onClick={onDetectIslands}
-          className="w-full px-3 py-2 text-sm rounded bg-primary-600 text-white hover:bg-primary-700 transition-colors"
+          disabled={islandBusy}
+          className="w-full px-3 py-2 text-sm rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          아일랜드 검출
+          {islandBusy ? "검출 중…" : "아일랜드 검출"}
         </button>
         <p className="mt-2 text-xs text-gray-500">
           활성 STL 전체를 슬라이스해 미지지 영역(아일랜드)을 마젠타로 표시
@@ -280,6 +299,9 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
         >
           {autoSupportBusy ? "생성 중…" : "검출 영역에 자동 서포트"}
         </button>
+        {autoSupportResult && (
+          <p className="mt-2 text-xs text-green-700">{autoSupportResult}</p>
+        )}
         <p className="mt-2 text-xs text-gray-500">
           검출된 아일랜드 영역에만 자동으로 서포트를 배치 · 마진이 있으면 마진 라인
           비침범 가드 적용

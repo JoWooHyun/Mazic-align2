@@ -206,16 +206,24 @@ const SliceSidePanel: React.FC<Props> = ({
         <Card title="내보내기">
           {batchBusy ? (
             <div className="text-sm text-gray-700">
-              진행 중… {batchDone} / {batchTotal}
+              {/* total 미확정(직렬화/워커 준비) 동안 "0 / 0" 대신 준비 중 표기 (감사 #10) */}
+              {batchTotal > 0 ? (
+                <>진행 중… {batchDone} / {batchTotal}</>
+              ) : (
+                "준비 중…"
+              )}
               <div className="w-full bg-gray-200 rounded-full h-2 mt-2 overflow-hidden">
                 <div
-                  className="bg-primary-600 h-2 transition-all"
-                  style={{
-                    width:
-                      batchTotal > 0
-                        ? `${(batchDone / batchTotal) * 100}%`
-                        : "0%",
-                  }}
+                  className={
+                    batchTotal > 0
+                      ? "bg-primary-600 h-2 transition-all"
+                      : "bg-primary-400 h-2 w-1/3 animate-pulse"
+                  }
+                  style={
+                    batchTotal > 0
+                      ? { width: `${(batchDone / batchTotal) * 100}%` }
+                      : undefined
+                  }
                 />
               </div>
               {/* 취소 (감사 A4) — 워커 terminate → 진행 중 Promise reject.

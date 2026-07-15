@@ -74,8 +74,11 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
   useEffect(() => {
     if (!open) return;
     // 다이얼로그 열릴 때마다 현재 선택된 프로파일 미리보기.
-    if (!selectedId) setSelectedId(currentId);
-  }, [open, currentId, selectedId]);
+    // isNew(새 프로파일 작성) 중에는 selectedId=null 을 의도적으로 유지하므로
+    // 여기서 currentId 로 복원하면 EMPTY_DRAFT 가 빌트인 값으로 덮여 리셋이
+    // 풀린다(감사 #7). isNew 일 때는 복원하지 않는다.
+    if (!selectedId && !isNew) setSelectedId(currentId);
+  }, [open, currentId, selectedId, isNew]);
 
   useEffect(() => {
     if (!selectedId || isNew) return;
@@ -223,8 +226,10 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
             </button>
           </aside>
 
-          {/* 우측 form */}
-          <section className="flex-1 flex flex-col gap-3">
+          {/* 우측 form — 720p 등 저해상도에서 폼이 컨테이너(max-h-[88vh])를 넘겨
+              저장/삭제 버튼이 잘리던 문제(감사 #9). 스크롤을 form 에 붙여 버튼까지
+              항상 접근 가능하게 한다. */}
+          <section className="flex-1 flex flex-col gap-3 overflow-y-auto min-h-0">
             <FormRow label="이름">
               <input
                 type="text"
@@ -253,7 +258,7 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
               </div>
             </FormRow>
 
-            <FormRow label="픽셀 피치 (µm)">
+            <FormRow label="픽셀 피치" unit="µm">
               <NumberInput
                 value={draft.pixelPitchUm}
                 onChange={(v) => setDraft((d) => ({ ...d, pixelPitchUm: v }))}
@@ -422,15 +427,23 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
 
 function FormRow({
   label,
+  unit,
   children,
 }: {
   label: string;
+  /**
+   * 단위 표기. label 의 uppercase CSS 가 µ(U+00B5)를 그리스 대문자 Μ 로
+   * 변환해 "µm" 이 "MM" 으로 오독되던 문제(감사 #6)를 막기 위해, 단위는
+   * uppercase 를 적용하지 않는 별도 span 으로 분리해 원문 그대로 렌더한다.
+   */
+  unit?: string;
   children: React.ReactNode;
 }) {
   return (
     <div>
-      <label className="text-xs font-semibold text-gray-600 uppercase tracking-wide">
-        {label}
+      <label className="text-xs font-semibold text-gray-600 tracking-wide">
+        <span className="uppercase">{label}</span>
+        {unit && <span className="normal-case"> ({unit})</span>}
       </label>
       <div className="mt-1">{children}</div>
     </div>
