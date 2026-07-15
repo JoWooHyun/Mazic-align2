@@ -172,6 +172,17 @@ const ViewerV2Page: React.FC = () => {
   const [autoBusy, setAutoBusy] = useState(false);
   // 검출 영역 자동 서포트(2-4) 생성 진행 중 — 버튼 비활성/문구용.
   const [islandSupportBusy, setIslandSupportBusy] = useState(false);
+  // 검출 영역 자동 서포트 완료 결과 문구 (감사 #5) — 생성 직후 몇 개가 만들어졌는지
+  //   무통지이던 문제. marginStatus/islandStatus 와 동일한 인라인 문구 패턴으로 표시.
+  const [islandSupportResult, setIslandSupportResult] = useState<string | null>(
+    null,
+  );
+  // 마진 찾기·아일랜드 검출은 메인스레드 동기 실행이라 진행률/취소는 불가하지만
+  //   (감사 #1·#2, 워커 이전은 별도 과제), 최소한 클릭 직후 버튼 라벨을 busy 로
+  //   바꿔 "죽은 게 아님"을 보이게 한다. 실제 동기 작업은 setTimeout(0) 뒤에
+  //   실행해 busy 라벨이 먼저 페인트되도록 한다(핸들러 참조).
+  const [marginBusy, setMarginBusy] = useState(false);
+  const [islandBusy, setIslandBusy] = useState(false);
   const [slicePreview, setSlicePreview] = useState<{
     on: boolean;
     layerIdx: number;
@@ -1225,17 +1236,33 @@ const ViewerV2Page: React.FC = () => {
   //   씬에서 색칠 영역 → findMargin → 초록 튜브 시각화. 성공/실패 사유를
   //   패널 문구로 표시. painted 0 이면 패널 버튼이 비활성이라 여기 도달 X.
   const handleFindMargin = useCallback(() => {
-    const res = sceneHandleRef.current?.findDentalMargin();
-    if (!res) return;
-    if (res.ok) {
-      setMarginStatus({
-        ok: true,
-        message: `마진 검출 완료 · 마진 엣지 ${res.stats.marginEdgeCount}개 (색칠 ${res.stats.paintedFaceCount}면)`,
-      });
-    } else {
-      setMarginStatus({ ok: false, message: res.reason });
-    }
-  }, []);
+    if (marginBusy) return;
+    // 1) busy 라벨을 먼저 커밋 → React 가 "찾는 중…" 을 페인트.
+    setMarginBusy(true);
+    // 2) 동기 검출(findDentalMargin, ~24s)은 다음 페인트 프레임 뒤로 미뤄, 위 setState
+    //    가 실제로 렌더·페인트된 뒤에 시작한다. 같은 tick 에서 바로 호출하면 busy
+    //    라벨이 페인트되기 전에 메인스레드가 막혀 화면이 정지한 것처럼 보인다.
+    //    requestAnimationFrame(다음 프레임 직전) → setTimeout(0)(프레임 커밋 후) 로
+    //    라벨 페인트를 보장한 뒤 동기 작업을 시작한다.
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+      try {
+        const res = sceneHandleRef.current?.findDentalMargin();
+        if (!res) return;
+        if (res.ok) {
+          setMarginStatus({
+            ok: true,
+            message: `마진 검출 완료 · 마진 엣지 ${res.stats.marginEdgeCount}개 (색칠 ${res.stats.paintedFaceCount}면)`,
+          });
+        } else {
+          setMarginStatus({ ok: false, message: res.reason });
+        }
+      } finally {
+        setMarginBusy(false);
+      }
+      }, 0);
+    });
+  }, [marginBusy]);
 
   const handleClearMargin = useCallback(() => {
     sceneHandleRef.current?.clearDentalMargin();
@@ -1246,25 +1273,40 @@ const ViewerV2Page: React.FC = () => {
   //   활성 STL 전체를 슬라이스 → detectSliceIslands → 마젠타 overlay.
   //   레이어 높이는 슬라이스 프리뷰가 쓰는 값(slicePreview.layerHeightMm)을 재사용.
   const handleDetectIslands = useCallback(() => {
-    const res = sceneHandleRef.current?.detectDentalIslands(
-      slicePreview.layerHeightMm,
-    );
-    if (!res) return;
-    if (res.ok) {
-      setIslandStatus({
-        ok: true,
-        totalIslandFaces: res.stats.totalIslandFaces,
-        nSlices: res.stats.nSlices,
-        layersWithIsland: res.stats.layersWithIsland,
-      });
-    } else {
-      setIslandStatus({ ok: false, message: res.reason });
-    }
-  }, [slicePreview.layerHeightMm]);
+    if (islandBusy) return;
+    // busy 라벨을 먼저 페인트한 뒤(감사 #1) 동기 검출(수백 초)을 시작한다.
+    //   findMargin 과 동일한 rAF→setTimeout(0) 순서로 라벨 페인트를 보장한다.
+    setIslandBusy(true);
+    // 이전 자동 서포트 결과 문구는 재검출 시 무효 → 정리.
+    setIslandSupportResult(null);
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        try {
+          const res = sceneHandleRef.current?.detectDentalIslands(
+            slicePreview.layerHeightMm,
+          );
+          if (!res) return;
+          if (res.ok) {
+            setIslandStatus({
+              ok: true,
+              totalIslandFaces: res.stats.totalIslandFaces,
+              nSlices: res.stats.nSlices,
+              layersWithIsland: res.stats.layersWithIsland,
+            });
+          } else {
+            setIslandStatus({ ok: false, message: res.reason });
+          }
+        } finally {
+          setIslandBusy(false);
+        }
+      }, 0);
+    });
+  }, [slicePreview.layerHeightMm, islandBusy]);
 
   const handleClearIslands = useCallback(() => {
     sceneHandleRef.current?.clearDentalIslands();
     setIslandStatus(null);
+    setIslandSupportResult(null);
   }, []);
 
   // ----- 검출 영역 자동 서포트 (Step 2-4, ADR-3: 검출→생성 파이프라인) -----
@@ -1274,15 +1316,28 @@ const ViewerV2Page: React.FC = () => {
   const handleAutoSupportIslands = useCallback(async () => {
     if (!projectId || islandSupportBusy) return;
     setIslandSupportBusy(true);
+    setIslandSupportResult(null);
     try {
       const generated =
         sceneHandleRef.current?.autoSupportIslands(projectId, supportParams) ??
         null;
       // null = 아일랜드 검출 결과 없음. 빈 배열 = 검출됐으나 생성점 0 (가드 배제 등).
-      if (!generated || generated.length === 0) return;
+      if (!generated || generated.length === 0) {
+        // 생성 0개도 무통지이던 문제(감사 #5) — 배제 사유를 짧게 알린다.
+        if (generated) {
+          setIslandSupportResult(
+            "검출 영역에서 생성할 서포트가 없습니다 (마진 가드 등으로 배제).",
+          );
+        }
+        return;
+      }
 
       const ids = generated.map((p) => p.id);
       await addSupports(generated);
+      // 완료 통지 (감사 #5) — Support 탭의 "현재 N 개" 로 연결됨을 안내.
+      setIslandSupportResult(
+        `서포트 ${generated.length}개 생성됨 · Support 탭 "현재 개수" 에 반영`,
+      );
 
       // 생성 성공 → 아일랜드 검출 상태 소진 (감사 B6). 씬 쪽은 autoSupportIslands
       //   내부에서 마젠타 overlay + islandResultRef 를 이미 정리했다. 여기서 페이지
@@ -1818,8 +1873,9 @@ const ViewerV2Page: React.FC = () => {
                   setDiscMode(false);
                   setPendingBridge(null);
                 }
-                // dental 모드 진입 시 우측 패널을 Dental 탭으로.
+                // 모드 진입 시 우측 패널을 해당 탭으로 전환 (Dental·Support 일관, 감사 #4).
                 if (m === "dental-brush") setPanelTab("dental");
+                if (m === "support") setPanelTab("support");
               }}
             />
 
@@ -2084,13 +2140,16 @@ const ViewerV2Page: React.FC = () => {
                   0,
                 )}
                 onFindMargin={handleFindMargin}
+                marginBusy={marginBusy}
                 onClearMargin={handleClearMargin}
                 marginStatus={marginStatus}
                 onDetectIslands={handleDetectIslands}
+                islandBusy={islandBusy}
                 onClearIslands={handleClearIslands}
                 islandStatus={islandStatus}
                 onAutoSupportIslands={handleAutoSupportIslands}
                 autoSupportBusy={islandSupportBusy}
+                autoSupportResult={islandSupportResult}
               />
             )}
           </div>
