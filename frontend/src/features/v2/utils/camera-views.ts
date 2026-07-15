@@ -1,17 +1,26 @@
 import { ArcRotateCamera, Mesh, Vector3 } from "@babylonjs/core";
 
-export type ViewPreset = "home" | "top" | "front" | "back" | "left" | "right" | "iso";
+export type ViewPreset =
+  | "home"
+  | "top"
+  | "bottom"
+  | "front"
+  | "back"
+  | "left"
+  | "right"
+  | "iso";
 
 /**
  * 카메라를 주어진 프리셋으로 이동.
  *
  * Babylon Y-up 좌표계 기준:
- *   - Top:   위에서 아래 보기 (alpha=-π/2, beta≈0)
- *   - Front: -Z 쪽에서 +Z 보기
- *   - Back:  +Z 쪽
- *   - Left:  -X 쪽에서 +X
- *   - Right: +X 쪽
- *   - Iso:   기본 등각
+ *   - Top:    위에서 아래 보기 (alpha=-π/2, beta≈0)
+ *   - Bottom: 아래에서 위 보기 (alpha=-π/2, beta≈π)
+ *   - Front:  -Z 쪽에서 +Z 보기
+ *   - Back:   +Z 쪽
+ *   - Left:   -X 쪽에서 +X
+ *   - Right:  +X 쪽
+ *   - Iso:    기본 등각
  *
  * radius / target 은 호출 측에서 별도 frame() 후에 호출하거나,
  * radius/target 을 유지한 채 각도만 바꾼다.
@@ -27,6 +36,11 @@ export function applyViewPreset(
     case "top":
       camera.alpha = -Math.PI / 2;
       camera.beta = TOP_EPS;
+      break;
+    case "bottom":
+      // beta 가 정확히 π 이면 top 과 마찬가지로 짐벌락이 걸린다.
+      camera.alpha = -Math.PI / 2;
+      camera.beta = Math.PI - TOP_EPS;
       break;
     case "front":
       camera.alpha = -Math.PI / 2;

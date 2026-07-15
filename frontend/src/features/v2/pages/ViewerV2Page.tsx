@@ -21,6 +21,7 @@ import BabylonScene, {
   type GizmoMode,
 } from "../components/BabylonScene";
 import ViewControls from "../components/ViewControls";
+import type { ViewPreset } from "../utils/camera-views";
 import StlFileList from "../components/StlFileList";
 import TransformPanel from "../components/TransformPanel";
 import GizmoControls from "../components/GizmoControls";
@@ -280,15 +281,46 @@ const ViewerV2Page: React.FC = () => {
     return () => clearTimeout(t);
   }, [filesLoading, supports, patchSupport]);
 
-  // Bridge pending 상태에서 Esc 누르면 취소.
+  // Esc 단계적 해제 (P3, 프루사 정합).
+  //   우선순위: Bridge pending 취소 → 서포트/변곡점 선택 해제 → STL 선택 해제.
+  //   한 번의 Esc 로는 가장 위 단계 하나만 해제하고 종료(early return)해,
+  //   여러 상태가 동시에 있을 때 한 방에 전부 날아가지 않도록 한다.
+  //   INPUT/TEXTAREA 등 텍스트 입력 중에는 브라우저 기본 동작(입력 취소 등) 유지.
   useEffect(() => {
-    if (!pendingBridge) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPendingBridge(null);
+      if (e.key !== "Escape") return;
+      const t = e.target;
+      if (
+        t instanceof HTMLElement &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      // 1) Bridge pending (첫 점 찍은 상태) 취소.
+      if (pendingBridge) {
+        setPendingBridge(null);
+        return;
+      }
+      // 2) 서포트/변곡점 선택 해제.
+      if (selectedCp) {
+        setSelectedCp(null);
+        return;
+      }
+      if (selectedSupportId) {
+        setSelectedSupportId(null);
+        return;
+      }
+      // 3) STL 선택 해제.
+      if (selectedIds.size > 0) {
+        setSelectedIds(new Set());
+        return;
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pendingBridge]);
+  }, [pendingBridge, selectedCp, selectedSupportId, selectedIds]);
 
   // ----- 선택 -----
   const handlePick = useCallback(
@@ -361,6 +393,54 @@ const ViewerV2Page: React.FC = () => {
   useShortcutHandler("undo", handleUndo);
   useShortcutHandler("redo", handleRedo);
   // 'delete' 핸들러는 아래의 handleDeleteSelectedSupport 선언 후에 등록한다.
+
+  // ----- 뷰 프리셋·줌 단축키 (P2, 프루사 동일 키) -----
+  //   0=Iso, 1=Top, 2=Bottom, 3=Front, 4=Back, 5=Left, 6=Right (숫자키).
+  //   ViewControls 의 setView 핸들 경로를 그대로 재사용한다(별도 배선 없음).
+  const setView = useCallback((preset: ViewPreset) => {
+    sceneHandleRef.current?.setView(preset);
+  }, []);
+  useShortcutHandler("viewIso", useCallback(() => setView("iso"), [setView]));
+  useShortcutHandler("viewTop", useCallback(() => setView("top"), [setView]));
+  useShortcutHandler(
+    "viewBottom",
+    useCallback(() => setView("bottom"), [setView]),
+  );
+  useShortcutHandler(
+    "viewFront",
+    useCallback(() => setView("front"), [setView]),
+  );
+  useShortcutHandler("viewBack", useCallback(() => setView("back"), [setView]));
+  useShortcutHandler("viewLeft", useCallback(() => setView("left"), [setView]));
+  useShortcutHandler(
+    "viewRight",
+    useCallback(() => setView("right"), [setView]),
+  );
+  // Z=줌투핏, B=플레이트 전체 뷰 — 둘 다 ViewControls 의 fit 경로 재사용.
+  //   fit() 은 모델이 있으면 전 모델 AABB 로, 없으면 플레이트로 프레이밍한다.
+  //   (BabylonScene 을 P1 범위로 제한 — 선택-한정 프레이밍/플레이트 전용 뷰는
+  //    별도 핸들 메서드가 필요해 이번 범위 밖. 보고서에 gap 명시.)
+  const fitView = useCallback(() => {
+    sceneHandleRef.current?.fit();
+  }, []);
+  useShortcutHandler("zoomFit", fitView);
+  useShortcutHandler("viewPlate", fitView);
+
+  // ----- 도구 키 (P4, 프루사 동일): M=Move, R=Rotate, S=Scale -----
+  //   select 모드에서만 동작(Gizmo 가 detach 되는 다른 모드에서는 무시).
+  //   같은 키 재입력 시 해제하지 않고 해당 모드로 set — GizmoControls 버튼 동작과 일치.
+  const handleToolMove = useCallback(() => {
+    if (editMode === "select") setGizmoMode("translate");
+  }, [editMode]);
+  const handleToolRotate = useCallback(() => {
+    if (editMode === "select") setGizmoMode("rotate");
+  }, [editMode]);
+  const handleToolScale = useCallback(() => {
+    if (editMode === "select") setGizmoMode("scale");
+  }, [editMode]);
+  useShortcutHandler("toolMove", handleToolMove);
+  useShortcutHandler("toolRotate", handleToolRotate);
+  useShortcutHandler("toolScale", handleToolScale);
 
   // ----- 자동 서포트 -----
   const handleAutoGenerate = useCallback(async () => {

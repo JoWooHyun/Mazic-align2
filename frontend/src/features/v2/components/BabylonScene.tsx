@@ -756,6 +756,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       });
       drag.useObjectOrientationForDragging = false;
       drag.moveAttached = true;
+      // 좌클릭(0) 에서만 모델 XZ 이동을 시작한다. 기본값 [0,1,2] 는 모든 버튼에
+      // 반응해, 모델 위에서 우드래그(팬)·휠드래그(회전) 를 이 behavior 가 먼저
+      // 가로채 카메라 조작이 막혔다. dragButtons=[0] 이면 우/휠 드래그는
+      // behavior 를 트리거하지 않고 카메라 pointer input 으로 그대로 전달된다.
+      // (button 규약: MouseEvent.button — 0=Left, 1=Middle, 2=Right)
+      drag.dragButtons = [0];
 
       drag.onDragStartObservable.add(() => {
         gizmoDragStartRef.current = {
