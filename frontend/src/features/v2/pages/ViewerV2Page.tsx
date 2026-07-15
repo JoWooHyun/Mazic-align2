@@ -21,6 +21,7 @@ import BabylonScene, {
   type GizmoMode,
 } from "../components/BabylonScene";
 import ViewControls from "../components/ViewControls";
+import ViewerContextMenu from "../components/ViewerContextMenu";
 import type { ViewPreset } from "../utils/camera-views";
 import StlFileList from "../components/StlFileList";
 import TransformPanel from "../components/TransformPanel";
@@ -196,6 +197,8 @@ const ViewerV2Page: React.FC = () => {
     total: number;
   }>({ busy: false, done: 0, total: 0 });
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
+  // 뷰포트 우클릭 컨텍스트 메뉴 위치 (화면 좌표). null 이면 닫힘 (P5).
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
   // sliceY = (layerIdx + 0.5) × layerHeight — 레이어 중심을 픽업
   const sliceYNow =
@@ -205,6 +208,8 @@ const ViewerV2Page: React.FC = () => {
     Math.ceil(sceneTopY / slicePreview.layerHeightMm),
   );
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
+  // 우클릭 시작 좌표 — pointerup 에서 이동량<임계값이면 컨텍스트 메뉴, 아니면 팬 (P5).
+  const rightDownRef = useRef<{ x: number; y: number } | null>(null);
 
   // STL 이 삭제되면 dental 세션 상태(마진/아일랜드 결과)를 리셋한다 (2-3b 잔여 ①).
   //   BabylonScene 은 mesh 제거 시 해당 STL 의 시각화를 내부에서 정리하지만,
@@ -289,6 +294,8 @@ const ViewerV2Page: React.FC = () => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // 다이얼로그가 열려 있으면 Esc는 다이얼로그가 처리 — 뷰어 선택 해제와 동시 발동 방지 (P5)
+      if (profileDialogOpen || ghDialog !== null) return;
       const t = e.target;
       if (
         t instanceof HTMLElement &&
@@ -320,7 +327,14 @@ const ViewerV2Page: React.FC = () => {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [pendingBridge, selectedCp, selectedSupportId, selectedIds]);
+  }, [
+    pendingBridge,
+    selectedCp,
+    selectedSupportId,
+    selectedIds,
+    profileDialogOpen,
+    ghDialog,
+  ]);
 
   // ----- 선택 -----
   const handlePick = useCallback(
@@ -416,15 +430,17 @@ const ViewerV2Page: React.FC = () => {
     "viewRight",
     useCallback(() => setView("right"), [setView]),
   );
-  // Z=줌투핏, B=플레이트 전체 뷰 — 둘 다 ViewControls 의 fit 경로 재사용.
-  //   fit() 은 모델이 있으면 전 모델 AABB 로, 없으면 플레이트로 프레이밍한다.
-  //   (BabylonScene 을 P1 범위로 제한 — 선택-한정 프레이밍/플레이트 전용 뷰는
-  //    별도 핸들 메서드가 필요해 이번 범위 밖. 보고서에 gap 명시.)
-  const fitView = useCallback(() => {
-    sceneHandleRef.current?.fit();
+  // Z=줌투핏(선택 한정), B=플레이트 전용 뷰 — 정밀 의미 분리 (P5).
+  //   Z(zoomFit): 선택된 메쉬만 화면에 꽉 차게. 선택이 없으면 전체 fit 폴백.
+  //   B(viewPlate): 모델과 무관하게 홈 각도로 플레이트(빌드 볼륨) 전체를 프레이밍.
+  const zoomFit = useCallback(() => {
+    sceneHandleRef.current?.fitSelection(Array.from(selectedIds));
+  }, [selectedIds]);
+  const viewPlate = useCallback(() => {
+    sceneHandleRef.current?.viewPlate();
   }, []);
-  useShortcutHandler("zoomFit", fitView);
-  useShortcutHandler("viewPlate", fitView);
+  useShortcutHandler("zoomFit", zoomFit);
+  useShortcutHandler("viewPlate", viewPlate);
 
   // ----- 도구 키 (P4, 프루사 동일): M=Move, R=Rotate, S=Scale -----
   //   select 모드에서만 동작(Gizmo 가 detach 되는 다른 모드에서는 무시).
@@ -1002,6 +1018,57 @@ const ViewerV2Page: React.FC = () => {
     removeStlFile,
     refreshSupports,
   ]);
+
+  // 선택된 STL 을 복제한다 (P5 컨텍스트 메뉴 · Select 모드).
+  //   handlePaste 와 동일하게 "addCopySuffix + addStlFile" 경로로 새 STL 을 추가하되,
+  //   소스는 클립보드가 아니라 현재 선택이다 — 사용자 Ctrl+C 클립보드는 건드리지 않는다.
+  //   원본에서 XZ +5mm 오프셋해 겹침을 피한다 (자동배치는 건드리지 않음).
+  const handleDuplicateSelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const sources = files.filter((f) => selectedIds.has(f.id));
+    const newIds: string[] = [];
+    for (const src of sources) {
+      const created = await addStlFile(
+        addCopySuffix(src.fileName, files),
+        src.blob,
+      );
+      // 원본 transform 을 복제하고 XZ 로 +5mm 이동해 원본 위에 겹치지 않게 한다.
+      const base = src.transform ?? IDENTITY_TRANSFORM;
+      await updateTransform(created.id, {
+        ...base,
+        tx: base.tx + 5,
+        tz: base.tz + 5,
+      });
+      newIds.push(created.id);
+    }
+    setSelectedIds(new Set(newIds));
+  }, [files, selectedIds, addStlFile, updateTransform]);
+
+  // ----- 우클릭 컨텍스트 메뉴 (P5) -----
+  //   프루사와 동일하게 짧은 우클릭=메뉴, 우드래그=팬 으로 구분한다.
+  //   pointerdown(우) 좌표를 기록 → pointerup(우) 이동량<임계값이면 메뉴 오픈.
+  //   contextmenu 이벤트는 preventDefault 로 죽여 브라우저 기본 메뉴/팬 충돌을 없앤다.
+  const CTX_MENU_DRAG_THRESHOLD_PX = 5;
+  const handleViewportPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button === 2) {
+      rightDownRef.current = { x: e.clientX, y: e.clientY };
+    }
+  }, []);
+  const handleViewportPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      if (e.button !== 2) return;
+      const start = rightDownRef.current;
+      rightDownRef.current = null;
+      if (!start) return;
+      const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+      // 이동량이 크면 우드래그(팬) 로 간주 — 메뉴를 열지 않는다.
+      if (moved > CTX_MENU_DRAG_THRESHOLD_PX) return;
+      // 선택된 모델이 있을 때만 메뉴를 연다 (빈 공간 우클릭 → 메뉴 없음).
+      if (editMode !== "select" || selectedIds.size === 0) return;
+      setCtxMenu({ x: e.clientX, y: e.clientY });
+    },
+    [editMode, selectedIds],
+  );
 
   // 선택된 Bridge 의 변곡점 3 개를 base→contact 직선상 균등 분할
   // 위치로 reset. 사용자가 휘어놓은 곡선을 한 번에 직선으로 복원.
@@ -1865,6 +1932,9 @@ const ViewerV2Page: React.FC = () => {
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
+          onPointerDown={handleViewportPointerDown}
+          onPointerUp={handleViewportPointerUp}
+          onContextMenu={(e) => e.preventDefault()}
         >
           <BabylonScene
             ref={sceneHandleRef}
@@ -2251,6 +2321,19 @@ const ViewerV2Page: React.FC = () => {
           setGhDialog(null);
           navigate(`/v2/viewer/${newId}`);
         }}
+      />
+
+      {/* 우클릭 컨텍스트 메뉴 (P5 · Select 모드 선택 대상: 삭제/복제/줌투핏) */}
+      <ViewerContextMenu
+        open={ctxMenu !== null}
+        x={ctxMenu?.x ?? 0}
+        y={ctxMenu?.y ?? 0}
+        onClose={() => setCtxMenu(null)}
+        items={[
+          { label: "삭제", onClick: handleDeleteSelectedSupport },
+          { label: "복제", onClick: () => void handleDuplicateSelected() },
+          { label: "줌 투 핏", onClick: zoomFit },
+        ]}
       />
 
     </div>

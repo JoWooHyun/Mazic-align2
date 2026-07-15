@@ -323,6 +323,16 @@ export interface BabylonSceneHandle {
   setView: (preset: ViewPreset) => void;
   fit: () => void;
   /**
+   * 주어진 STL id 들의 메쉬만 화면에 꽉 차게 프레이밍한다 (P5: Z 키 = 선택 한정 줌).
+   * 매칭되는 메쉬가 0 개면 전체 fit() 으로 폴백.
+   */
+  fitSelection: (ids: string[]) => void;
+  /**
+   * 빌드 플레이트(빌드 볼륨) 전체가 보이도록 프레이밍한다 (P5: B 키 = 플레이트 전용 뷰).
+   * 홈 뷰 각도로 리셋 후 플레이트 AABB 기준으로 카메라를 맞춘다.
+   */
+  viewPlate: () => void;
+  /**
    * Transform 드래그 미리보기. DB 저장 없이 메쉬에 즉시 반영.
    * TransformPanel 의 onPreview 가 호출한다.
    */
@@ -2565,6 +2575,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         // 자유 드래그. PositionGizmo 의 X/Y/Z 축 화살표는 정확한 깊이
         // 드래그. 둘 다 동시 가능.
         const drag = new PointerDragBehavior();
+        // 우/휠 드래그는 카메라 조작으로 통과 (P5: 모델 메쉬와 동일 처리)
+        drag.dragButtons = [0];
         drag.useObjectOrientationForDragging = false;
         sphere.addBehavior(drag);
         const which = ep.which;
@@ -2600,6 +2612,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           // PointerDragBehavior 유지 — 자유 드래그. PositionGizmo 도
           // syncGizmo 에서 attach 되어 X/Y/Z 축 정확 드래그 가능.
           const drag = new PointerDragBehavior();
+          // 우/휠 드래그는 카메라 조작으로 통과 (P5: 모델 메쉬와 동일 처리)
+          drag.dragButtons = [0];
           drag.useObjectOrientationForDragging = false;
           sphere.addBehavior(drag);
           const idx = i;
@@ -3101,6 +3115,32 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
           } else {
             resetCameraOnPlate(camera, plateWRef.current, plateDRef.current);
           }
+        },
+        fitSelection(ids) {
+          const camera = cameraRef.current;
+          if (!camera) return;
+          // 넘어온 id 에 해당하는 STL 루트 메쉬만 모은다 (fit() 의 meshMapRef 재사용).
+          const meshes = ids
+            .map((id) => meshMapRef.current.get(id))
+            .filter((m): m is NonNullable<typeof m> => m != null);
+          if (meshes.length > 0) {
+            frameCameraToMeshes(camera, meshes);
+          } else {
+            // 매칭 0 개 → 전체 fit() 폴백 (선택 없음 = 전체 맞춤).
+            const all = Array.from(meshMapRef.current.values());
+            if (all.length > 0) {
+              frameCameraToMeshes(camera, all);
+            } else {
+              resetCameraOnPlate(camera, plateWRef.current, plateDRef.current);
+            }
+          }
+        },
+        viewPlate() {
+          const camera = cameraRef.current;
+          if (!camera) return;
+          // 홈(iso) 각도로 리셋 + 플레이트 AABB 프레이밍. resetCameraOnPlate 내부에서
+          // applyViewPreset(camera, "iso") 로 홈 각도를 적용한다 (home == iso 각도).
+          resetCameraOnPlate(camera, plateWRef.current, plateDRef.current);
         },
         previewTransform(id, t) {
           const mesh = meshMapRef.current.get(id);
