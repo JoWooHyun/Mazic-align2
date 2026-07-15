@@ -23,6 +23,7 @@ const ViewControls: React.FC<ViewControlsProps> = ({
       <Btn label="Fit" onClick={onFit} />
       <Divider />
       <Btn label="Top" onClick={() => onSetView("top")} />
+      <Btn label="Bottom" onClick={() => onSetView("bottom")} />
       <Btn label="Front" onClick={() => onSetView("front")} />
       <Btn label="Back" onClick={() => onSetView("back")} />
       <Btn label="Left" onClick={() => onSetView("left")} />
