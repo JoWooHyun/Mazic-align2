@@ -15,9 +15,31 @@
  *     G92 E0 를 방출해 프린터 절대 E 좌표를 레이어 로컬 currentE(=0)와 정합시킨다.
  *     → 이 파일은 v1 대비 산출 G-code 가 의도적으로 달라지는 첫 지점이다
  *       (레이어마다 "G92 E0 ; 압출 좌표 리셋" 라인 1 줄 추가).
+ *
+ * 구조(리팩토링): 순수 기하 함수는 gcode-geometry.ts, 스캔라인 인필은
+ * infill-generator.ts 로 분리했고, generateLayer 는 단계별 private 메서드로
+ * 쪼갰다 (buildWallPaths/buildGapFill/buildInfillBoundaries/buildInfillLines/
+ * emitPaths/emitInfillLines). 산출 G-code 문자열은 바이트 단위로 동일하다.
  */
 import { Point, PathSegment, GCodePath, FdmSettings } from './types';
 import { PolygonClipper } from './polygon-clipper';
+import { optimizePaths, calculatePathLength } from './gcode-geometry';
+import { generateGlobalInfill } from './infill-generator';
+
+/**
+ * generateLayer 내부에서 세그먼트를 누적하며 흐르는 가변 상태.
+ * 원본의 클로저 지역변수(gcode/currentE/currentX/currentY/isRetracted/pathSegments)를
+ * 메서드 간에 참조로 넘기기 위한 컨텍스트. z 는 레이어 높이(z-hop 계산용).
+ */
+interface EmitContext {
+    z: number;
+    gcode: string;
+    currentE: number;
+    currentX: number;
+    currentY: number;
+    isRetracted: boolean;
+    pathSegments: PathSegment[];
+}
 
 export class GCodeGenerator {
     private settings: FdmSettings;
@@ -79,56 +101,17 @@ export class GCodeGenerator {
     }
 
     public generateLayer(polygons: Point[][], z: number, layerIndex: number): { gcode: string, paths: GCodePath } {
-        let gcode = `; Layer ${layerIndex}, Z=${z.toFixed(3)}\n`;
-        gcode += `G0 Z${z.toFixed(3)}\n`;
-        gcode += this.generateLayerPreamble(layerIndex);
-
-        const pathSegments: PathSegment[] = [];
-        let currentE = 0;
-        let currentX = 0;
-        let currentY = 0;
-        let isRetracted = false;
-
-        // Helper to add segment with automatic retraction
-        const addSegment = (x: number, y: number, type: 'move' | 'extrude', extrusionAmount: number = 0) => {
-            if (type === 'move') {
-                const dist = Math.hypot(x - currentX, y - currentY);
-                if (dist < 0.001) return; // Already there
-
-                // Retract before long travel
-                if (this.settings.enableRetraction && dist >= this.settings.retractMinTravelDistance && !isRetracted) {
-                    currentE -= this.settings.retractLength;
-                    gcode += `G1 E${currentE.toFixed(4)} F${this.settings.retractSpeed * 60} ; retract\n`;
-                    pathSegments.push({ x: currentX, y: currentY, type: 'retract', extrusion: this.settings.retractLength });
-                    if (this.settings.retractZHop > 0) {
-                        gcode += `G0 Z${(z + this.settings.retractZHop).toFixed(3)} ; z-hop\n`;
-                    }
-                    isRetracted = true;
-                }
-
-                gcode += `G0 X${x.toFixed(3)} Y${y.toFixed(3)} F${this.settings.fdmSpeed * 60}\n`;
-                pathSegments.push({ x, y, type: 'move' });
-                currentX = x;
-                currentY = y;
-
-            } else if (type === 'extrude') {
-                // Un-retract before extrusion
-                if (isRetracted) {
-                    if (this.settings.retractZHop > 0) {
-                        gcode += `G0 Z${z.toFixed(3)} ; z-hop recover\n`;
-                    }
-                    currentE += this.settings.retractLength;
-                    gcode += `G1 E${currentE.toFixed(4)} F${this.settings.retractSpeed * 60} ; un-retract\n`;
-                    isRetracted = false;
-                }
-
-                gcode += `G1 X${x.toFixed(3)} Y${y.toFixed(3)} E${(currentE + extrusionAmount).toFixed(4)} F${this.settings.fdmSpeed * 60}\n`;
-                currentE += extrusionAmount;
-                pathSegments.push({ x, y, type: 'extrude', extrusion: extrusionAmount });
-                currentX = x;
-                currentY = y;
-            }
+        const ctx: EmitContext = {
+            z,
+            gcode: `; Layer ${layerIndex}, Z=${z.toFixed(3)}\n`,
+            currentE: 0,
+            currentX: 0,
+            currentY: 0,
+            isRetracted: false,
+            pathSegments: [],
         };
+        ctx.gcode += `G0 Z${z.toFixed(3)}\n`;
+        ctx.gcode += this.generateLayerPreamble(layerIndex);
 
         // 1. Clean Input (Union all polygons to handle overlaps/self-intersections)
         // Note: Clipper Union expects non-self-intersecting inputs usually, but it handles them well.
@@ -142,6 +125,103 @@ export class GCodeGenerator {
         const modelBoundary = PolygonClipper.union(polygons);
 
         // 2. Generate Walls (Concentric Shells)
+        const walls = this.buildWallPaths(modelBoundary);
+
+        // 3. Gap Filling (Robust)
+        this.buildGapFill(modelBoundary, walls.currentOffset, walls.wallSpacing, walls.innerWalls);
+
+        // 4. Infill Boundary (for < 100% infill)
+        const infillBoundaries = this.buildInfillBoundaries(
+            modelBoundary, walls.isSolid, walls.currentOffset, walls.wallSpacing,
+        );
+
+        // 5. Optimize Path Order
+        // Optimize Outer and Inner separately
+        const optimizedOuter = optimizePaths(walls.outerWalls, { x: ctx.currentX, y: ctx.currentY });
+        const optimizedInner = optimizePaths(walls.innerWalls, { x: ctx.currentX, y: ctx.currentY }); // Inner walls + Gap fills
+
+        // 6. Generate Global Infill (Rectilinear/Grid for < 100%)
+        const infillLines = this.buildInfillLines(walls.isSolid, infillBoundaries);
+
+        // 7. Execute Print Sequence
+        if (this.settings.printOrder === 'infill-first') {
+            // Infill First: Inner Walls (Concentric) -> Infill Lines (Rectilinear) -> Outer Walls
+            this.emitPaths(ctx, optimizedInner); // Concentric Infill + Gap Fills
+            this.emitInfillLines(ctx, infillLines);         // Rectilinear Infill (if any)
+            this.emitPaths(ctx, optimizedOuter); // Outer Walls
+        } else {
+            // Walls First: Outer Walls -> Inner Walls -> Infill Lines
+            this.emitPaths(ctx, optimizedOuter);
+            this.emitPaths(ctx, optimizedInner);
+            this.emitInfillLines(ctx, infillLines);
+        }
+
+        return { gcode: ctx.gcode, paths: { segments: ctx.pathSegments, totalExtrusion: ctx.currentE } };
+    }
+
+    /**
+     * 세그먼트 1개 방출 (자동 리트랙션 포함). 원본 generateLayer 의 addSegment 클로저.
+     * ctx 의 gcode/currentE/currentX/currentY/isRetracted/pathSegments 를 갱신한다.
+     */
+    private addSegment(
+        ctx: EmitContext,
+        x: number,
+        y: number,
+        type: 'move' | 'extrude',
+        extrusionAmount: number = 0,
+    ): void {
+        const z = ctx.z;
+        if (type === 'move') {
+            const dist = Math.hypot(x - ctx.currentX, y - ctx.currentY);
+            if (dist < 0.001) return; // Already there
+
+            // Retract before long travel
+            if (this.settings.enableRetraction && dist >= this.settings.retractMinTravelDistance && !ctx.isRetracted) {
+                ctx.currentE -= this.settings.retractLength;
+                ctx.gcode += `G1 E${ctx.currentE.toFixed(4)} F${this.settings.retractSpeed * 60} ; retract\n`;
+                ctx.pathSegments.push({ x: ctx.currentX, y: ctx.currentY, type: 'retract', extrusion: this.settings.retractLength });
+                if (this.settings.retractZHop > 0) {
+                    ctx.gcode += `G0 Z${(z + this.settings.retractZHop).toFixed(3)} ; z-hop\n`;
+                }
+                ctx.isRetracted = true;
+            }
+
+            ctx.gcode += `G0 X${x.toFixed(3)} Y${y.toFixed(3)} F${this.settings.fdmSpeed * 60}\n`;
+            ctx.pathSegments.push({ x, y, type: 'move' });
+            ctx.currentX = x;
+            ctx.currentY = y;
+
+        } else if (type === 'extrude') {
+            // Un-retract before extrusion
+            if (ctx.isRetracted) {
+                if (this.settings.retractZHop > 0) {
+                    ctx.gcode += `G0 Z${z.toFixed(3)} ; z-hop recover\n`;
+                }
+                ctx.currentE += this.settings.retractLength;
+                ctx.gcode += `G1 E${ctx.currentE.toFixed(4)} F${this.settings.retractSpeed * 60} ; un-retract\n`;
+                ctx.isRetracted = false;
+            }
+
+            ctx.gcode += `G1 X${x.toFixed(3)} Y${y.toFixed(3)} E${(ctx.currentE + extrusionAmount).toFixed(4)} F${this.settings.fdmSpeed * 60}\n`;
+            ctx.currentE += extrusionAmount;
+            ctx.pathSegments.push({ x, y, type: 'extrude', extrusion: extrusionAmount });
+            ctx.currentX = x;
+            ctx.currentY = y;
+        }
+    }
+
+    /**
+     * 2. 동심 벽(Concentric Shells) 생성. 모델 경계를 안쪽으로 오프셋하며
+     * 외곽 벽(perimeter)과 내부 벽(concentric infill)을 나눈다.
+     * gap fill / infill boundary 계산에 필요한 currentOffset·wallSpacing·isSolid 도 함께 반환.
+     */
+    private buildWallPaths(modelBoundary: Point[][]): {
+        outerWalls: Point[][];
+        innerWalls: Point[][];
+        currentOffset: number;
+        wallSpacing: number;
+        isSolid: boolean;
+    } {
         const outerWalls: Point[][] = [];
         const innerWalls: Point[][] = []; // For 100% infill (Concentric Infill)
 
@@ -171,7 +251,7 @@ export class GCodeGenerator {
             // Optimization: Filter tiny loops
             // For 100% infill, we might want to keep even small loops to fill voids?
             // But nozzle diameter limit still applies.
-            const validWalls = wallCenters.filter(p => this.calculatePathLength(p) > nozzle * 1.5);
+            const validWalls = wallCenters.filter(p => calculatePathLength(p) > nozzle * 1.5);
 
             if (validWalls.length > 0) {
                 // Separate Outer Walls (Perimeters) from Inner Walls (Concentric Infill)
@@ -196,9 +276,22 @@ export class GCodeGenerator {
             if (currentOffset < -500) break;
         }
 
-        // 3. Gap Filling (Robust)
+        return { outerWalls, innerWalls, currentOffset, wallSpacing, isSolid };
+    }
+
+    /**
+     * 3. 갭 필링 (Robust). 마지막 벽 안쪽 좁은 void 를 찾아 innerWalls 에 채운다.
+     * innerWalls 를 in-place 로 확장한다 (원본과 동일).
+     */
+    private buildGapFill(
+        modelBoundary: Point[][],
+        currentOffset: number,
+        wallSpacing: number,
+        innerWalls: Point[][],
+    ): void {
         // Add gap fills to innerWalls (treat as infill)
         if (this.settings.enableGapFilling) {
+            const nozzle = this.settings.nozzleDiameter;
             // Calculate the boundary of the remaining void
             // The last wall's inner edge was at: lastValidOffset - (nozzle/2)
             const lastValidOffset = currentOffset + wallSpacing;
@@ -259,146 +352,112 @@ export class GCodeGenerator {
                 }
             }
         }
+    }
 
-        // 4. Infill Boundary (for < 100% infill)
+    /**
+     * 4. 인필 경계 계산 (< 100% infill 일 때). 마지막 벽 안쪽에서 오버랩만큼
+     * 바깥으로 되민 경계를 반환한다. solid(100%)면 빈 배열.
+     */
+    private buildInfillBoundaries(
+        modelBoundary: Point[][],
+        isSolid: boolean,
+        currentOffset: number,
+        wallSpacing: number,
+    ): Point[][] {
         let infillBoundaries: Point[][] = [];
         if (!isSolid) {
+            const nozzle = this.settings.nozzleDiameter;
             const lastValidOffset = currentOffset + wallSpacing;
             const infillOverlap = nozzle * ((this.settings.infillOverlapPercentage || 15) / 100);
             const infillOffset = lastValidOffset - (nozzle * 0.5) + infillOverlap;
             infillBoundaries = PolygonClipper.offset(modelBoundary, infillOffset);
         }
+        return infillBoundaries;
+    }
 
-        // 5. Optimize Path Order
-        // Optimize Outer and Inner separately
-        const optimizedOuter = this.optimizePaths(outerWalls, { x: currentX, y: currentY });
-        const optimizedInner = this.optimizePaths(innerWalls, { x: currentX, y: currentY }); // Inner walls + Gap fills
-
-        // 6. Generate Global Infill (Rectilinear/Grid for < 100%)
+    /**
+     * 6. 전역 인필 라인 생성 (Rectilinear/Grid, < 100%). grid 는 0°+90° 두 방향.
+     */
+    private buildInfillLines(isSolid: boolean, infillBoundaries: Point[][]): [Point, Point][] {
         const infillLines: [Point, Point][] = [];
         if (!isSolid && this.settings.infillPercentage > 0 && infillBoundaries.length > 0) {
+            const nozzle = this.settings.nozzleDiameter;
             const pattern = this.settings.infillPattern || 'lines';
             // const nozzle = this.settings.nozzleDiameter; // Already defined
 
             if (pattern === 'grid') {
-                infillLines.push(...this.generateGlobalInfill(infillBoundaries, this.settings.infillPercentage, nozzle, 0));
-                infillLines.push(...this.generateGlobalInfill(infillBoundaries, this.settings.infillPercentage, nozzle, 90));
+                infillLines.push(...generateGlobalInfill(infillBoundaries, this.settings.infillPercentage, nozzle, 0));
+                infillLines.push(...generateGlobalInfill(infillBoundaries, this.settings.infillPercentage, nozzle, 90));
             } else {
-                infillLines.push(...this.generateGlobalInfill(infillBoundaries, this.settings.infillPercentage, nozzle, 0));
+                infillLines.push(...generateGlobalInfill(infillBoundaries, this.settings.infillPercentage, nozzle, 0));
             }
         }
-
-        // 7. Execute Print Sequence
-        const printPaths = (paths: Point[][]) => {
-            for (const wall of paths) {
-                if (wall.length === 0) continue;
-                addSegment(wall[0].x, wall[0].y, 'move');
-                for (let i = 1; i < wall.length; i++) {
-                    const p = wall[i];
-                    const prev = wall[i - 1];
-                    const dist = Math.hypot(p.x - prev.x, p.y - prev.y);
-                    const e = this.calculateExtrusion(dist);
-                    addSegment(p.x, p.y, 'extrude', e);
-                }
-                // Close loop
-                const start = wall[0];
-                const end = wall[wall.length - 1];
-                const dist = Math.hypot(start.x - end.x, start.y - end.y);
-                const e = this.calculateExtrusion(dist);
-                addSegment(start.x, start.y, 'extrude', e);
-            }
-        };
-
-        const printInfillLines = () => {
-            if (infillLines.length === 0) return;
-
-            const spacing = this.settings.nozzleDiameter * (100 / this.settings.infillPercentage);
-            const connectionThreshold = spacing * 1.5;
-            const pattern = this.settings.infillPattern || 'lines';
-
-            for (let i = 0; i < infillLines.length; i++) {
-                const line = infillLines[i];
-
-                let isConnected = false;
-                if (i > 0 && (pattern === 'zigzag' || pattern === 'grid')) {
-                    const prevLine = infillLines[i - 1];
-                    const prevEnd = prevLine[1];
-                    const currStart = line[0];
-                    const dist = Math.hypot(currStart.x - prevEnd.x, currStart.y - prevEnd.y);
-
-                    if (dist < connectionThreshold) {
-                        isConnected = true;
-                    }
-                }
-
-                if (isConnected) {
-                    const start = line[0];
-                    const dist = Math.hypot(start.x - currentX, start.y - currentY);
-                    const e = this.calculateExtrusion(dist);
-                    addSegment(start.x, start.y, 'extrude', e);
-                } else {
-                    addSegment(line[0].x, line[0].y, 'move');
-                }
-
-                const dist = Math.hypot(line[1].x - line[0].x, line[1].y - line[0].y);
-                const e = this.calculateExtrusion(dist);
-                addSegment(line[1].x, line[1].y, 'extrude', e);
-            }
-        };
-
-        if (this.settings.printOrder === 'infill-first') {
-            // Infill First: Inner Walls (Concentric) -> Infill Lines (Rectilinear) -> Outer Walls
-            printPaths(optimizedInner); // Concentric Infill + Gap Fills
-            printInfillLines();         // Rectilinear Infill (if any)
-            printPaths(optimizedOuter); // Outer Walls
-        } else {
-            // Walls First: Outer Walls -> Inner Walls -> Infill Lines
-            printPaths(optimizedOuter);
-            printPaths(optimizedInner);
-            printInfillLines();
-        }
-
-        return { gcode, paths: { segments: pathSegments, totalExtrusion: currentE } };
+        return infillLines;
     }
 
-    private optimizePaths(paths: Point[][], startPoint: Point): Point[][] {
-        const optimized: Point[][] = [];
-        const remaining = [...paths];
-        let currentPos = startPoint;
+    /**
+     * 7-a. 벽/경로 집합을 인쇄한다 (각 폐루프: move → extrude*, 마지막에 loop close).
+     * 원본 generateLayer 의 printPaths 클로저.
+     */
+    private emitPaths(ctx: EmitContext, paths: Point[][]): void {
+        for (const wall of paths) {
+            if (wall.length === 0) continue;
+            this.addSegment(ctx, wall[0].x, wall[0].y, 'move');
+            for (let i = 1; i < wall.length; i++) {
+                const p = wall[i];
+                const prev = wall[i - 1];
+                const dist = Math.hypot(p.x - prev.x, p.y - prev.y);
+                const e = this.calculateExtrusion(dist);
+                this.addSegment(ctx, p.x, p.y, 'extrude', e);
+            }
+            // Close loop
+            const start = wall[0];
+            const end = wall[wall.length - 1];
+            const dist = Math.hypot(start.x - end.x, start.y - end.y);
+            const e = this.calculateExtrusion(dist);
+            this.addSegment(ctx, start.x, start.y, 'extrude', e);
+        }
+    }
 
-        while (remaining.length > 0) {
-            let nearestIndex = -1;
-            let minDist = Infinity;
+    /**
+     * 7-b. 인필 라인을 인쇄한다. zigzag/grid 는 인접 라인 끝점이 가까우면 연속 압출로 잇는다.
+     * 원본 generateLayer 의 printInfillLines 클로저.
+     */
+    private emitInfillLines(ctx: EmitContext, infillLines: [Point, Point][]): void {
+        if (infillLines.length === 0) return;
 
-            for (let i = 0; i < remaining.length; i++) {
-                const p = remaining[i][0];
-                const dist = Math.hypot(p.x - currentPos.x, p.y - currentPos.y);
-                if (dist < minDist) {
-                    minDist = dist;
-                    nearestIndex = i;
+        const spacing = this.settings.nozzleDiameter * (100 / this.settings.infillPercentage);
+        const connectionThreshold = spacing * 1.5;
+        const pattern = this.settings.infillPattern || 'lines';
+
+        for (let i = 0; i < infillLines.length; i++) {
+            const line = infillLines[i];
+
+            let isConnected = false;
+            if (i > 0 && (pattern === 'zigzag' || pattern === 'grid')) {
+                const prevLine = infillLines[i - 1];
+                const prevEnd = prevLine[1];
+                const currStart = line[0];
+                const dist = Math.hypot(currStart.x - prevEnd.x, currStart.y - prevEnd.y);
+
+                if (dist < connectionThreshold) {
+                    isConnected = true;
                 }
             }
 
-            if (nearestIndex !== -1) {
-                const nextPath = remaining[nearestIndex];
-                optimized.push(nextPath);
-                remaining.splice(nearestIndex, 1);
-                currentPos = nextPath[0]; // Or end? Closed loop ends at start.
+            if (isConnected) {
+                const start = line[0];
+                const dist = Math.hypot(start.x - ctx.currentX, start.y - ctx.currentY);
+                const e = this.calculateExtrusion(dist);
+                this.addSegment(ctx, start.x, start.y, 'extrude', e);
             } else {
-                break;
+                this.addSegment(ctx, line[0].x, line[0].y, 'move');
             }
-        }
-        return optimized;
-    }
 
-    private calculatePathLength(path: Point[]): number {
-        let len = 0;
-        for (let i = 0; i < path.length; i++) {
-            const p1 = path[i];
-            const p2 = path[(i + 1) % path.length];
-            len += Math.hypot(p2.x - p1.x, p2.y - p1.y);
+            const dist = Math.hypot(line[1].x - line[0].x, line[1].y - line[0].y);
+            const e = this.calculateExtrusion(dist);
+            this.addSegment(ctx, line[1].x, line[1].y, 'extrude', e);
         }
-        return len;
     }
 
     private calculateExtrusion(distance: number): number {
@@ -406,103 +465,5 @@ export class GCodeGenerator {
         const filamentArea = Math.PI * Math.pow(filamentDiameter / 2, 2);
         const volume = distance * this.settings.nozzleDiameter * this.settings.layerHeight;
         return (volume / filamentArea) * this.settings.fdmExtrusionRate;
-    }
-
-    private generateGlobalInfill(polys: Point[][], percentage: number, nozzle: number, angle: number = 0): [Point, Point][] {
-        // Rotate polygons to align with scanlines (Y-axis)
-        const rotatedPolys = this.rotatePolygons(polys, -angle);
-
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-        for (const poly of rotatedPolys) {
-            for (const p of poly) {
-                minX = Math.min(minX, p.x);
-                maxX = Math.max(maxX, p.x);
-                minY = Math.min(minY, p.y);
-                maxY = Math.max(maxY, p.y);
-            }
-        }
-
-        if (minX === Infinity) return [];
-
-        // Clip bounds to avoid infinite loops or massive generation
-        if (maxX - minX > 1000 || maxY - minY > 1000) {
-            return [];
-        }
-
-        const lines: [Point, Point][] = [];
-        const spacing = nozzle * (100 / percentage);
-
-        // Scanline generation
-        // We generate infinite lines and then CLIP them against the polygons using Clipper Intersection?
-        // Or use the ray-casting method?
-        // Clipper Intersection is robust.
-        // Let's generate a "Grid" of lines as a polygon set (thin rectangles?)
-        // Or just use the ray-casting method since we have rotated polys.
-        // Ray-casting is fast enough for scanlines.
-
-        let scanIndex = 0;
-        for (let y = minY; y <= maxY; y += spacing) {
-            const scanY = y + 0.0001;
-            let intersections: number[] = [];
-
-            for (const poly of rotatedPolys) {
-                for (let i = 0; i < poly.length; i++) {
-                    const p1 = poly[i];
-                    const p2 = poly[(i + 1) % poly.length];
-
-                    if ((p1.y <= scanY && p2.y > scanY) || (p2.y <= scanY && p1.y > scanY)) {
-                        const x = p1.x + (scanY - p1.y) * (p2.x - p1.x) / (p2.y - p1.y);
-                        intersections.push(x);
-                    }
-                }
-            }
-
-            intersections.sort((a, b) => a - b);
-
-            const currentLines: [Point, Point][] = [];
-            for (let i = 0; i < intersections.length; i += 2) {
-                if (i + 1 < intersections.length) {
-                    let x1 = intersections[i];
-                    let x2 = intersections[i + 1];
-                    currentLines.push([{ x: x1, y: y }, { x: x2, y: y }]);
-                }
-            }
-
-            // ZigZag Reversal
-            if (scanIndex % 2 !== 0) {
-                currentLines.reverse();
-                for (const line of currentLines) {
-                    const temp = line[0];
-                    line[0] = line[1];
-                    line[1] = temp;
-                }
-            }
-
-            lines.push(...currentLines);
-            scanIndex++;
-        }
-
-        // Rotate lines back
-        return this.rotateLines(lines, angle);
-    }
-
-    private rotatePolygons(polys: Point[][], angle: number): Point[][] {
-        const rad = angle * Math.PI / 180;
-        const cos = Math.cos(rad);
-        const sin = Math.sin(rad);
-        return polys.map(poly => poly.map(p => ({
-            x: p.x * cos - p.y * sin,
-            y: p.x * sin + p.y * cos
-        })));
-    }
-
-    private rotateLines(lines: [Point, Point][], angle: number): [Point, Point][] {
-        const rad = angle * Math.PI / 180;
-        const cos = Math.cos(rad);
-        const sin = Math.sin(rad);
-        return lines.map(line => [
-            { x: line[0].x * cos - line[0].y * sin, y: line[0].x * sin + line[0].y * cos },
-            { x: line[1].x * cos - line[1].y * sin, y: line[1].x * sin + line[1].y * cos }
-        ]);
     }
 }
