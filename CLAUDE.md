@@ -34,8 +34,10 @@ cd frontend && npm run build      # vite build
 
 | 경로 | 역할 | 담당/주의 |
 |---|---|---|
-| `pages/ViewerV2Page.tsx` | 전체 통합 (상태·배선, 1,700+줄) | 공용 — useCallback deps 주의 |
-| `components/BabylonScene.tsx` | **씬 소유** (2,500+줄). 편집모드 select/support/dental-brush, handle 패턴 | 유승제 설계 — 구조 변경 시 리뷰 지정 |
+| `pages/ViewerV2Page.tsx` | 전체 통합 골격 (640줄): 공유 상태 + 훅 조립 + JSX 골격 | 공용 — useCallback deps 주의 |
+| `pages/viewer/` | ViewerV2Page의 분리 조각: `hooks/`(서포트 편집·dental·내보내기 등 9개), `components/`(헤더·오버레이·사이드패널 5개), `utils/` | 구조도: `docs/리팩토링_LLM구조_20260720.md` |
+| `components/BabylonScene.tsx` | **씬 본체** (114줄): SceneCtx + 훅 호출(순서 고정) + 핸들 조립. 편집모드 select/support/dental-brush, handle 패턴 | 유승제 설계 — 구조 변경 시 리뷰 지정 |
+| `components/babylon/` | 씬 기능 조각: 훅 9개(bootstrap·mesh동기화·brush 등), 핸들 빌더 5개, dental/bridge 액션. **훅 호출 순서·dispose 순서 불변식 있음** | 변경 전 `docs/리팩토링_LLM구조_20260720.md` §5 필독 |
 | `support/` | 서포트 구조물 (trunk/브릿지, 파라미터, 자동 생성) | 유승제 |
 | `utils/dental/` | **지현규 알고리즘**: `margin-detect.ts`(🔒잠금), `island-detection.ts`, `dental-support.ts`, `paint-mask.ts` | 지현규 — 로직 변경 시 컨펌 |
 | `utils/gcode/` | FDM G-code (2노즐 하이브리드 대비) | 조우현 이식분 |
@@ -61,7 +63,7 @@ cd frontend && npm run build      # vite build
 
 ## 알려진 이슈 (수정 대상 아님 — 별도 정리에서만)
 
-- tsc 13건: BabylonScene(undoLift), ViewerV2Page(Cps 튜플), auto-generate, project-archive, zip-store
+- tsc 13건: babylon/hooks/setup-gizmos(undoLift — 구 BabylonScene), pages/viewer/hooks(Cps 튜플 — 구 ViewerV2Page), auto-generate, project-archive, zip-store (2026-07-20 리팩토링으로 위치만 이동, 내용 동일)
 - lint 40건: exhaustive-deps 14, no-explicit-any 10, prefer-const 7 등 (2026-07-08 첫 집계)
 - 이 때문에 작업을 중단하지 말 것. 단 **새 코드에서 추가 금지.**
 

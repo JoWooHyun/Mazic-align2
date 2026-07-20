@@ -1,0 +1,255 @@
+// Dental 브러쉬 색칠 / 마진 찾기 / 아일랜드 검출 / 검출→서포트(2-4) 상태·핸들러.
+// (ViewerV2Page 에서 추출 — busy 라벨 페인트 순서·undo·통지 동작 불변.)
+
+import { useCallback, useState } from "react";
+
+import { useUndoStore } from "../../../hooks/useUndoStore";
+import * as supportRepo from "../../../data/supports.repo";
+import type { BabylonSceneHandle } from "../../../components/BabylonScene";
+import type { SupportParams } from "../../../support";
+import type { AddSupports, RefreshSupports } from "./types";
+
+/**
+ * 동기(수십~수백 초) 검출 작업을 busy 라벨이 먼저 페인트된 뒤 시작하도록
+ * 감싸는 헬퍼. requestAnimationFrame(다음 프레임 직전) → setTimeout(0)(프레임
+ * 커밋 후) 로 라벨 페인트를 보장한 뒤 동기 작업(work)을 실행한다.
+ * (handleFindMargin / handleDetectIslands 의 동일 패턴 통합 — 의미 불변.)
+ */
+function runWithBusy(
+  setBusy: (v: boolean) => void,
+  work: () => void,
+): void {
+  setBusy(true);
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      try {
+        work();
+      } finally {
+        setBusy(false);
+      }
+    }, 0);
+  });
+}
+
+type MarginStatus = { ok: boolean; message: string } | null;
+type IslandStatus =
+  | {
+      ok: true;
+      totalIslandFaces: number;
+      nSlices: number;
+      layersWithIsland: number;
+    }
+  | { ok: false; message: string }
+  | null;
+
+interface UseDentalWorkflowArgs {
+  projectId: string | undefined;
+  supportParams: SupportParams;
+  sceneHandleRef: React.RefObject<BabylonSceneHandle>;
+  layerHeightMm: number;
+  addSupports: AddSupports;
+  refreshSupports: RefreshSupports;
+}
+
+export function useDentalWorkflow({
+  projectId,
+  supportParams,
+  sceneHandleRef,
+  layerHeightMm,
+  addSupports,
+  refreshSupports,
+}: UseDentalWorkflowArgs) {
+  // dental-brush 색칠 두께 (mm). 씬 SHIFT+휠 로도 갱신됨.
+  const [brushThicknessMm, setBrushThicknessMm] = useState(3);
+  // stlId → painted face index 목록 (세션 상태). margin/island 조각 입력.
+  // painted 는 IndexedDB 에 저장하지 않는다 (이 조각 범위 밖).
+  const [paintedFaces, setPaintedFaces] = useState<Record<string, number[]>>(
+    {},
+  );
+  // 마진 찾기 결과 상태 (세션). null = 미실행. ok=false → 실패 사유 표시.
+  const [marginStatus, setMarginStatus] = useState<MarginStatus>(null);
+  // 아일랜드 검출 결과 상태 (세션). null = 미실행.
+  const [islandStatus, setIslandStatus] = useState<IslandStatus>(null);
+  // 마진 찾기·아일랜드 검출은 메인스레드 동기 실행이라 진행률/취소는 불가하지만
+  //   (감사 #1·#2, 워커 이전은 별도 과제), 최소한 클릭 직후 버튼 라벨을 busy 로
+  //   바꿔 "죽은 게 아님"을 보이게 한다. 실제 동기 작업은 setTimeout(0) 뒤에
+  //   실행해 busy 라벨이 먼저 페인트되도록 한다(runWithBusy).
+  const [marginBusy, setMarginBusy] = useState(false);
+  const [islandBusy, setIslandBusy] = useState(false);
+  // 검출 영역 자동 서포트(2-4) 생성 진행 중 — 버튼 비활성/문구용.
+  const [islandSupportBusy, setIslandSupportBusy] = useState(false);
+  // 검출 영역 자동 서포트 완료 결과 문구 (감사 #5).
+  const [islandSupportResult, setIslandSupportResult] = useState<string | null>(
+    null,
+  );
+
+  // ----- Dental 브러쉬 색칠 -----
+  // 씬이 색칠 변경을 통지 → stlId 별 painted face 목록 갱신. 빈 목록이면 제거.
+  const handlePaintedFacesChange = useCallback(
+    (stlId: string, faceIds: number[]) => {
+      setPaintedFaces((prev) => {
+        const next = { ...prev };
+        if (faceIds.length === 0) delete next[stlId];
+        else next[stlId] = faceIds;
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleClearDentalPaint = useCallback(() => {
+    sceneHandleRef.current?.clearDentalPaint();
+    setPaintedFaces({});
+    // clearDentalPaint 는 씬에서 마진·아일랜드 시각화도 함께 정리하므로 상태도 초기화.
+    setMarginStatus(null);
+    setIslandStatus(null);
+  }, [sceneHandleRef]);
+
+  // BabylonScene 이 STL 변형·색칠 변경으로 마진·아일랜드 검출 결과를 내부에서
+  //   무효화했을 때(감사 B1/B3) 호출된다. 씬 쪽 시각화·ref 는 이미 정리됐으므로
+  //   여기서는 UI 상태만 초기 상태로 되돌려 "재검출 필요"를 명시적으로 표시한다.
+  //   marginStatus/islandStatus 는 현재 단일 슬롯(B4 기지 한계)이라 stlId 무관하게
+  //   둘 다 리셋한다 (콜백 시그니처의 stlId 는 향후 다중 슬롯 대비용으로만 전달됨).
+  const handleDentalResultsInvalidated = useCallback(() => {
+    setMarginStatus(null);
+    setIslandStatus(null);
+  }, []);
+
+  // ----- Dental 마진 찾기 (2-3b) -----
+  //   씬에서 색칠 영역 → findMargin → 초록 튜브 시각화. 성공/실패 사유를
+  //   패널 문구로 표시. painted 0 이면 패널 버튼이 비활성이라 여기 도달 X.
+  const handleFindMargin = useCallback(() => {
+    if (marginBusy) return;
+    runWithBusy(setMarginBusy, () => {
+      const res = sceneHandleRef.current?.findDentalMargin();
+      if (!res) return;
+      if (res.ok) {
+        setMarginStatus({
+          ok: true,
+          message: `마진 검출 완료 · 마진 엣지 ${res.stats.marginEdgeCount}개 (색칠 ${res.stats.paintedFaceCount}면)`,
+        });
+      } else {
+        setMarginStatus({ ok: false, message: res.reason });
+      }
+    });
+  }, [marginBusy, sceneHandleRef]);
+
+  const handleClearMargin = useCallback(() => {
+    sceneHandleRef.current?.clearDentalMargin();
+    setMarginStatus(null);
+  }, [sceneHandleRef]);
+
+  // ----- Dental 아일랜드 검출 (2-3c) -----
+  //   활성 STL 전체를 슬라이스 → detectSliceIslands → 마젠타 overlay.
+  //   레이어 높이는 슬라이스 프리뷰가 쓰는 값(layerHeightMm)을 재사용.
+  const handleDetectIslands = useCallback(() => {
+    if (islandBusy) return;
+    // 이전 자동 서포트 결과 문구는 재검출 시 무효 → 정리.
+    setIslandSupportResult(null);
+    runWithBusy(setIslandBusy, () => {
+      const res = sceneHandleRef.current?.detectDentalIslands(layerHeightMm);
+      if (!res) return;
+      if (res.ok) {
+        setIslandStatus({
+          ok: true,
+          totalIslandFaces: res.stats.totalIslandFaces,
+          nSlices: res.stats.nSlices,
+          layersWithIsland: res.stats.layersWithIsland,
+        });
+      } else {
+        setIslandStatus({ ok: false, message: res.reason });
+      }
+    });
+  }, [layerHeightMm, islandBusy, sceneHandleRef]);
+
+  const handleClearIslands = useCallback(() => {
+    sceneHandleRef.current?.clearDentalIslands();
+    setIslandStatus(null);
+    setIslandSupportResult(null);
+  }, [sceneHandleRef]);
+
+  // ----- 검출 영역 자동 서포트 (Step 2-4, ADR-3: 검출→생성 파이프라인) -----
+  //   아일랜드 검출 결과의 island 영역에만 자동 서포트를 생성한다. BabylonScene 이
+  //   faceFilter + 마진 가드까지 적용해 점을 반환하면, 여기서 기존 자동 생성 배선
+  //   (addSupports → undo push)과 동일 패턴으로 저장한다.
+  const handleAutoSupportIslands = useCallback(async () => {
+    if (!projectId || islandSupportBusy) return;
+    setIslandSupportBusy(true);
+    setIslandSupportResult(null);
+    try {
+      const generated =
+        sceneHandleRef.current?.autoSupportIslands(projectId, supportParams) ??
+        null;
+      // null = 아일랜드 검출 결과 없음. 빈 배열 = 검출됐으나 생성점 0 (가드 배제 등).
+      if (!generated || generated.length === 0) {
+        // 생성 0개도 무통지이던 문제(감사 #5) — 배제 사유를 짧게 알린다.
+        if (generated) {
+          setIslandSupportResult(
+            "검출 영역에서 생성할 서포트가 없습니다 (마진 가드 등으로 배제).",
+          );
+        }
+        return;
+      }
+
+      const ids = generated.map((p) => p.id);
+      await addSupports(generated);
+      // 완료 통지 (감사 #5) — Support 탭의 "현재 N 개" 로 연결됨을 안내.
+      setIslandSupportResult(
+        `서포트 ${generated.length}개 생성됨 · Support 탭 "현재 개수" 에 반영`,
+      );
+
+      // 생성 성공 → 아일랜드 검출 상태 소진 (감사 B6). 씬 쪽은 autoSupportIslands
+      //   내부에서 마젠타 overlay + islandResultRef 를 이미 정리했다. 여기서 페이지
+      //   islandStatus 를 null 로 되돌리면 DentalPanel 의 "검출 영역 자동 서포트"
+      //   버튼이 자연스럽게 비활성화되어, 같은 자리에 중복 생성/stale 재사용을 막는다
+      //   (재생성하려면 명시적 재검출 필요). 마진 상태는 건드리지 않는다.
+      setIslandStatus(null);
+
+      useUndoStore.getState().push({
+        label: "island-auto-supports",
+        undo: async () => {
+          for (const id of ids) {
+            await supportRepo.deleteSupport(id);
+          }
+          await refreshSupports();
+        },
+        redo: async () => {
+          await addSupports(generated);
+        },
+      });
+    } finally {
+      setIslandSupportBusy(false);
+    }
+  }, [
+    projectId,
+    islandSupportBusy,
+    supportParams,
+    addSupports,
+    refreshSupports,
+    sceneHandleRef,
+  ]);
+
+  return {
+    // 상태
+    brushThicknessMm,
+    setBrushThicknessMm,
+    paintedFaces,
+    marginStatus,
+    setMarginStatus,
+    islandStatus,
+    setIslandStatus,
+    marginBusy,
+    islandBusy,
+    islandSupportBusy,
+    islandSupportResult,
+    // 핸들러
+    handlePaintedFacesChange,
+    handleClearDentalPaint,
+    handleDentalResultsInvalidated,
+    handleFindMargin,
+    handleClearMargin,
+    handleDetectIslands,
+    handleClearIslands,
+    handleAutoSupportIslands,
+  };
+}

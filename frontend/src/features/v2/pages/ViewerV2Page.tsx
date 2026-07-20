@@ -1,89 +1,42 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
 import { useStlFilesV2 } from "../hooks/useStlFilesV2";
 import { useSupportsV2 } from "../hooks/useSupportsV2";
-import {
-  useShortcutsListener,
-  useShortcutHandler,
-} from "../hooks/useShortcuts";
-import { useClipboardStore } from "../hooks/useClipboardStore";
-import { useUndoStore } from "../hooks/useUndoStore";
-import { SupportParamsPanel, useSupportParamsStore } from "../support";
-import * as supportRepo from "../data/supports.repo";
-import type { SupportPointV2 } from "../support/types";
-import { DEFAULT_SUPPORT_SETTINGS } from "../utils/dental/dental-support";
-import { downloadBlob } from "../utils/stl-export";
-import { sliceBatchService } from "../utils/slice-batch-service";
+import { useShortcutsListener, useShortcutHandler } from "../hooks/useShortcuts";
+import { useSupportParamsStore } from "../support";
 import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
 } from "../components/BabylonScene";
-import ViewControls from "../components/ViewControls";
-import ViewerContextMenu from "../components/ViewerContextMenu";
-import type { ViewPreset } from "../utils/camera-views";
-import StlFileList from "../components/StlFileList";
-import TransformPanel from "../components/TransformPanel";
-import GizmoControls from "../components/GizmoControls";
-import EditModeControls, {
-  type EditMode,
-} from "../components/EditModeControls";
-import DentalPanel from "../components/DentalPanel";
+import { type EditMode } from "../components/EditModeControls";
 import SliceSidePanel from "../components/SliceSidePanel";
 import GithubProjectDialog from "../components/GithubProjectDialog";
-import PrinterProfileSelect from "../components/PrinterProfileSelect";
 import PrinterProfileDialog from "../components/PrinterProfileDialog";
+import ViewerContextMenu from "../components/ViewerContextMenu";
+import StlFileList from "../components/StlFileList";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
-import {
-  DEFAULT_EXPOSURE_SEC,
-  DEFAULT_BOTTOM_EXPOSURE_SEC,
-  DEFAULT_BOTTOM_LAYER_COUNT,
-  DEFAULT_TRANSITION_LAYER_COUNT,
-  type PrinterProfileV2,
-} from "../types/printer";
-import { IDENTITY_TRANSFORM, type TransformV2 } from "../types/transform";
-import { transformPointBetween } from "../utils/transform";
-import {
-  findClosestT,
-  getBridgePathPoint,
-  insertControlPoint,
-  isStraightCps,
-  removeControlPoint,
-  straightCps,
-} from "../utils/bridge-path";
+import { IDENTITY_TRANSFORM } from "../types/transform";
 
-/**
- * 프로파일의 노광 설정을 PNG-ZIP manifest 용 exposure 객체로 변환.
- * 프로파일에 노광 필드가 하나도 없으면 undefined 를 반환해 manifest 에 노광 정보를
- * 추가하지 않는다 (기존 프로파일 하위 호환 — 산출물 불변).
- * (기본값은 ctb-encoder 의 기본값과 동일하게 맞춰 CTB/manifest 간 일관성 유지.)
- */
-function profileExposure(p: PrinterProfileV2):
-  | {
-      bottomLayerCount: number;
-      transitionLayerCount: number;
-      bottomExposureSec: number;
-      exposureSec: number;
-    }
-  | undefined {
-  const hasAny =
-    p.exposureSec !== undefined ||
-    p.bottomExposureSec !== undefined ||
-    p.bottomLayerCount !== undefined ||
-    p.transitionLayerCount !== undefined;
-  if (!hasAny) return undefined;
-  return {
-    bottomLayerCount: p.bottomLayerCount ?? DEFAULT_BOTTOM_LAYER_COUNT,
-    transitionLayerCount:
-      p.transitionLayerCount ?? DEFAULT_TRANSITION_LAYER_COUNT,
-    bottomExposureSec: p.bottomExposureSec ?? DEFAULT_BOTTOM_EXPOSURE_SEC,
-    exposureSec: p.exposureSec ?? DEFAULT_EXPOSURE_SEC,
-  };
-}
+import { useClipboardActions } from "./viewer/hooks/useClipboardActions";
+import { useViewerShortcuts } from "./viewer/hooks/useViewerShortcuts";
+import { useTransformCommit } from "./viewer/hooks/useTransformCommit";
+import { useSupportEditing } from "./viewer/hooks/useSupportEditing";
+import { useDentalWorkflow } from "./viewer/hooks/useDentalWorkflow";
+import { useSliceExport } from "./viewer/hooks/useSliceExport";
+import { useStlDropImport } from "./viewer/hooks/useStlDropImport";
+import ViewerHeader from "./viewer/components/ViewerHeader";
+import ViewportOverlays from "./viewer/components/ViewportOverlays";
+import ViewportInfoPanels from "./viewer/components/ViewportInfoPanels";
+import ViewerSidePanel from "./viewer/components/ViewerSidePanel";
 
 /**
  * v2 프로젝트 작업 화면.
+ *
+ * 데이터 훅 배선 + 핵심 공유 상태 + 기능별 훅(서포트 편집/변환/dental/내보내기/
+ * 드롭 임포트/단축키) 조립 + JSX 골격만 담는다. 실제 핸들러·상태는 각 훅으로,
+ * 마크업 덩어리는 pages/viewer/components 하위 컴포넌트로 분리돼 있다.
  */
 const ViewerV2Page: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
@@ -107,19 +60,15 @@ const ViewerV2Page: React.FC = () => {
   } = useSupportsV2(projectId);
 
   // supports closure 가 stale 일 때 항상 최신 값을 보기 위한 ref.
-  // handleCommitTransform / followAttachedChildren 등 비동기 콜백에서
-  // 사용.
+  // handleCommitTransform / followAttachedChildren 등 비동기 콜백에서 사용.
   const supportsRef = useRef(supports);
   supportsRef.current = supports;
 
-  // 뷰어 영역 드래그앤드롭 오버레이 표시 여부.
-  const [isDragOver, setIsDragOver] = useState(false);
-  // 네이티브 파일 열기용 숨김 input.
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // ----- 핵심 공유 상태 (페이지 유지) -----
   const [ghDialog, setGhDialog] = useState<"save" | "load" | null>(null);
-  const [panelTab, setPanelTab] = useState<
-    "transform" | "support" | "dental"
-  >("transform");
+  const [panelTab, setPanelTab] = useState<"transform" | "support" | "dental">(
+    "transform",
+  );
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -127,89 +76,144 @@ const ViewerV2Page: React.FC = () => {
   const [gizmoMode, setGizmoMode] = useState<GizmoMode>("translate");
   const [alignFloorMode, setAlignFloorMode] = useState(false);
   const [editMode, setEditMode] = useState<EditMode>("select");
-  const [bridgeMode, setBridgeMode] = useState(false);
-  // disc(디스크 서포트) 배치 서브 모드 — support 편집 모드 안에서만 의미.
-  //   bridge 와 상호 배타 (동시에 켤 수 없음). 켜져 있으면 모델 표면 클릭이
-  //   trunk 대신 지현규 dental disc 서포트를 배치한다.
-  const [discMode, setDiscMode] = useState(false);
-  // dental-brush 색칠 두께 (mm). 씬 SHIFT+휠 로도 갱신됨.
-  const [brushThicknessMm, setBrushThicknessMm] = useState(3);
-  // stlId → painted face index 목록 (세션 상태). margin/island 조각 입력.
-  // painted 는 IndexedDB 에 저장하지 않는다 (이 조각 범위 밖).
-  const [paintedFaces, setPaintedFaces] = useState<Record<string, number[]>>(
-    {},
-  );
-  // 마진 찾기 결과 상태 (세션). null = 미실행. ok=false → 실패 사유 표시.
-  //   marginRef 자체는 BabylonScene 내부 — 여기서는 UI 표시/버튼 활성용 상태만.
-  const [marginStatus, setMarginStatus] = useState<{
-    ok: boolean;
-    message: string;
-  } | null>(null);
-  // 아일랜드 검출 결과 상태 (세션). null = 미실행. islandResultRef 자체는
-  //   BabylonScene 내부 — 여기서는 UI 표시/버튼 활성용 상태만.
-  const [islandStatus, setIslandStatus] = useState<
-    | {
-        ok: true;
-        totalIslandFaces: number;
-        nSlices: number;
-        layersWithIsland: number;
-      }
-    | { ok: false; message: string }
-    | null
-  >(null);
-  const [pendingBridge, setPendingBridge] = useState<{
-    stlId: string;
-    contact: [number, number, number];
-    normal?: [number, number, number];
-    attachedTo?: { supportId: string; t: number };
-  } | null>(null);
-  const [selectedSupportId, setSelectedSupportId] = useState<string | null>(
-    null,
-  );
-  // 선택된 Bridge 변곡점 idx (sphere 클릭 시 설정). Delete 키로 제거.
-  const [selectedCp, setSelectedCp] = useState<{
-    supportId: string;
-    idx: number;
-  } | null>(null);
-  const [autoBusy, setAutoBusy] = useState(false);
-  // 검출 영역 자동 서포트(2-4) 생성 진행 중 — 버튼 비활성/문구용.
-  const [islandSupportBusy, setIslandSupportBusy] = useState(false);
-  // 검출 영역 자동 서포트 완료 결과 문구 (감사 #5) — 생성 직후 몇 개가 만들어졌는지
-  //   무통지이던 문제. marginStatus/islandStatus 와 동일한 인라인 문구 패턴으로 표시.
-  const [islandSupportResult, setIslandSupportResult] = useState<string | null>(
-    null,
-  );
-  // 마진 찾기·아일랜드 검출은 메인스레드 동기 실행이라 진행률/취소는 불가하지만
-  //   (감사 #1·#2, 워커 이전은 별도 과제), 최소한 클릭 직후 버튼 라벨을 busy 로
-  //   바꿔 "죽은 게 아님"을 보이게 한다. 실제 동기 작업은 setTimeout(0) 뒤에
-  //   실행해 busy 라벨이 먼저 페인트되도록 한다(핸들러 참조).
-  const [marginBusy, setMarginBusy] = useState(false);
-  const [islandBusy, setIslandBusy] = useState(false);
-  const [slicePreview, setSlicePreview] = useState<{
-    on: boolean;
-    layerIdx: number;
-    layerHeightMm: number;
-  }>({ on: false, layerIdx: 0, layerHeightMm: 0.05 });
-  const [sceneTopY, setSceneTopY] = useState(0);
-  const [batchExport, setBatchExport] = useState<{
-    busy: boolean;
-    done: number;
-    total: number;
-  }>({ busy: false, done: 0, total: 0 });
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
   // 뷰포트 우클릭 컨텍스트 메뉴 위치 (화면 좌표). null 이면 닫힘 (P5).
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
 
-  // sliceY = (layerIdx + 0.5) × layerHeight — 레이어 중심을 픽업
-  const sliceYNow =
-    (slicePreview.layerIdx + 0.5) * slicePreview.layerHeightMm;
-  const layerCount = Math.max(
-    1,
-    Math.ceil(sceneTopY / slicePreview.layerHeightMm),
-  );
   const sceneHandleRef = useRef<BabylonSceneHandle>(null);
-  // 우클릭 시작 좌표 — pointerup 에서 이동량<임계값이면 컨텍스트 메뉴, 아니면 팬 (P5).
-  const rightDownRef = useRef<{ x: number; y: number } | null>(null);
+
+  const overhangAngleDeg = useSupportParamsStore(
+    (s) => s.params.overhangAngleDeg,
+  );
+  const supportParams = useSupportParamsStore((s) => s.params);
+  const printerProfile = useCurrentProfile();
+
+  useShortcutsListener();
+
+  // ----- 기능별 훅 조립 -----
+  // 파일 선택/클립보드/undo·redo 단축키.
+  useClipboardActions({
+    files,
+    selectedIds,
+    setSelectedIds,
+    addStlFile,
+    removeStlFile,
+  });
+
+  // 뷰 프리셋·줌·도구 단축키 (zoomFit 은 컨텍스트 메뉴 재사용).
+  const { zoomFit } = useViewerShortcuts({
+    sceneHandleRef,
+    selectedIds,
+    editMode,
+    setGizmoMode,
+  });
+
+  // 슬라이스 프리뷰 상태 + 내보내기 핸들러.
+  const {
+    slicePreview,
+    setSlicePreview,
+    sceneTopY,
+    setSceneTopY,
+    batchExport,
+    sliceYNow,
+    layerCount,
+    handleExportMasksZip,
+    handleExportCtb,
+    handleExportGcode,
+    handleExportStl,
+  } = useSliceExport({
+    files,
+    project,
+    supportsLength: supports.length,
+    printerProfile,
+    sceneHandleRef,
+  });
+
+  // STL transform 프리뷰/커밋 + 부착 서포트 추종.
+  const { handlePreviewTransform, handleCommitTransform, followAttachedChildren } =
+    useTransformCommit({
+      supports,
+      supportsRef,
+      sceneHandleRef,
+      updateTransform,
+      patchSupport,
+    });
+
+  // 서포트/브릿지/disc 편집 상태·핸들러 (followAttachedChildren 주입).
+  const support = useSupportEditing({
+    projectId,
+    files,
+    supports,
+    supportParams,
+    sceneHandleRef,
+    editMode,
+    selectedIds,
+    setSelectedIds,
+    addSupports,
+    clearAllSupports,
+    refreshSupports,
+    patchSupport,
+    addStlFile,
+    removeStlFile,
+    updateTransform,
+    followAttachedChildren,
+    setCtxMenu,
+  });
+
+  // Dental 색칠/마진/아일랜드/검출→서포트 상태·핸들러.
+  const dental = useDentalWorkflow({
+    projectId,
+    supportParams,
+    sceneHandleRef,
+    layerHeightMm: slicePreview.layerHeightMm,
+    addSupports,
+    refreshSupports,
+  });
+
+  // 네이티브 열기 + 드래그앤드롭.
+  const {
+    isDragOver,
+    fileInputRef,
+    handleNativeInputChange,
+    handleDragOver,
+    handleDragLeave,
+    handleDrop,
+  } = useStlDropImport({ addStlFile, setSelectedIds });
+
+  // support 편집 델리게이트에서 자주 쓰는 setter/상태를 지역 별칭으로.
+  const {
+    bridgeMode,
+    setBridgeMode,
+    discMode,
+    setDiscMode,
+    pendingBridge,
+    setPendingBridge,
+    selectedSupportId,
+    setSelectedSupportId,
+    selectedCp,
+    setSelectedCp,
+    autoBusy,
+    handleDeleteSelectedSupport,
+  } = support;
+
+  const { setMarginStatus, setIslandStatus } = dental;
+
+  // ----- 선택 -----
+  const handlePick = (id: string | null, opts: { multi: boolean }) => {
+    setSelectedIds((prev) => {
+      if (!id) return opts.multi ? prev : new Set();
+      const next = new Set(prev);
+      if (opts.multi) {
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }
+      return new Set([id]);
+    });
+  };
+
+  // delete 단축키는 서포트/STL 삭제가 얽혀 useSupportEditing 의 핸들러로 등록.
+  useShortcutHandler("delete", handleDeleteSelectedSupport);
 
   // STL 이 삭제되면 dental 세션 상태(마진/아일랜드 결과)를 리셋한다 (2-3b 잔여 ①).
   //   BabylonScene 은 mesh 제거 시 해당 STL 의 시각화를 내부에서 정리하지만,
@@ -232,16 +236,7 @@ const ViewerV2Page: React.FC = () => {
       setMarginStatus(null);
       setIslandStatus(null);
     }
-  }, [files]);
-
-  const overhangAngleDeg = useSupportParamsStore(
-    (s) => s.params.overhangAngleDeg,
-  );
-  const supportParams = useSupportParamsStore((s) => s.params);
-
-  const printerProfile = useCurrentProfile();
-
-  useShortcutsListener();
+  }, [files, setMarginStatus, setIslandStatus]);
 
   // 잘못된 마이그레이션 reverse (stl-local → world).
   // 0c83dd2 의 timing 문제로 stl-local 좌표가 STL transform 적용 전
@@ -258,20 +253,17 @@ const ViewerV2Page: React.FC = () => {
     const handle = sceneHandleRef.current;
     if (!handle) return;
     // STL transform 이 BabylonScene 의 비동기 STL 로드 후 적용되는
-    // 시점까지 충분히 대기 (1.5s — Promise.all 안의 applyTransform
-    // 보장).
+    // 시점까지 충분히 대기 (1.5s — Promise.all 안의 applyTransform 보장).
     const t = setTimeout(() => {
       void (async () => {
         for (const s of toRevert) {
           const newContact = handle.stlLocalToWorld(s.stlId, s.contact);
           if (!newContact) continue;
-          const newBase =
-            handle.stlLocalToWorld(s.stlId, s.base) ?? s.base;
+          const newBase = handle.stlLocalToWorld(s.stlId, s.base) ?? s.base;
           let newCps = s.curveControlPoints;
           if (newCps) {
             newCps = newCps.map(
-              (cp) =>
-                handle.stlLocalToWorld(s.stlId, cp) ?? cp,
+              (cp) => handle.stlLocalToWorld(s.stlId, cp) ?? cp,
             ) as typeof newCps;
           }
           await patchSupport(s.id, {
@@ -334,1479 +326,14 @@ const ViewerV2Page: React.FC = () => {
     selectedIds,
     profileDialogOpen,
     ghDialog,
+    setPendingBridge,
+    setSelectedCp,
+    setSelectedSupportId,
   ]);
-
-  // ----- 선택 -----
-  const handlePick = useCallback(
-    (id: string | null, opts: { multi: boolean }) => {
-      setSelectedIds((prev) => {
-        if (!id) return opts.multi ? prev : new Set();
-        const next = new Set(prev);
-        if (opts.multi) {
-          if (next.has(id)) next.delete(id);
-          else next.add(id);
-          return next;
-        }
-        return new Set([id]);
-      });
-    },
-    [],
-  );
-
-  // ----- 클립보드 -----
-  const handleSelectAll = useCallback(() => {
-    setSelectedIds(new Set(files.map((f) => f.id)));
-  }, [files]);
-
-  const handleCopy = useCallback(() => {
-    if (selectedIds.size === 0) return;
-    const items = files
-      .filter((f) => selectedIds.has(f.id))
-      .map((f) => ({ fileName: f.fileName, blob: f.blob }));
-    useClipboardStore.getState().set(items);
-  }, [files, selectedIds]);
-
-  const handleCut = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    const toCut = files.filter((f) => selectedIds.has(f.id));
-    useClipboardStore
-      .getState()
-      .set(toCut.map((f) => ({ fileName: f.fileName, blob: f.blob })));
-    for (const f of toCut) {
-      await removeStlFile(f.id);
-    }
-    setSelectedIds(new Set());
-  }, [files, selectedIds, removeStlFile]);
-
-  const handlePaste = useCallback(async () => {
-    const items = useClipboardStore.getState().items;
-    if (items.length === 0) return;
-    const newIds: string[] = [];
-    for (const item of items) {
-      const created = await addStlFile(
-        addCopySuffix(item.fileName, files),
-        item.blob,
-      );
-      newIds.push(created.id);
-    }
-    setSelectedIds(new Set(newIds));
-  }, [files, addStlFile]);
-
-  // ----- Undo / Redo -----
-  const handleUndo = useCallback(() => {
-    void useUndoStore.getState().undo();
-  }, []);
-  const handleRedo = useCallback(() => {
-    void useUndoStore.getState().redo();
-  }, []);
-
-  useShortcutHandler("selectAll", handleSelectAll);
-  useShortcutHandler("copy", handleCopy);
-  useShortcutHandler("cut", handleCut);
-  useShortcutHandler("paste", handlePaste);
-  useShortcutHandler("undo", handleUndo);
-  useShortcutHandler("redo", handleRedo);
-  // 'delete' 핸들러는 아래의 handleDeleteSelectedSupport 선언 후에 등록한다.
-
-  // ----- 뷰 프리셋·줌 단축키 (P2, 프루사 동일 키) -----
-  //   0=Iso, 1=Top, 2=Bottom, 3=Front, 4=Back, 5=Left, 6=Right (숫자키).
-  //   ViewControls 의 setView 핸들 경로를 그대로 재사용한다(별도 배선 없음).
-  const setView = useCallback((preset: ViewPreset) => {
-    sceneHandleRef.current?.setView(preset);
-  }, []);
-  useShortcutHandler("viewIso", useCallback(() => setView("iso"), [setView]));
-  useShortcutHandler("viewTop", useCallback(() => setView("top"), [setView]));
-  useShortcutHandler(
-    "viewBottom",
-    useCallback(() => setView("bottom"), [setView]),
-  );
-  useShortcutHandler(
-    "viewFront",
-    useCallback(() => setView("front"), [setView]),
-  );
-  useShortcutHandler("viewBack", useCallback(() => setView("back"), [setView]));
-  useShortcutHandler("viewLeft", useCallback(() => setView("left"), [setView]));
-  useShortcutHandler(
-    "viewRight",
-    useCallback(() => setView("right"), [setView]),
-  );
-  // Z=줌투핏(선택 한정), B=플레이트 전용 뷰 — 정밀 의미 분리 (P5).
-  //   Z(zoomFit): 선택된 메쉬만 화면에 꽉 차게. 선택이 없으면 전체 fit 폴백.
-  //   B(viewPlate): 모델과 무관하게 홈 각도로 플레이트(빌드 볼륨) 전체를 프레이밍.
-  const zoomFit = useCallback(() => {
-    sceneHandleRef.current?.fitSelection(Array.from(selectedIds));
-  }, [selectedIds]);
-  const viewPlate = useCallback(() => {
-    sceneHandleRef.current?.viewPlate();
-  }, []);
-  useShortcutHandler("zoomFit", zoomFit);
-  useShortcutHandler("viewPlate", viewPlate);
-
-  // ----- 도구 키 (P4, 프루사 동일): M=Move, R=Rotate, S=Scale -----
-  //   select 모드에서만 동작(Gizmo 가 detach 되는 다른 모드에서는 무시).
-  //   같은 키 재입력 시 해제하지 않고 해당 모드로 set — GizmoControls 버튼 동작과 일치.
-  const handleToolMove = useCallback(() => {
-    if (editMode === "select") setGizmoMode("translate");
-  }, [editMode]);
-  const handleToolRotate = useCallback(() => {
-    if (editMode === "select") setGizmoMode("rotate");
-  }, [editMode]);
-  const handleToolScale = useCallback(() => {
-    if (editMode === "select") setGizmoMode("scale");
-  }, [editMode]);
-  useShortcutHandler("toolMove", handleToolMove);
-  useShortcutHandler("toolRotate", handleToolRotate);
-  useShortcutHandler("toolScale", handleToolScale);
-
-  // ----- 자동 서포트 -----
-  const handleAutoGenerate = useCallback(async () => {
-    if (!projectId || autoBusy) return;
-    if (files.length === 0) return;
-    setAutoBusy(true);
-    try {
-      const generated =
-        sceneHandleRef.current?.generateAutoSupports(projectId, supportParams) ??
-        [];
-      if (generated.length === 0) return;
-
-      const ids = generated.map((p) => p.id);
-      await addSupports(generated);
-
-      useUndoStore.getState().push({
-        label: "auto-supports",
-        undo: async () => {
-          for (const id of ids) {
-            await supportRepo.deleteSupport(id);
-          }
-          await refreshSupports();
-        },
-        redo: async () => {
-          await addSupports(generated);
-        },
-      });
-    } finally {
-      setAutoBusy(false);
-    }
-  }, [projectId, autoBusy, files.length, supportParams, addSupports, refreshSupports]);
-
-  // ----- 수동 편집 -----
-  const handleAddSupportAt = useCallback(
-    async (
-      stlId: string,
-      contact: [number, number, number],
-      normal?: [number, number, number],
-      attachedTo?: { supportId: string; t: number },
-    ) => {
-      if (!projectId) return;
-
-      // Bridge 모드: 첫 클릭은 pending, 두 번째 클릭에 둘을 잇는 기둥.
-      if (bridgeMode) {
-        if (!pendingBridge) {
-          // 첫 점 — pending 설정 (선택 해제 X).
-          if (contact[1] <= 0.5) return; // 베드 근처 무의미
-          setPendingBridge({ stlId, contact, normal, attachedTo });
-          return;
-        }
-        // 두 번째 점 — 두 점을 잇는 bridge 서포트 추가.
-        const a = pendingBridge.contact;
-        const b = contact;
-        const dx = a[0] - b[0];
-        const dy = a[1] - b[1];
-        const dz = a[2] - b[2];
-        const dist = Math.hypot(dx, dy, dz);
-        if (dist < 1.0) {
-          // 거의 같은 점이면 무시.
-          return;
-        }
-        // 변곡점 3 개 자동 배치: t = 0.25 / 0.50 / 0.75. 직선 lerp.
-        // tube 가 STL 침투하는 부분은 BabylonScene 의 CSG subtract 로
-        // 제거되어 표면 위 외부만 매끈하게 노출.
-        const lerp = (t: number): [number, number, number] => [
-          a[0] + (b[0] - a[0]) * t,
-          a[1] + (b[1] - a[1]) * t,
-          a[2] + (b[2] - a[2]) * t,
-        ];
-        const initialCps: [
-          [number, number, number],
-          [number, number, number],
-          [number, number, number],
-        ] = [lerp(0.25), lerp(0.5), lerp(0.75)];
-        const newPoint: SupportPointV2 = {
-          id: crypto.randomUUID(),
-          projectId,
-          stlId, // 두 번째 클릭의 모델 (contact 쪽)
-          baseStlId: pendingBridge.stlId, // 첫 번째 클릭의 모델 (base 쪽)
-          // base = 첫 점, contact = 두 번째 점.
-          // (createSupportMesh 는 base→contact 방향으로 그린다.)
-          contact: b,
-          base: a,
-          source: "bridge",
-          addedAt: Date.now(),
-          curveControlPoints: initialCps,
-          contactNormal: normal,
-          baseNormal: pendingBridge.normal,
-          contactAttachedTo: attachedTo,
-          baseAttachedTo: pendingBridge.attachedTo,
-        };
-        setPendingBridge(null);
-        await addSupports([newPoint]);
-        useUndoStore.getState().push({
-          label: "add-bridge",
-          undo: async () => {
-            await supportRepo.deleteSupport(newPoint.id);
-            await refreshSupports();
-          },
-          redo: async () => {
-            await addSupports([newPoint]);
-          },
-        });
-        return;
-      }
-
-      // 단점 모드 (기존) / disc 모드 (지현규 dental disc).
-      //   둘 다 "모델 표면 클릭 → 단일 서포트 배치" 로 동작이 동일하고,
-      //   저장·undo·삭제 경로도 공유한다. 차이는 variant / discSettings 뿐.
-      if (contact[1] <= 0.5) return;
-      // disc: dental createSupport 는 목 길이(tubeTop→bend)가 하한
-      //   (CONN 1.6 + 0.5) 미만이면 null 을 반환한다. 그대로 저장하면
-      //   mesh 없는 유령 DB 레코드가 남아 UI 로 삭제할 수 없으므로,
-      //   저장 전에 dental 과 동일한 계산으로 생성 가능 여부를 검증한다.
-      //   (모델 표면이 베드에 너무 가까울 때 조용히 무시 — 새 UI 없음.)
-      if (discMode) {
-        const ds = DEFAULT_SUPPORT_SETTINGS;
-        const sphereR = Math.max(
-          ds.tipTopDiameter / 2,
-          Math.max(ds.tipBottomDiameter / 2, 0.1),
-        );
-        const tubeTopY = contact[1] + ds.contactDepth - sphereR;
-        const bendY = Math.max(0.5, contact[1] - 4);
-        if (tubeTopY - bendY < 1.6 + 0.5) return; // 목 길이 하한 미달 → 배치 안 함.
-      }
-      // base: contact 에서 -Y 로 가장 가까운 표면 (자기 모델 제외).
-      // 다른 STL 위에 단점이 서 있으면 그 모델 상단에 base 부착되어
-      // 기둥 직선이 다른 STL 을 통과하지 않게 된다.
-      const groundY =
-        sceneHandleRef.current?.findSurfaceBelow(
-          contact[0],
-          contact[2],
-          contact[1] - 0.01,
-          [stlId],
-        ) ?? 0;
-      const newPoint: SupportPointV2 = {
-        id: crypto.randomUUID(),
-        projectId,
-        stlId,
-        contact,
-        base: [contact[0], groundY, contact[2]],
-        source: "manual",
-        addedAt: Date.now(),
-        contactNormal: normal,
-        // disc 모드면 variant='disc' + 배치 시점 dental 치수 스냅샷.
-        // (trunk 는 variant 미지정 → 기존 코드 경로 그대로.)
-        ...(discMode
-          ? {
-              variant: "disc" as const,
-              discSettings: { ...DEFAULT_SUPPORT_SETTINGS },
-            }
-          : {}),
-      };
-      await addSupports([newPoint]);
-      useUndoStore.getState().push({
-        label: "add-support",
-        undo: async () => {
-          await supportRepo.deleteSupport(newPoint.id);
-          await refreshSupports();
-        },
-        redo: async () => {
-          await addSupports([newPoint]);
-        },
-      });
-    },
-    [projectId, bridgeMode, discMode, pendingBridge, addSupports, refreshSupports],
-  );
-
-  const handleRemoveSupport = useCallback(
-    async (supportId: string) => {
-      const target = supports.find((s) => s.id === supportId);
-      if (!target) return;
-      // Bridge↔Bridge cascade — 부모 삭제 시 그 위에 부착된 child
-      // (contactAttachedTo / baseAttachedTo 가 부모를 가리킴) 들도
-      // 함께 삭제. grand-child 까지 재귀로.
-      const cascadeIds = new Set<string>([supportId]);
-      let added = true;
-      while (added) {
-        added = false;
-        for (const s of supports) {
-          if (cascadeIds.has(s.id)) continue;
-          const cId = s.contactAttachedTo?.supportId;
-          const bId = s.baseAttachedTo?.supportId;
-          if ((cId && cascadeIds.has(cId)) || (bId && cascadeIds.has(bId))) {
-            cascadeIds.add(s.id);
-            added = true;
-          }
-        }
-      }
-      const removed = supports.filter((s) => cascadeIds.has(s.id));
-      for (const id of cascadeIds) {
-        await supportRepo.deleteSupport(id);
-      }
-      await refreshSupports();
-      if (selectedSupportId && cascadeIds.has(selectedSupportId)) {
-        setSelectedSupportId(null);
-      }
-      useUndoStore.getState().push({
-        label: "remove-support",
-        undo: async () => {
-          await addSupports(removed);
-        },
-        redo: async () => {
-          for (const id of cascadeIds) {
-            await supportRepo.deleteSupport(id);
-          }
-          await refreshSupports();
-        },
-      });
-    },
-    [supports, addSupports, refreshSupports, selectedSupportId],
-  );
-
-  const handleMoveSupport = useCallback(
-    async (id: string, newBaseXZ: [number, number]) => {
-      const target = supports.find((s) => s.id === id);
-      if (!target) return;
-
-      const oldContact: [number, number, number] = [...target.contact];
-      const oldBase: [number, number, number] = [...target.base];
-      const newContact: [number, number, number] = [
-        newBaseXZ[0],
-        target.contact[1], // contact 의 Y 는 유지
-        newBaseXZ[1],
-      ];
-      const newBase: [number, number, number] = [
-        newBaseXZ[0],
-        0,
-        newBaseXZ[1],
-      ];
-
-      await patchSupport(id, { contact: newContact, base: newBase });
-
-      useUndoStore.getState().push({
-        label: "move-support",
-        undo: async () => {
-          await patchSupport(id, { contact: oldContact, base: oldBase });
-        },
-        redo: async () => {
-          await patchSupport(id, { contact: newContact, base: newBase });
-        },
-      });
-    },
-    [supports, patchSupport],
-  );
-
-  // 부모 Bridge 가 수정된 직후 그 위에 부착된 child Bridge 들의
-  // contact/base 를 새 path 의 t 위치 좌표로 다시 계산해서 따라가게.
-  const followAttachedChildren = useCallback(
-    async (
-      parentId: string,
-      parentBase: [number, number, number],
-      parentCps:
-        | [
-            [number, number, number],
-            [number, number, number],
-            [number, number, number],
-          ]
-        | undefined,
-      parentContact: [number, number, number],
-    ) => {
-      // closure stale 방지: 최신 supports 사용.
-      const children = supportsRef.current.filter(
-        (s) =>
-          s.contactAttachedTo?.supportId === parentId ||
-          s.baseAttachedTo?.supportId === parentId,
-      );
-      for (const child of children) {
-        const updates: Parameters<typeof patchSupport>[1] = {};
-        const newContact =
-          child.contactAttachedTo?.supportId === parentId
-            ? getBridgePathPoint(
-                parentBase,
-                parentCps,
-                parentContact,
-                child.contactAttachedTo.t,
-              )
-            : child.contact;
-        const newBase =
-          child.baseAttachedTo?.supportId === parentId
-            ? getBridgePathPoint(
-                parentBase,
-                parentCps,
-                parentContact,
-                child.baseAttachedTo.t,
-              )
-            : child.base;
-
-        if (newContact !== child.contact) updates.contact = newContact;
-        if (newBase !== child.base) updates.base = newBase;
-
-        // 변곡점 처리: 사용자가 child 를 직접 휘어놓지 않았다 (= 직선
-        // 상태) 면 새 base→contact 직선으로 reset. 사용자가 휘어놓은
-        // 곡선이면 끝점 비례 이동으로 모양 보존.
-        // STL transform 컨텍스트에서도 cps 는 affected loop 의 결과
-        // (옛 push 없는 STL 표면 위) 와 다른 push 레벨이라 follow 에서
-        // 일관되게 다시 set 해야 한다.
-        if (child.curveControlPoints) {
-          if (
-            isStraightCps(
-              child.base,
-              child.curveControlPoints,
-              child.contact,
-            )
-          ) {
-            updates.curveControlPoints = straightCps(newBase, newContact);
-          } else {
-            const dB: [number, number, number] = [
-              newBase[0] - child.base[0],
-              newBase[1] - child.base[1],
-              newBase[2] - child.base[2],
-            ];
-            const dC: [number, number, number] = [
-              newContact[0] - child.contact[0],
-              newContact[1] - child.contact[1],
-              newContact[2] - child.contact[2],
-            ];
-            const cps = child.curveControlPoints;
-            const n = cps.length;
-            updates.curveControlPoints = cps.map(
-              (cp, i): [number, number, number] => {
-                const t = (i + 1) / (n + 1);
-                const w0 = 1 - t;
-                return [
-                  cp[0] + dB[0] * w0 + dC[0] * t,
-                  cp[1] + dB[1] * w0 + dC[1] * t,
-                  cp[2] + dB[2] * w0 + dC[2] * t,
-                ];
-              },
-            );
-          }
-        }
-
-        if (Object.keys(updates).length > 0) {
-          await patchSupport(child.id, updates);
-        }
-      }
-    },
-    [supports, patchSupport],
-  );
-
-  const handleMoveBridgeControlPoint = useCallback(
-    async (
-      supportId: string,
-      idx: number,
-      pos: [number, number, number],
-    ) => {
-      const target = supports.find((s) => s.id === supportId);
-      if (!target || !target.curveControlPoints) return;
-      const oldCps = target.curveControlPoints;
-      if (idx < 0 || idx >= oldCps.length) return;
-      const newCps: typeof oldCps = oldCps.map((p) => [...p] as [number, number, number]);
-      newCps[idx] = pos;
-
-      // 자동 우회 호출 X — 사용자가 끈 위치를 그대로 보존.
-      // 모델 안 침투 시 사용자가 직접 변곡점을 다시 조정한다.
-
-      await patchSupport(supportId, { curveControlPoints: newCps });
-      await followAttachedChildren(
-        supportId,
-        target.base,
-        newCps,
-        target.contact,
-      );
-
-      useUndoStore.getState().push({
-        label: "move-bridge-cp",
-        undo: async () => {
-          await patchSupport(supportId, { curveControlPoints: oldCps });
-        },
-        redo: async () => {
-          await patchSupport(supportId, { curveControlPoints: newCps });
-        },
-      });
-    },
-    [supports, patchSupport, followAttachedChildren],
-  );
-
-  const handleMoveBridgeEndpoint = useCallback(
-    async (
-      supportId: string,
-      which: "base" | "contact",
-      pos: [number, number, number],
-    ) => {
-      const target = supports.find((s) => s.id === supportId);
-      if (!target || target.source !== "bridge") return;
-
-      const oldBase = target.base;
-      const oldContact = target.contact;
-      const oldCps = target.curveControlPoints;
-
-      const newBase: [number, number, number] =
-        which === "base" ? pos : oldBase;
-      const newContact: [number, number, number] =
-        which === "contact" ? pos : oldContact;
-
-      // 변곡점 비례 이동: t = 0.25 / 0.50 / 0.75 위치 기준으로
-      // (Δbase × (1-t)) + (Δcontact × t) 만큼 함께 이동.
-      // 사용자가 휘어놓은 곡선 모양이 그대로 유지된다.
-      let newCps = oldCps;
-      if (oldCps) {
-        const dBase: [number, number, number] = [
-          newBase[0] - oldBase[0],
-          newBase[1] - oldBase[1],
-          newBase[2] - oldBase[2],
-        ];
-        const dContact: [number, number, number] = [
-          newContact[0] - oldContact[0],
-          newContact[1] - oldContact[1],
-          newContact[2] - oldContact[2],
-        ];
-        const n = oldCps.length;
-        newCps = oldCps.map((cp, i): [number, number, number] => {
-          const t = (i + 1) / (n + 1);
-          const w0 = 1 - t;
-          return [
-            cp[0] + dBase[0] * w0 + dContact[0] * t,
-            cp[1] + dBase[1] * w0 + dContact[1] * t,
-            cp[2] + dBase[2] * w0 + dContact[2] * t,
-          ];
-        });
-
-        // 자동 우회 호출 X — 사용자가 끈 위치를 그대로 보존.
-        // (끝점 이동 시 변곡점 모양은 비례 이동 결과 그대로 유지.)
-      }
-
-      const patch: Parameters<typeof patchSupport>[1] = {
-        base: newBase,
-        contact: newContact,
-      };
-      if (newCps) patch.curveControlPoints = newCps;
-      await patchSupport(supportId, patch);
-      await followAttachedChildren(supportId, newBase, newCps, newContact);
-
-      useUndoStore.getState().push({
-        label: "move-bridge-endpoint",
-        undo: async () => {
-          const undoPatch: Parameters<typeof patchSupport>[1] = {
-            base: oldBase,
-            contact: oldContact,
-          };
-          if (oldCps) undoPatch.curveControlPoints = oldCps;
-          await patchSupport(supportId, undoPatch);
-        },
-        redo: async () => {
-          await patchSupport(supportId, patch);
-        },
-      });
-    },
-    [supports, patchSupport, followAttachedChildren],
-  );
-
-  // Bridge tube 더블클릭 시 그 위치에 변곡점 추가.
-  const handleAddBridgeControlPoint = useCallback(
-    async (supportId: string, hitPoint: [number, number, number]) => {
-      const target = supports.find((s) => s.id === supportId);
-      if (!target || target.source !== "bridge") return;
-      const oldCps = target.curveControlPoints ?? [];
-      // hit point 의 t 비율 계산 후 그 위치에 삽입.
-      const t = findClosestT(
-        target.base,
-        oldCps.length > 0 ? oldCps : undefined,
-        target.contact,
-        hitPoint,
-      );
-      const newCps = insertControlPoint(
-        target.base,
-        oldCps.length > 0 ? oldCps : undefined,
-        target.contact,
-        t,
-      );
-      await patchSupport(supportId, { curveControlPoints: newCps });
-      await followAttachedChildren(
-        supportId,
-        target.base,
-        newCps,
-        target.contact,
-      );
-      useUndoStore.getState().push({
-        label: "add-bridge-cp",
-        undo: async () => {
-          if (oldCps.length === 0) {
-            await patchSupport(supportId, { curveControlPoints: [] });
-          } else {
-            await patchSupport(supportId, { curveControlPoints: oldCps });
-          }
-        },
-        redo: async () => {
-          await patchSupport(supportId, { curveControlPoints: newCps });
-        },
-      });
-    },
-    [supports, patchSupport, followAttachedChildren],
-  );
-
-  // 선택된 변곡점 제거 (Delete 키).
-  const handleRemoveBridgeControlPoint = useCallback(
-    async (supportId: string, idx: number) => {
-      const target = supports.find((s) => s.id === supportId);
-      if (!target || target.source !== "bridge" || !target.curveControlPoints) {
-        return;
-      }
-      const oldCps = target.curveControlPoints;
-      if (idx < 0 || idx >= oldCps.length) return;
-      const newCps = removeControlPoint(oldCps, idx);
-      await patchSupport(supportId, { curveControlPoints: newCps });
-      await followAttachedChildren(
-        supportId,
-        target.base,
-        newCps,
-        target.contact,
-      );
-      setSelectedCp(null);
-      useUndoStore.getState().push({
-        label: "remove-bridge-cp",
-        undo: async () => {
-          await patchSupport(supportId, { curveControlPoints: oldCps });
-        },
-        redo: async () => {
-          await patchSupport(supportId, { curveControlPoints: newCps });
-        },
-      });
-    },
-    [supports, patchSupport, followAttachedChildren],
-  );
-
-  const handleDeleteSelectedSupport = useCallback(() => {
-    // Support 모드: 변곡점 > 서포트 순으로 제거.
-    if (editMode === "support") {
-      if (selectedCp) {
-        void handleRemoveBridgeControlPoint(
-          selectedCp.supportId,
-          selectedCp.idx,
-        );
-        return;
-      }
-      if (!selectedSupportId) return;
-      void handleRemoveSupport(selectedSupportId);
-      return;
-    }
-    // Select 모드: 선택된 STL 들 모두 제거.
-    if (editMode === "select" && selectedIds.size > 0) {
-      const ids = Array.from(selectedIds);
-      setSelectedIds(new Set());
-      void (async () => {
-        for (const id of ids) await removeStlFile(id);
-        // STL 삭제는 DB cascade 로 그 STL 의 서포트도 같이 사라지지만
-        // useSupportsV2 state 가 stale 이라 명시적 refresh 필요.
-        await refreshSupports();
-      })();
-    }
-  }, [
-    editMode,
-    selectedSupportId,
-    selectedCp,
-    selectedIds,
-    handleRemoveSupport,
-    handleRemoveBridgeControlPoint,
-    removeStlFile,
-    refreshSupports,
-  ]);
-
-  // 선택된 STL 을 복제한다 (P5 컨텍스트 메뉴 · Select 모드).
-  //   handlePaste 와 동일하게 "addCopySuffix + addStlFile" 경로로 새 STL 을 추가하되,
-  //   소스는 클립보드가 아니라 현재 선택이다 — 사용자 Ctrl+C 클립보드는 건드리지 않는다.
-  //   원본에서 XZ +5mm 오프셋해 겹침을 피한다 (자동배치는 건드리지 않음).
-  const handleDuplicateSelected = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    const sources = files.filter((f) => selectedIds.has(f.id));
-    const newIds: string[] = [];
-    for (const src of sources) {
-      const created = await addStlFile(
-        addCopySuffix(src.fileName, files),
-        src.blob,
-      );
-      // 원본 transform 을 복제하고 XZ 로 +5mm 이동해 원본 위에 겹치지 않게 한다.
-      const base = src.transform ?? IDENTITY_TRANSFORM;
-      await updateTransform(created.id, {
-        ...base,
-        tx: base.tx + 5,
-        tz: base.tz + 5,
-      });
-      newIds.push(created.id);
-    }
-    setSelectedIds(new Set(newIds));
-  }, [files, selectedIds, addStlFile, updateTransform]);
-
-  // ----- 우클릭 컨텍스트 메뉴 (P5) -----
-  //   프루사와 동일하게 짧은 우클릭=메뉴, 우드래그=팬 으로 구분한다.
-  //   pointerdown(우) 좌표를 기록 → pointerup(우) 이동량<임계값이면 메뉴 오픈.
-  //   contextmenu 이벤트는 preventDefault 로 죽여 브라우저 기본 메뉴/팬 충돌을 없앤다.
-  const CTX_MENU_DRAG_THRESHOLD_PX = 5;
-  const handleViewportPointerDown = useCallback((e: React.PointerEvent) => {
-    if (e.button === 2) {
-      rightDownRef.current = { x: e.clientX, y: e.clientY };
-    }
-  }, []);
-  const handleViewportPointerUp = useCallback(
-    (e: React.PointerEvent) => {
-      if (e.button !== 2) return;
-      const start = rightDownRef.current;
-      rightDownRef.current = null;
-      if (!start) return;
-      const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
-      // 이동량이 크면 우드래그(팬) 로 간주 — 메뉴를 열지 않는다.
-      if (moved > CTX_MENU_DRAG_THRESHOLD_PX) return;
-      // 선택된 모델이 있을 때만 메뉴를 연다 (빈 공간 우클릭 → 메뉴 없음).
-      if (editMode !== "select" || selectedIds.size === 0) return;
-      setCtxMenu({ x: e.clientX, y: e.clientY });
-    },
-    [editMode, selectedIds],
-  );
-
-  // 선택된 Bridge 의 변곡점 3 개를 base→contact 직선상 균등 분할
-  // 위치로 reset. 사용자가 휘어놓은 곡선을 한 번에 직선으로 복원.
-  const handleResetBridgeCurve = useCallback(async () => {
-    if (!selectedSupportId) return;
-    const target = supports.find((s) => s.id === selectedSupportId);
-    if (!target || target.source !== "bridge" || !target.curveControlPoints) {
-      return;
-    }
-    const oldCps = target.curveControlPoints;
-    // 기존 개수 유지하여 직선 reset (cps 길이 보존).
-    const newCps = straightCps(target.base, target.contact, oldCps.length);
-    await patchSupport(selectedSupportId, { curveControlPoints: newCps });
-    // attached child 도 follow.
-    await followAttachedChildren(
-      selectedSupportId,
-      target.base,
-      newCps,
-      target.contact,
-    );
-
-    useUndoStore.getState().push({
-      label: "reset-bridge-curve",
-      undo: async () => {
-        await patchSupport(selectedSupportId, { curveControlPoints: oldCps });
-      },
-      redo: async () => {
-        await patchSupport(selectedSupportId, { curveControlPoints: newCps });
-      },
-    });
-  }, [
-    selectedSupportId,
-    supports,
-    patchSupport,
-    followAttachedChildren,
-  ]);
-
-  useShortcutHandler("delete", handleDeleteSelectedSupport);
-
-  // ----- 마스크 ZIP 내보내기 -----
-  const handleExportMasksZip = useCallback(async () => {
-    const handle = sceneHandleRef.current;
-    if (!handle || files.length === 0) return;
-    if (batchExport.busy) return;
-    setBatchExport({ busy: true, done: 0, total: 0 });
-    try {
-      // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열로 직렬화해 전달.
-      const meshes = handle.getSliceGeometry();
-      const topY = handle.getSceneTopY();
-      const blob = await sliceBatchService.exportPngZip(
-        meshes,
-        {
-          layerHeightMm: slicePreview.layerHeightMm,
-          widthPx: printerProfile.lcdWidthPx,
-          heightPx: printerProfile.lcdHeightPx,
-          plateWidthMm: printerProfile.buildVolumeMm[0],
-          plateDepthMm: printerProfile.buildVolumeMm[1],
-          topY,
-          // 프로파일에 노광 설정이 있을 때만 manifest 에 노광 배열 동봉 (기존 프로파일 하위 호환).
-          exposure: profileExposure(printerProfile),
-        },
-        (done, total) => setBatchExport({ busy: true, done, total }),
-      );
-      // blob null = 빈 씬(topY<=0) 등으로 슬라이스할 레이어가 없음. 무음으로 끝나면
-      //   사용자가 왜 파일이 안 나오는지 알 수 없으므로 안내한다.
-      if (!blob) {
-        // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-        window.alert("내보낼 레이어가 없습니다. 모델이 빌드 영역 안에 있는지 확인하세요.");
-        return;
-      }
-      const safe = (project?.name ?? "project").replace(
-        /[\\/:*?"<>|]/g,
-        "_",
-      );
-      const lh = slicePreview.layerHeightMm.toFixed(3).replace(".", "_");
-      downloadBlob(blob, `${safe}_layers_${lh}mm.zip`);
-    } catch (e) {
-      // 사용자 취소(CancelError)는 정상 흐름이라 조용히 넘긴다. 그 외 오류만
-      //   사용자에게 안내 (unhandled rejection 방지 + 피드백).
-      //   취소 판별은 메시지 문자열이 아니라 name 으로 한다(마감 검수 권고).
-      if (e instanceof Error && e.name === "CancelError") return;
-      const msg = e instanceof Error ? e.message : String(e);
-      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-      window.alert(`마스크 ZIP 내보내기에 실패했습니다.\n${msg}`);
-    } finally {
-      setBatchExport({ busy: false, done: 0, total: 0 });
-    }
-  }, [
-    files.length,
-    project?.name,
-    slicePreview.layerHeightMm,
-    batchExport.busy,
-    printerProfile,
-  ]);
-
-  // ----- .ctb v4 내보내기 -----
-  const handleExportCtb = useCallback(async () => {
-    const handle = sceneHandleRef.current;
-    if (!handle || files.length === 0) return;
-    if (batchExport.busy) return;
-    setBatchExport({ busy: true, done: 0, total: 0 });
-    try {
-      // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열로 직렬화해 전달.
-      const meshes = handle.getSliceGeometry();
-      const topY = handle.getSceneTopY();
-      const blob = await sliceBatchService.exportCtb(
-        meshes,
-        {
-          layerHeightMm: slicePreview.layerHeightMm,
-          widthPx: printerProfile.lcdWidthPx,
-          heightPx: printerProfile.lcdHeightPx,
-          plateWidthMm: printerProfile.buildVolumeMm[0],
-          plateDepthMm: printerProfile.buildVolumeMm[1],
-          topY,
-        },
-        {
-          bedSizeZMm: printerProfile.buildVolumeMm[2],
-          // 프로파일에 값이 없으면 undefined → 인코더 기본값 사용 (기존 산출물과 동일).
-          exposureSec: printerProfile.exposureSec,
-          bottomExposureSec: printerProfile.bottomExposureSec,
-          bottomLayerCount: printerProfile.bottomLayerCount,
-          transitionLayerCount: printerProfile.transitionLayerCount,
-          // 리프트/딜레이 — 미지정 시 워커에서 DEFAULT_*(v1) 폴백. CTB 기록과 예상 시간이 같은 값 기준.
-          lightOffDelaySec: printerProfile.lightOffDelaySec,
-          liftDistanceMm: printerProfile.liftDistanceMm,
-          liftSpeedMmS: printerProfile.liftSpeedMmS,
-          retractSpeedMmS: printerProfile.retractSpeedMmS,
-        },
-        (done, total) => setBatchExport({ busy: true, done, total }),
-      );
-      // blob null = 빈 씬(topY<=0) 등으로 슬라이스할 레이어가 없음 (마스크 ZIP 과 동일).
-      if (!blob) {
-        // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-        window.alert("내보낼 레이어가 없습니다. 모델이 빌드 영역 안에 있는지 확인하세요.");
-        return;
-      }
-      const safe = (project?.name ?? "project").replace(
-        /[\\/:*?"<>|]/g,
-        "_",
-      );
-      downloadBlob(blob, `${safe}_v3.ctb`);
-    } catch (e) {
-      // 취소(CancelError)는 조용히, 그 외 오류만 안내 (마스크 ZIP 과 동일 정책).
-      //   취소 판별은 메시지 문자열이 아니라 name 으로 한다(마감 검수 권고).
-      if (e instanceof Error && e.name === "CancelError") return;
-      const msg = e instanceof Error ? e.message : String(e);
-      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-      window.alert(`.ctb 내보내기에 실패했습니다.\n${msg}`);
-    } finally {
-      setBatchExport({ busy: false, done: 0, total: 0 });
-    }
-  }, [
-    files.length,
-    project?.name,
-    slicePreview.layerHeightMm,
-    batchExport.busy,
-    printerProfile,
-  ]);
-
-  // ----- FDM G-code 내보내기 (감사 A5 — 워커로 이동) -----
-  // 이전엔 SliceSidePanel 이 메인스레드 동기(exportFdmGcode)로 조립해 대형
-  // 모델에서 수십 초 프리즈 + busy 가드 부재였다. 이제 마스크 ZIP/CTB 와 동일한
-  // 워커 브릿지(진행률/취소/busy 가드)를 재사용한다.
-  const handleExportGcode = useCallback(async () => {
-    const handle = sceneHandleRef.current;
-    if (!handle || files.length === 0) return;
-    if (batchExport.busy) return;
-
-    // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열 + 범위 + 설정을 준비.
-    const input = handle.getFdmSliceInput();
-    if (!input) {
-      // 모델이 없거나 유효 슬라이스 범위가 없음 (동기 경로의 null 반환과 동일 상황).
-      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-      window.alert("내보낼 G-code 가 없습니다. 모델을 먼저 불러오세요.");
-      return;
-    }
-
-    setBatchExport({ busy: true, done: 0, total: 0 });
-    try {
-      const gcode = await sliceBatchService.exportGcode(
-        input.meshes,
-        input.settings,
-        input.range,
-        (done, total) => setBatchExport({ busy: true, done, total }),
-      );
-      // gcode null = 슬라이스할 레이어가 없음 (getFdmSliceInput 이 이미 걸러내므로
-      //   보통 도달하지 않지만, 방어적으로 안내).
-      if (!gcode) {
-        window.alert("내보낼 G-code 가 없습니다. 모델을 먼저 불러오세요.");
-        return;
-      }
-      const blob = new Blob([gcode], { type: "text/plain" });
-      const safe = (project?.name ?? "project").replace(/[\\/:*?"<>|]/g, "_");
-      downloadBlob(blob, `${safe}.gcode`);
-    } catch (e) {
-      // 사용자 취소(CancelError)는 정상 흐름 — 조용히 넘긴다. 그 외 오류만 안내.
-      //   (메시지 문자열이 아니라 name 으로 판별 — 마감 검수 권고.)
-      if (e instanceof Error && e.name === "CancelError") return;
-      const msg = e instanceof Error ? e.message : String(e);
-      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-      window.alert(`G-code 내보내기에 실패했습니다.\n${msg}`);
-    } finally {
-      setBatchExport({ busy: false, done: 0, total: 0 });
-    }
-  }, [
-    files.length,
-    project?.name,
-    batchExport.busy,
-  ]);
-
-  // ----- STL 내보내기 -----
-  // Chrome/Edge 의 File System Access API (showSaveFilePicker) 우선 사용 —
-  // 사용자가 매 저장 시 위치 직접 선택 (작업 디렉토리 등). 다운로드 폴더
-  // 안 거쳐서 보안 프로그램 우회. 미지원 브라우저는 기존 downloadBlob fallback.
-  const handleExportStl = useCallback(async () => {
-    if (files.length === 0) return;
-    const blob = sceneHandleRef.current?.exportStl();
-    if (!blob) return;
-    const safe = (project?.name ?? "project").replace(/[\\/:*?"<>|]/g, "_");
-    const suffix = supports.length > 0 ? "_supported" : "";
-    const fileName = `${safe}${suffix}.stl`;
-
-    const w = window as unknown as {
-      showSaveFilePicker?: (opts: {
-        suggestedName?: string;
-        types?: {
-          description?: string;
-          accept: Record<string, string[]>;
-        }[];
-      }) => Promise<{
-        createWritable: () => Promise<{
-          write: (data: Blob) => Promise<void>;
-          close: () => Promise<void>;
-        }>;
-      }>;
-    };
-
-    if (typeof w.showSaveFilePicker === "function") {
-      try {
-        const handle = await w.showSaveFilePicker({
-          suggestedName: fileName,
-          types: [
-            {
-              description: "STL binary",
-              accept: { "model/stl": [".stl"] },
-            },
-          ],
-        });
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        return;
-      } catch (e) {
-        // 사용자 취소 (AbortError) → 그대로 종료, fallback X.
-        if ((e as { name?: string })?.name === "AbortError") return;
-        // 기타 오류 → fallback.
-      }
-    }
-
-    downloadBlob(blob, fileName);
-  }, [files.length, project?.name, supports.length]);
-
-  const handleClearAllSupports = useCallback(async () => {
-    if (!projectId) return;
-    if (supports.length === 0) return;
-    const snapshot: SupportPointV2[] = supports.slice();
-    await clearAllSupports();
-    useUndoStore.getState().push({
-      label: "clear-supports",
-      undo: async () => {
-        await addSupports(snapshot);
-      },
-      redo: async () => {
-        await clearAllSupports();
-      },
-    });
-  }, [projectId, supports, clearAllSupports, addSupports]);
-
-  // ----- Dental 브러쉬 색칠 -----
-  // 씬이 색칠 변경을 통지 → stlId 별 painted face 목록 갱신. 빈 목록이면 제거.
-  const handlePaintedFacesChange = useCallback(
-    (stlId: string, faceIds: number[]) => {
-      setPaintedFaces((prev) => {
-        const next = { ...prev };
-        if (faceIds.length === 0) delete next[stlId];
-        else next[stlId] = faceIds;
-        return next;
-      });
-    },
-    [],
-  );
-
-  const handleClearDentalPaint = useCallback(() => {
-    sceneHandleRef.current?.clearDentalPaint();
-    setPaintedFaces({});
-    // clearDentalPaint 는 씬에서 마진·아일랜드 시각화도 함께 정리하므로 상태도 초기화.
-    setMarginStatus(null);
-    setIslandStatus(null);
-  }, []);
-
-  // BabylonScene 이 STL 변형·색칠 변경으로 마진·아일랜드 검출 결과를 내부에서
-  //   무효화했을 때(감사 B1/B3) 호출된다. 씬 쪽 시각화·ref 는 이미 정리됐으므로
-  //   여기서는 UI 상태만 초기 상태로 되돌려 "재검출 필요"를 명시적으로 표시한다.
-  //   marginStatus/islandStatus 는 현재 단일 슬롯(B4 기지 한계)이라 stlId 무관하게
-  //   둘 다 리셋한다 (콜백 시그니처의 stlId 는 향후 다중 슬롯 대비용으로만 전달됨).
-  const handleDentalResultsInvalidated = useCallback(() => {
-    setMarginStatus(null);
-    setIslandStatus(null);
-  }, []);
-
-  // ----- Dental 마진 찾기 (2-3b) -----
-  //   씬에서 색칠 영역 → findMargin → 초록 튜브 시각화. 성공/실패 사유를
-  //   패널 문구로 표시. painted 0 이면 패널 버튼이 비활성이라 여기 도달 X.
-  const handleFindMargin = useCallback(() => {
-    if (marginBusy) return;
-    // 1) busy 라벨을 먼저 커밋 → React 가 "찾는 중…" 을 페인트.
-    setMarginBusy(true);
-    // 2) 동기 검출(findDentalMargin, ~24s)은 다음 페인트 프레임 뒤로 미뤄, 위 setState
-    //    가 실제로 렌더·페인트된 뒤에 시작한다. 같은 tick 에서 바로 호출하면 busy
-    //    라벨이 페인트되기 전에 메인스레드가 막혀 화면이 정지한 것처럼 보인다.
-    //    requestAnimationFrame(다음 프레임 직전) → setTimeout(0)(프레임 커밋 후) 로
-    //    라벨 페인트를 보장한 뒤 동기 작업을 시작한다.
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-      try {
-        const res = sceneHandleRef.current?.findDentalMargin();
-        if (!res) return;
-        if (res.ok) {
-          setMarginStatus({
-            ok: true,
-            message: `마진 검출 완료 · 마진 엣지 ${res.stats.marginEdgeCount}개 (색칠 ${res.stats.paintedFaceCount}면)`,
-          });
-        } else {
-          setMarginStatus({ ok: false, message: res.reason });
-        }
-      } finally {
-        setMarginBusy(false);
-      }
-      }, 0);
-    });
-  }, [marginBusy]);
-
-  const handleClearMargin = useCallback(() => {
-    sceneHandleRef.current?.clearDentalMargin();
-    setMarginStatus(null);
-  }, []);
-
-  // ----- Dental 아일랜드 검출 (2-3c) -----
-  //   활성 STL 전체를 슬라이스 → detectSliceIslands → 마젠타 overlay.
-  //   레이어 높이는 슬라이스 프리뷰가 쓰는 값(slicePreview.layerHeightMm)을 재사용.
-  const handleDetectIslands = useCallback(() => {
-    if (islandBusy) return;
-    // busy 라벨을 먼저 페인트한 뒤(감사 #1) 동기 검출(수백 초)을 시작한다.
-    //   findMargin 과 동일한 rAF→setTimeout(0) 순서로 라벨 페인트를 보장한다.
-    setIslandBusy(true);
-    // 이전 자동 서포트 결과 문구는 재검출 시 무효 → 정리.
-    setIslandSupportResult(null);
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        try {
-          const res = sceneHandleRef.current?.detectDentalIslands(
-            slicePreview.layerHeightMm,
-          );
-          if (!res) return;
-          if (res.ok) {
-            setIslandStatus({
-              ok: true,
-              totalIslandFaces: res.stats.totalIslandFaces,
-              nSlices: res.stats.nSlices,
-              layersWithIsland: res.stats.layersWithIsland,
-            });
-          } else {
-            setIslandStatus({ ok: false, message: res.reason });
-          }
-        } finally {
-          setIslandBusy(false);
-        }
-      }, 0);
-    });
-  }, [slicePreview.layerHeightMm, islandBusy]);
-
-  const handleClearIslands = useCallback(() => {
-    sceneHandleRef.current?.clearDentalIslands();
-    setIslandStatus(null);
-    setIslandSupportResult(null);
-  }, []);
-
-  // ----- 검출 영역 자동 서포트 (Step 2-4, ADR-3: 검출→생성 파이프라인) -----
-  //   아일랜드 검출 결과의 island 영역에만 자동 서포트를 생성한다. BabylonScene 이
-  //   faceFilter + 마진 가드까지 적용해 점을 반환하면, 여기서 기존 자동 생성 배선
-  //   (addSupports → undo push)과 동일 패턴으로 저장한다.
-  const handleAutoSupportIslands = useCallback(async () => {
-    if (!projectId || islandSupportBusy) return;
-    setIslandSupportBusy(true);
-    setIslandSupportResult(null);
-    try {
-      const generated =
-        sceneHandleRef.current?.autoSupportIslands(projectId, supportParams) ??
-        null;
-      // null = 아일랜드 검출 결과 없음. 빈 배열 = 검출됐으나 생성점 0 (가드 배제 등).
-      if (!generated || generated.length === 0) {
-        // 생성 0개도 무통지이던 문제(감사 #5) — 배제 사유를 짧게 알린다.
-        if (generated) {
-          setIslandSupportResult(
-            "검출 영역에서 생성할 서포트가 없습니다 (마진 가드 등으로 배제).",
-          );
-        }
-        return;
-      }
-
-      const ids = generated.map((p) => p.id);
-      await addSupports(generated);
-      // 완료 통지 (감사 #5) — Support 탭의 "현재 N 개" 로 연결됨을 안내.
-      setIslandSupportResult(
-        `서포트 ${generated.length}개 생성됨 · Support 탭 "현재 개수" 에 반영`,
-      );
-
-      // 생성 성공 → 아일랜드 검출 상태 소진 (감사 B6). 씬 쪽은 autoSupportIslands
-      //   내부에서 마젠타 overlay + islandResultRef 를 이미 정리했다. 여기서 페이지
-      //   islandStatus 를 null 로 되돌리면 DentalPanel 의 "검출 영역 자동 서포트"
-      //   버튼이 자연스럽게 비활성화되어, 같은 자리에 중복 생성/stale 재사용을 막는다
-      //   (재생성하려면 명시적 재검출 필요). 마진 상태는 건드리지 않는다.
-      setIslandStatus(null);
-
-      useUndoStore.getState().push({
-        label: "island-auto-supports",
-        undo: async () => {
-          for (const id of ids) {
-            await supportRepo.deleteSupport(id);
-          }
-          await refreshSupports();
-        },
-        redo: async () => {
-          await addSupports(generated);
-        },
-      });
-    } finally {
-      setIslandSupportBusy(false);
-    }
-  }, [
-    projectId,
-    islandSupportBusy,
-    supportParams,
-    addSupports,
-    refreshSupports,
-  ]);
-
-  // ----- Transform -----
-  const handlePreviewTransform = useCallback(
-    (id: string, t: TransformV2) => {
-      sceneHandleRef.current?.previewTransform(id, t);
-    },
-    [],
-  );
-
-  const handleCommitTransform = useCallback(
-    (id: string, start: TransformV2, end: TransformV2) => {
-      // STL 이 변형됐으므로 world 좌표 기반 마진·아일랜드 검출 결과를 무효화한다
-      //   (감사 B1). gizmo/드래그/수치입력(TransformPanel)/바닥면정렬이 모두 이
-      //   handleCommitTransform 으로 수렴하므로 무효화를 여기 한 곳에 배선한다.
-      sceneHandleRef.current?.invalidateDentalResults(id);
-      // 즉시 DB 반영. (그 사이 메쉬는 이미 preview 로 반영돼 있음)
-      void updateTransform(id, end);
-
-      // 부착된 서포트도 transform delta 만큼 같이 이동시킨다.
-      //   단점/auto: contact, base 둘 다 동일 변환.
-      //   Bridge   : 자기 쪽 끝점만 변환 + 변곡점은 끝점 비례 이동.
-      //
-      // 영향 받는 서포트: stlId == id (contact 쪽) 또는 baseStlId == id
-      // (Bridge base 쪽). closure stale 방지 위해 ref 사용.
-      const currentSupports = supportsRef.current;
-      const affected = currentSupports.filter(
-        // stl-local 좌표 supports 는 mesh.parent 가 자동 follow → patch X.
-        (s) =>
-          s.coordSpace !== "stl-local" &&
-          (s.stlId === id || s.baseStlId === id),
-      );
-
-
-      type CpsArr = [number, number, number][];
-      type SupportPatch = {
-        contact: [number, number, number];
-        base: [number, number, number];
-        curveControlPoints?: CpsArr;
-      };
-      const oldStates: { id: string; patch: SupportPatch }[] = [];
-      const newPatches: { id: string; patch: SupportPatch }[] = [];
-
-      for (const sup of affected) {
-        const isBridge = sup.source === "bridge";
-        const contactSide = sup.stlId === id;
-        // Bridge 는 base 도 다른 STL 에 부착돼있어 양쪽 따라가지만,
-        // 단점/auto 는 base 가 빌드플레이트 (또는 다른 STL 상단) 라
-        // 회전을 함께 적용하면 비스듬해진다.
-        const baseSide = sup.baseStlId === id;
-
-        // main/sub 통합: 모든 Bridge endpoint 를 STL transform 적용.
-        // sub Bridge 의 attached 끝점은 follow 단계에서 부모 path 위
-        // 정확한 t 위치로 다시 덮어씀 → 일관된 최종 좌표.
-        const newContact = contactSide
-          ? transformPointBetween(sup.contact, start, end)
-          : sup.contact;
-        let newBase: [number, number, number];
-        if (isBridge) {
-          newBase = baseSide
-            ? transformPointBetween(sup.base, start, end)
-            : sup.base;
-        } else if (contactSide) {
-          // 단점/auto: contact 는 모델 따라 이동, base 는 새 contact 의
-          // 수직 아래 (자기 모델 제외하고 가장 가까운 표면 또는 Y=0).
-          const groundY =
-            sceneHandleRef.current?.findSurfaceBelow(
-              newContact[0],
-              newContact[2],
-              newContact[1] - 0.01,
-              [sup.stlId],
-            ) ?? 0;
-          newBase = [newContact[0], groundY, newContact[2]];
-        } else {
-          newBase = sup.base;
-        }
-
-        let newCps: CpsArr | undefined = sup.curveControlPoints
-          ? sup.curveControlPoints.map(
-              (p) => [...p] as [number, number, number],
-            )
-          : undefined;
-
-        if (isBridge && sup.curveControlPoints) {
-          // 변곡점도 STL local 좌표로 부착. main/sub 동일 처리. sub 의
-          // 경우 follow 가 부모 path 따라 다시 보정.
-          const cps = sup.curveControlPoints;
-          const nn = cps.length;
-          newCps = cps.map((cp, i): [number, number, number] => {
-            const t = (i + 1) / (nn + 1);
-            const useBaseSide = t < 0.5;
-            const stlSide = useBaseSide ? baseSide : contactSide;
-            if (stlSide) {
-              return transformPointBetween(cp, start, end);
-            }
-            return cp;
-          });
-        }
-
-        const oldPatch: SupportPatch = {
-          contact: sup.contact,
-          base: sup.base,
-        };
-        if (sup.curveControlPoints) {
-          oldPatch.curveControlPoints = sup.curveControlPoints;
-        }
-        const newPatch: SupportPatch = {
-          contact: newContact,
-          base: newBase,
-        };
-        if (newCps) newPatch.curveControlPoints = newCps;
-
-        oldStates.push({ id: sup.id, patch: oldPatch });
-        newPatches.push({ id: sup.id, patch: newPatch });
-      }
-
-      // 부모 Bridge 의 새 path 정보 (follow 호출용).
-      type FollowInfo = {
-        parentId: string;
-        base: [number, number, number];
-        contact: [number, number, number];
-        cps?: CpsArr;
-      };
-      const follows: FollowInfo[] = [];
-      for (let i = 0; i < affected.length; i++) {
-        const sup = affected[i];
-        if (sup.source !== "bridge") continue;
-        const p = newPatches[i].patch;
-        follows.push({
-          parentId: sup.id,
-          base: p.base,
-          contact: p.contact,
-          cps: p.curveControlPoints,
-        });
-      }
-
-
-      void (async () => {
-        await Promise.all(
-          newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
-        );
-        // 변환된 부모 Bridge 들의 새 path 로 부착된 child 들도 따라옴.
-        for (const f of follows) {
-          await followAttachedChildren(f.parentId, f.base, f.cps, f.contact);
-        }
-        // sub Bridge (양 끝 모두 attached) 정확 보정 — newPatches 의
-        // 부모 new path 를 직접 활용해 한 번에 contact + base + cps
-        // 모두 set. follow 가 부모마다 따로 호출되어 race 발생하던
-        // 케이스 해결.
-        const subBridges = supportsRef.current.filter(
-          (s) =>
-            s.source === "bridge" &&
-            s.contactAttachedTo?.supportId &&
-            s.baseAttachedTo?.supportId,
-        );
-        for (const sub of subBridges) {
-          const cParent = newPatches.find(
-            (p) => p.id === sub.contactAttachedTo!.supportId,
-          );
-          const bParent = newPatches.find(
-            (p) => p.id === sub.baseAttachedTo!.supportId,
-          );
-          if (!cParent || !bParent) continue;
-          const newContact = getBridgePathPoint(
-            cParent.patch.base,
-            cParent.patch.curveControlPoints,
-            cParent.patch.contact,
-            sub.contactAttachedTo!.t,
-          );
-          const newBase = getBridgePathPoint(
-            bParent.patch.base,
-            bParent.patch.curveControlPoints,
-            bParent.patch.contact,
-            sub.baseAttachedTo!.t,
-          );
-          const updates: Parameters<typeof patchSupport>[1] = {
-            contact: newContact,
-            base: newBase,
-          };
-          if (sub.curveControlPoints) {
-            updates.curveControlPoints = straightCps(
-              newBase,
-              newContact,
-              sub.curveControlPoints.length,
-            );
-          }
-          await patchSupport(sub.id, updates);
-        }
-      })();
-
-      // Undo entry: STL transform + 모든 영향 받은 서포트 복원/재적용.
-      useUndoStore.getState().push({
-        label: "transform",
-        undo: async () => {
-          // undo 도 STL 을 다시 이동시키므로 검출 결과 무효화 (감사 B1).
-          sceneHandleRef.current?.invalidateDentalResults(id);
-          await updateTransform(id, start);
-          await Promise.all(
-            oldStates.map(({ id: sid, patch }) => patchSupport(sid, patch)),
-          );
-        },
-        redo: async () => {
-          // redo 도 마찬가지로 무효화 (감사 B1).
-          sceneHandleRef.current?.invalidateDentalResults(id);
-          await updateTransform(id, end);
-          await Promise.all(
-            newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
-          );
-        },
-      });
-    },
-    [updateTransform, supports, patchSupport, followAttachedChildren],
-  );
 
   if (!projectId) {
     return <Navigate to="/v2/projects" replace />;
   }
-
-  // ----- 파일 추가/삭제 -----
-  // 브라우저 네이티브 파일 열기 / 드래그앤드롭 공통 저장 경로.
-  // addStlFile → repo.createStlFile → IndexedDB.
-  // 여러 파일을 순차 저장하고 새로 추가된 파일 전체를 선택 상태로 만든다.
-  async function addNativeFiles(fileList: File[]) {
-    const stlFiles = fileList.filter((f) =>
-      f.name.toLowerCase().endsWith(".stl"),
-    );
-    // .stl 이 아니라 걸러진 파일이 있으면 어떤 파일이 제외됐는지 알린다.
-    const rejected = fileList.filter(
-      (f) => !f.name.toLowerCase().endsWith(".stl"),
-    );
-    if (rejected.length > 0) {
-      window.alert(
-        `STL 파일이 아닙니다: ${rejected.map((f) => f.name).join(", ")}`,
-      );
-    }
-    // 전체가 걸러졌으면 위 알림만 하고 종료 (무음 실패 방지).
-    if (stlFiles.length === 0) return;
-    const newIds: string[] = [];
-    for (const file of stlFiles) {
-      try {
-        // File 은 Blob 의 서브타입이라 blob 으로 그대로 전달 가능.
-        const created = await addStlFile(file.name, file);
-        newIds.push(created.id);
-      } catch (err) {
-        // IndexedDB 저장 실패 등 — 어떤 파일이 왜 실패했는지 알린다.
-        const msg = err instanceof Error ? err.message : String(err);
-        window.alert(`파일을 저장하지 못했습니다: ${file.name} — ${msg}`);
-      }
-    }
-    if (newIds.length > 0) setSelectedIds(new Set(newIds));
-  }
-
-  // 숨김 input 을 통한 "내 PC에서 열기".
-  function handleNativeInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const picked = e.target.files ? Array.from(e.target.files) : [];
-    // 같은 파일을 다시 선택해도 onChange 가 발생하도록 value 초기화.
-    e.target.value = "";
-    void addNativeFiles(picked);
-  }
-
-  // ----- 드래그앤드롭 (뷰어 영역) -----
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    // canvas 등 자식 요소로 이동하는 경우는 무시하고, 컨테이너 바깥으로
-    // 실제로 벗어날 때만 해제. relatedTarget 이 main 안에 없으면 이탈.
-    const related = e.relatedTarget as Node | null;
-    if (!related || !e.currentTarget.contains(related)) {
-      setIsDragOver(false);
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-    // dataTransfer.files 가 비면 OneDrive 온라인 전용 파일이나 바로가기를
-    // 드롭한 경우일 수 있다 (리드 환경 진단용 안내).
-    if (e.dataTransfer.files.length === 0) {
-      window.alert(
-        "가져올 파일이 없습니다 — OneDrive 온라인 전용 파일이거나 바로가기일 수 있습니다",
-      );
-      return;
-    }
-    const dropped = Array.from(e.dataTransfer.files);
-    void addNativeFiles(dropped);
-  };
 
   async function handleRemove(id: string) {
     await removeStlFile(id);
@@ -1835,77 +362,28 @@ const ViewerV2Page: React.FC = () => {
 
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
-      <header className="bg-white border-b">
-        <div className="px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <button
-              onClick={() => navigate("/v2/projects")}
-              className="text-sm text-gray-600 hover:text-gray-900"
-            >
-              ← Projects
-            </button>
-            <h1 className="text-lg font-semibold text-gray-900">
-              {project?.name ?? (loading ? "Loading…" : "Unknown project")}
-            </h1>
-            {project && (
-              <span className="text-xs text-gray-500 font-mono">
-                {project.code}
-              </span>
-            )}
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <PrinterProfileSelect onEdit={() => setProfileDialogOpen(true)} />
-            <button
-              onClick={() => {
-                setSlicePreview((s) => {
-                  if (!s.on) {
-                    const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
-                    setSceneTopY(top);
-                  }
-                  return { ...s, on: !s.on };
-                });
-              }}
-              className={`px-3 py-1 text-sm border rounded transition-colors ${
-                slicePreview.on
-                  ? "bg-primary-600 text-white border-primary-600"
-                  : "text-primary-700 border-primary-600 hover:bg-primary-50"
-              }`}
-            >
-              슬라이스 미리보기
-            </button>
-            <button
-              onClick={handleExportStl}
-              disabled={files.length === 0}
-              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              STL 내보내기
-            </button>
-            <button
-              onClick={() => setGhDialog("save")}
-              disabled={!projectId}
-              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              title="현재 프로젝트 전체 (STL + 서포트 + 변환) 를 GitHub 에 저장"
-            >
-              GitHub 저장
-            </button>
-            <button
-              onClick={() => setGhDialog("load")}
-              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 transition-colors"
-              title="GitHub 에서 저장된 프로젝트 불러오기"
-            >
-              GitHub 불러오기
-            </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors"
-              title="브라우저 파일 선택 창으로 내 PC 의 STL 을 엽니다 (백엔드 불필요)"
-            >
-              STL 열기
-            </button>
-          </div>
-        </div>
-      </header>
+      <ViewerHeader
+        project={project}
+        loading={loading}
+        projectId={projectId}
+        filesLength={files.length}
+        slicePreviewOn={slicePreview.on}
+        onBackToProjects={() => navigate("/v2/projects")}
+        onEditProfile={() => setProfileDialogOpen(true)}
+        onToggleSlicePreview={() =>
+          setSlicePreview((s) => {
+            if (!s.on) {
+              const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
+              setSceneTopY(top);
+            }
+            return { ...s, on: !s.on };
+          })
+        }
+        onExportStl={handleExportStl}
+        onGithubSave={() => setGhDialog("save")}
+        onGithubLoad={() => setGhDialog("load")}
+        onOpenStl={() => fileInputRef.current?.click()}
+      />
 
       {/* 네이티브 파일 열기용 숨김 input — 버튼 클릭으로 트리거. */}
       <input
@@ -1932,8 +410,8 @@ const ViewerV2Page: React.FC = () => {
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          onPointerDown={handleViewportPointerDown}
-          onPointerUp={handleViewportPointerUp}
+          onPointerDown={support.handleViewportPointerDown}
+          onPointerUp={support.handleViewportPointerUp}
           onContextMenu={(e) => e.preventDefault()}
         >
           <BabylonScene
@@ -1949,21 +427,21 @@ const ViewerV2Page: React.FC = () => {
             plateWidthMm={printerProfile.buildVolumeMm[0]}
             plateDepthMm={printerProfile.buildVolumeMm[1]}
             editMode={editMode}
-            onAddSupportAt={handleAddSupportAt}
+            onAddSupportAt={support.handleAddSupportAt}
             onPickSupport={setSelectedSupportId}
             selectedSupportId={selectedSupportId}
-            onMoveSupport={handleMoveSupport}
+            onMoveSupport={support.handleMoveSupport}
             pendingBridgePoint={pendingBridge?.contact ?? null}
             bridgeMode={bridgeMode}
             sliceY={slicePreview.on ? sliceYNow : null}
-            onMoveBridgeControlPoint={handleMoveBridgeControlPoint}
-            onMoveBridgeEndpoint={handleMoveBridgeEndpoint}
+            onMoveBridgeControlPoint={support.handleMoveBridgeControlPoint}
+            onMoveBridgeEndpoint={support.handleMoveBridgeEndpoint}
             onDoublePickStl={(id) => {
               setSelectedIds(new Set([id]));
               setGizmoMode("rotate");
             }}
             onDoublePickBridgeTube={(supportId, hit) =>
-              void handleAddBridgeControlPoint(supportId, hit)
+              void support.handleAddBridgeControlPoint(supportId, hit)
             }
             onSelectBridgeControlPoint={(supportId, idx) =>
               setSelectedCp({ supportId, idx })
@@ -1978,161 +456,54 @@ const ViewerV2Page: React.FC = () => {
               handleCommitTransform(id, oldT, newT);
               setAlignFloorMode(false); // 한 번 사용 후 자동 OFF
             }}
-            brushThicknessMm={brushThicknessMm}
-            onPaintedFacesChange={handlePaintedFacesChange}
-            onBrushThicknessChange={setBrushThicknessMm}
-            onDentalResultsInvalidated={handleDentalResultsInvalidated}
+            brushThicknessMm={dental.brushThicknessMm}
+            onPaintedFacesChange={dental.handlePaintedFacesChange}
+            onBrushThicknessChange={dental.setBrushThicknessMm}
+            onDentalResultsInvalidated={dental.handleDentalResultsInvalidated}
           />
 
-          {/* 우측 상단 stack: 모든 overlay 컨트롤 / 정보 패널 */}
-          <div className="absolute top-3 right-3 flex flex-col items-end gap-2 max-w-[calc(100%-1.5rem)]">
-            <ViewControls
-              onSetView={(p) => sceneHandleRef.current?.setView(p)}
-              onFit={() => sceneHandleRef.current?.fit()}
-            />
-
-            <GizmoControls
-              mode={gizmoMode}
-              onChange={setGizmoMode}
-              enabled={selectedIds.size === 1 && editMode === "select"}
-            />
-
-            {gizmoMode === "rotate" && editMode === "select" && (
-              <button
-                onClick={() => setAlignFloorMode((v) => !v)}
-                className={`px-3 py-1.5 text-xs rounded-md shadow border transition-colors ${
-                  alignFloorMode
-                    ? "bg-primary-600 text-white border-primary-600"
-                    : "bg-white/95 backdrop-blur border-gray-200 text-gray-700 hover:bg-gray-100"
-                }`}
-                title="모델의 한 face 를 클릭하면 그 면이 바닥에 닿도록 회전 + Y 이동"
-              >
-                {alignFloorMode ? "면 클릭 대기..." : "바닥면 붙이기"}
-              </button>
-            )}
-
-            <EditModeControls
-              mode={editMode}
-              onChange={(m) => {
-                setEditMode(m);
-                setSelectedCp(null);
-                // support 전용 상태는 support 모드가 아닐 때 정리.
-                if (m !== "support") {
-                  setSelectedSupportId(null);
-                  setBridgeMode(false);
-                  setDiscMode(false);
-                  setPendingBridge(null);
-                }
-                // 모드 진입 시 우측 패널을 해당 탭으로 전환 (Dental·Support 일관, 감사 #4).
-                if (m === "dental-brush") setPanelTab("dental");
-                if (m === "support") setPanelTab("support");
-              }}
-            />
-
-            {selectedIds.size === 1 &&
-              editMode === "select" &&
-              (() => {
-                const id = Array.from(selectedIds)[0];
-                const f = files.find((file) => file.id === id);
-                if (!f) return null;
-                const t = f.transform ?? IDENTITY_TRANSFORM;
-                return (
-                  <div className="bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs font-mono text-gray-700 pointer-events-none">
-                    <div className="text-[10px] text-gray-500 mb-0.5 font-sans">
-                      {f.fileName}
-                    </div>
-                    <div>
-                      <span className="text-red-500">X</span>{" "}
-                      {t.tx.toFixed(2)} mm
-                    </div>
-                    <div>
-                      <span className="text-green-600">Y</span>{" "}
-                      {t.ty.toFixed(2)} mm
-                    </div>
-                    <div>
-                      <span className="text-blue-500">Z</span>{" "}
-                      {t.tz.toFixed(2)} mm
-                    </div>
-                  </div>
-                );
-              })()}
-
-          {editMode === "support" && (
-            <div className="flex items-center gap-3 bg-white/95 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700">
-              {bridgeMode ? (
-                <span className="pointer-events-none">
-                  <strong>Bridge 모드</strong> ·{" "}
-                  {pendingBridge
-                    ? "두 번째 지점을 클릭"
-                    : "첫 번째 지점을 클릭"}{" "}
-                  · <kbd className="px-1 border rounded">Esc</kbd> = 취소
-                </span>
-              ) : discMode ? (
-                <span className="pointer-events-none">
-                  <strong>디스크 서포트 모드</strong> · 모델 표면 = 배치 ·
-                  기둥 클릭 = 선택 ·{" "}
-                  <kbd className="px-1 border rounded">Delete</kbd> = 삭제
-                </span>
-              ) : (
-                <span className="pointer-events-none">
-                  <strong>서포트 편집</strong> · 모델 표면 = 추가 · 기둥 클릭
-                  = 선택 · <kbd className="px-1 border rounded">Delete</kbd> =
-                  삭제
-                </span>
-              )}
-              <button
-                onClick={() => {
-                  setBridgeMode((v) => !v);
-                  setDiscMode(false); // bridge 와 disc 는 상호 배타.
-                  setPendingBridge(null);
-                }}
-                className={`px-2 py-0.5 text-xs border rounded transition-colors ${
-                  bridgeMode
-                    ? "bg-primary-600 text-white border-primary-600"
-                    : "border-primary-600 text-primary-700 hover:bg-primary-50"
-                }`}
-              >
-                Bridge
-              </button>
-              <button
-                onClick={() => {
-                  setDiscMode((v) => !v);
-                  setBridgeMode(false); // disc 와 bridge 는 상호 배타.
-                  setPendingBridge(null);
-                }}
-                className={`px-2 py-0.5 text-xs border rounded transition-colors ${
-                  discMode
-                    ? "bg-primary-600 text-white border-primary-600"
-                    : "border-primary-600 text-primary-700 hover:bg-primary-50"
-                }`}
-                title="지현규 dental disc 서포트 — 모델 표면 클릭으로 배치"
-              >
-                Disc
-              </button>
-              <button
-                onClick={() => void handleResetBridgeCurve()}
-                disabled={
-                  !selectedSupportId ||
-                  bridgeMode ||
-                  supports.find((s) => s.id === selectedSupportId)?.source !==
-                    "bridge"
-                }
-                className="px-2 py-0.5 text-xs border border-gray-400 text-gray-700 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                title="선택된 Bridge 의 변곡점을 직선 균등 분할로 복원"
-              >
-                직선 복원
-              </button>
-              <button
-                onClick={handleDeleteSelectedSupport}
-                disabled={!selectedSupportId || bridgeMode}
-                className="px-2 py-0.5 text-xs bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              >
-                선택 삭제
-              </button>
-            </div>
-          )}
-          </div>
-          {/* 우측 상단 stack 끝 */}
+          <ViewportOverlays
+            files={files}
+            selectedIds={selectedIds}
+            editMode={editMode}
+            gizmoMode={gizmoMode}
+            alignFloorMode={alignFloorMode}
+            bridgeMode={bridgeMode}
+            discMode={discMode}
+            pendingBridge={pendingBridge}
+            selectedSupportId={selectedSupportId}
+            supports={supports}
+            onSetView={(p) => sceneHandleRef.current?.setView(p)}
+            onFit={() => sceneHandleRef.current?.fit()}
+            onGizmoModeChange={setGizmoMode}
+            onToggleAlignFloor={() => setAlignFloorMode((v) => !v)}
+            onEditModeChange={(m) => {
+              setEditMode(m);
+              setSelectedCp(null);
+              // support 전용 상태는 support 모드가 아닐 때 정리.
+              if (m !== "support") {
+                setSelectedSupportId(null);
+                setBridgeMode(false);
+                setDiscMode(false);
+                setPendingBridge(null);
+              }
+              // 모드 진입 시 우측 패널을 해당 탭으로 전환 (Dental·Support 일관, 감사 #4).
+              if (m === "dental-brush") setPanelTab("dental");
+              if (m === "support") setPanelTab("support");
+            }}
+            onToggleBridge={() => {
+              setBridgeMode((v) => !v);
+              setDiscMode(false); // bridge 와 disc 는 상호 배타.
+              setPendingBridge(null);
+            }}
+            onToggleDisc={() => {
+              setDiscMode((v) => !v);
+              setBridgeMode(false); // disc 와 bridge 는 상호 배타.
+              setPendingBridge(null);
+            }}
+            onResetBridgeCurve={() => void support.handleResetBridgeCurve()}
+            onDeleteSelected={handleDeleteSelectedSupport}
+          />
 
           {files.length === 0 && !isDragOver && (
             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-center pointer-events-none">
@@ -2153,51 +524,12 @@ const ViewerV2Page: React.FC = () => {
             </div>
           )}
 
-          {/* 우측 하단 stack: 색 범례 / 축 + 플레이트 정보 */}
-          <div className="absolute bottom-3 right-3 flex flex-col items-end gap-2">
-            {files.length > 0 && (
-              <div className="bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-1 pointer-events-none">
-                <div className="flex items-center space-x-2">
-                  <span
-                    className="inline-block w-3 h-3 rounded-sm"
-                    style={{ background: "rgb(255, 82, 82)" }}
-                  />
-                  <span>Overhang (≤ {overhangAngleDeg}°)</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <span
-                    className="inline-block w-3 h-3 rounded-sm"
-                    style={{ background: "rgb(199, 202, 212)" }}
-                  />
-                  <span>Safe</span>
-                </div>
-              </div>
-            )}
-
-            <div className="bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-600 pointer-events-none">
-              <div className="flex items-center space-x-2">
-                <span
-                  className="inline-block w-3 h-1 rounded"
-                  style={{ background: "rgb(255,77,77)" }}
-                />
-                <span>X</span>
-                <span
-                  className="inline-block w-3 h-1 rounded ml-2"
-                  style={{ background: "rgb(77,230,102)" }}
-                />
-                <span>Y (위)</span>
-                <span
-                  className="inline-block w-3 h-1 rounded ml-2"
-                  style={{ background: "rgb(89,140,255)" }}
-                />
-                <span>Z</span>
-              </div>
-              <div className="mt-1 text-gray-500">
-                플레이트 {printerProfile.buildVolumeMm[0].toFixed(1)} ×{" "}
-                {printerProfile.buildVolumeMm[1].toFixed(1)} mm · 격자 10 mm
-              </div>
-            </div>
-          </div>
+          <ViewportInfoPanels
+            filesLength={files.length}
+            overhangAngleDeg={overhangAngleDeg}
+            plateWidthMm={printerProfile.buildVolumeMm[0]}
+            plateDepthMm={printerProfile.buildVolumeMm[1]}
+          />
         </main>
 
         {slicePreview.on && (
@@ -2231,79 +563,45 @@ const ViewerV2Page: React.FC = () => {
           />
         )}
 
-        <aside className="w-80 border-l bg-white overflow-y-auto flex flex-col">
-          {error && (
-            <p className="text-red-600 text-sm m-4">
-              프로젝트 조회 실패: {error.message}
-            </p>
+        <ViewerSidePanel
+          error={error}
+          panelTab={panelTab}
+          onPanelTabChange={setPanelTab}
+          transformPanelSelected={transformPanelSelected}
+          onPreviewTransform={handlePreviewTransform}
+          onCommitTransform={handleCommitTransform}
+          onAutoGenerate={support.handleAutoGenerate}
+          onClearAllSupports={support.handleClearAllSupports}
+          supportCount={supports.length}
+          autoBusy={autoBusy}
+          editMode={editMode}
+          onToggleBrush={(active) => {
+            setEditMode(active ? "dental-brush" : "select");
+            setSelectedCp(null);
+            setSelectedSupportId(null);
+            setBridgeMode(false);
+            setDiscMode(false);
+            setPendingBridge(null);
+          }}
+          brushThicknessMm={dental.brushThicknessMm}
+          onBrushThicknessChange={dental.setBrushThicknessMm}
+          onClearPaint={dental.handleClearDentalPaint}
+          paintedFaceCount={Object.values(dental.paintedFaces).reduce(
+            (sum, ids) => sum + ids.length,
+            0,
           )}
-          {/* 탭: Transform / Support / Dental */}
-          <div className="flex border-b border-gray-200 bg-gray-50 sticky top-0 z-10">
-            {(["transform", "support", "dental"] as const).map((t) => (
-              <button
-                key={t}
-                onClick={() => setPanelTab(t)}
-                className={`flex-1 py-2 text-sm font-medium transition-colors ${
-                  panelTab === t
-                    ? "bg-white text-primary-700 border-b-2 border-primary-600 -mb-px"
-                    : "text-gray-500 hover:bg-gray-100"
-                }`}
-              >
-                {t === "transform"
-                  ? "Transform"
-                  : t === "support"
-                    ? "Support"
-                    : "Dental"}
-              </button>
-            ))}
-          </div>
-          <div className="p-4">
-            {panelTab === "transform" ? (
-              <TransformPanel
-                selected={transformPanelSelected}
-                onPreview={handlePreviewTransform}
-                onCommit={handleCommitTransform}
-              />
-            ) : panelTab === "support" ? (
-              <SupportParamsPanel
-                onAutoGenerate={handleAutoGenerate}
-                onClearAll={handleClearAllSupports}
-                supportCount={supports.length}
-                busy={autoBusy}
-              />
-            ) : (
-              <DentalPanel
-                brushActive={editMode === "dental-brush"}
-                onToggleBrush={(active) => {
-                  setEditMode(active ? "dental-brush" : "select");
-                  setSelectedCp(null);
-                  setSelectedSupportId(null);
-                  setBridgeMode(false);
-                  setDiscMode(false);
-                  setPendingBridge(null);
-                }}
-                brushThicknessMm={brushThicknessMm}
-                onBrushThicknessChange={setBrushThicknessMm}
-                onClearPaint={handleClearDentalPaint}
-                paintedFaceCount={Object.values(paintedFaces).reduce(
-                  (sum, ids) => sum + ids.length,
-                  0,
-                )}
-                onFindMargin={handleFindMargin}
-                marginBusy={marginBusy}
-                onClearMargin={handleClearMargin}
-                marginStatus={marginStatus}
-                onDetectIslands={handleDetectIslands}
-                islandBusy={islandBusy}
-                onClearIslands={handleClearIslands}
-                islandStatus={islandStatus}
-                onAutoSupportIslands={handleAutoSupportIslands}
-                autoSupportBusy={islandSupportBusy}
-                autoSupportResult={islandSupportResult}
-              />
-            )}
-          </div>
-        </aside>
+          onFindMargin={dental.handleFindMargin}
+          marginBusy={dental.marginBusy}
+          onClearMargin={dental.handleClearMargin}
+          marginStatus={dental.marginStatus}
+          onDetectIslands={dental.handleDetectIslands}
+          islandBusy={dental.islandBusy}
+          onClearIslands={dental.handleClearIslands}
+          islandStatus={dental.islandStatus}
+          onAutoSupportIslands={dental.handleAutoSupportIslands}
+          autoSupportBusy={dental.islandSupportBusy}
+          autoSupportResult={dental.islandSupportResult}
+        />
       </div>
 
       <PrinterProfileDialog
@@ -2331,28 +629,12 @@ const ViewerV2Page: React.FC = () => {
         onClose={() => setCtxMenu(null)}
         items={[
           { label: "삭제", onClick: handleDeleteSelectedSupport },
-          { label: "복제", onClick: () => void handleDuplicateSelected() },
+          { label: "복제", onClick: () => void support.handleDuplicateSelected() },
           { label: "줌 투 핏", onClick: zoomFit },
         ]}
       />
-
     </div>
   );
 };
-
-function addCopySuffix(name: string, existing: { fileName: string }[]): string {
-  const existingNames = new Set(existing.map((e) => e.fileName));
-  if (!existingNames.has(name)) return name;
-  const dotIdx = name.lastIndexOf(".");
-  const stem = dotIdx > 0 ? name.slice(0, dotIdx) : name;
-  const ext = dotIdx > 0 ? name.slice(dotIdx) : "";
-  let candidate = `${stem} (copy)${ext}`;
-  let i = 2;
-  while (existingNames.has(candidate)) {
-    candidate = `${stem} (copy ${i})${ext}`;
-    i++;
-  }
-  return candidate;
-}
 
 export default ViewerV2Page;
