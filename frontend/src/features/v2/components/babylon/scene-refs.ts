@@ -145,6 +145,9 @@ export interface SceneCtx {
   autoFillOverlayRef: MutableRefObject<Mesh[]>;
   islandResultRef: MutableRefObject<IslandResultSlim | null>;
   islandMarkersRef: MutableRefObject<Mesh[]>;
+  // ── 서포트 재설계(S-4) 검출·점생성 시각화 (신규, 기존 island 슬롯과 별개) ──
+  //   재설계 오버레이(아일랜드/오버행 색 + 서포트 점 구) 메쉬 목록. dispose 대상.
+  redesignMarkersRef: MutableRefObject<Mesh[]>;
   pendingInvalidationsRef: MutableRefObject<
     Map<string, ReturnType<typeof setTimeout>>
   >;
@@ -243,6 +246,8 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
   const autoFillOverlayRef = useRef<Mesh[]>([]);
   const islandResultRef = useRef<IslandResultSlim | null>(null);
   const islandMarkersRef = useRef<Mesh[]>([]);
+  // 서포트 재설계(S-4) 검출·점 시각화 메쉬 (신규 — 기존 island 슬롯과 독립).
+  const redesignMarkersRef = useRef<Mesh[]>([]);
   // 색칠 변경에 따른 마진·아일랜드 무효화(감사 B3)의 지연 실행 타이머 맵.
   //   ⚠️ 컴포넌트 레벨 ref — 검출 함수가 pending 을 취소할 수 있어야 신선 결과
   //   파괴 레이스를 막는다 (브러쉬 effect 로컬 Map 으로 내리면 회귀).
@@ -322,6 +327,7 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
     autoFillOverlayRef,
     islandResultRef,
     islandMarkersRef,
+    redesignMarkersRef,
     pendingInvalidationsRef,
     isUnmountingRef,
     selectedSupportRef,

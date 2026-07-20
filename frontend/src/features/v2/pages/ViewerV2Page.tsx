@@ -601,6 +601,10 @@ const ViewerV2Page: React.FC = () => {
           onAutoSupportIslands={dental.handleAutoSupportIslands}
           autoSupportBusy={dental.islandSupportBusy}
           autoSupportResult={dental.islandSupportResult}
+          onRunRedesignDetect={dental.handleRunRedesignDetect}
+          redesignBusy={dental.redesignBusy}
+          onClearRedesignDetect={dental.handleClearRedesignDetect}
+          redesignStatus={dental.redesignStatus}
         />
       </div>
 

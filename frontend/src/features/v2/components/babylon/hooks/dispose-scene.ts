@@ -69,6 +69,8 @@ export function disposeScene(
   //   동일 이유. scene.dispose 로 mesh 는 사라지나 ref 는 stale 로 남는다).
   ctx.islandMarkersRef.current = [];
   ctx.islandResultRef.current = null;
+  // 서포트 재설계(S-4) 오버레이 ref 도 명시적으로 비운다 (island ref 와 동일 이유).
+  ctx.redesignMarkersRef.current = [];
   ctx.furnitureRef.current?.dispose();
   ctx.furnitureRef.current = null;
   hl.dispose();

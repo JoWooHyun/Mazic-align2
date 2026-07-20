@@ -82,6 +82,10 @@ export function useDentalWorkflow({
   const [islandSupportResult, setIslandSupportResult] = useState<string | null>(
     null,
   );
+  // 서포트 재설계(S-4) 검출·점생성 진행/결과 상태 (검증용 병행 경로).
+  const [redesignBusy, setRedesignBusy] = useState(false);
+  const [redesignStatus, setRedesignStatus] =
+    useState<{ ok: boolean; message: string } | null>(null);
 
   // ----- Dental 브러쉬 색칠 -----
   // 씬이 색칠 변경을 통지 → stlId 별 painted face 목록 갱신. 빈 목록이면 제거.
@@ -168,6 +172,38 @@ export function useDentalWorkflow({
     setIslandSupportResult(null);
   }, [sceneHandleRef]);
 
+  // ----- 서포트 재설계(S-4) 검출·점생성 (설계 8장 1~2단계, 검증용 병행 경로) -----
+  //   기존 아일랜드 경로와 독립. 활성 STL 을 층 그래프로 검출 → 아일랜드/오버행
+  //   색 표시 → 검출 영역에서 직접 서포트 점 생성(크기별 3분기) → 점만 구로 표시.
+  //   기둥은 세우지 않는다(2단계). 점을 IndexedDB 에 저장하지 않는다 — 저장하면
+  //   useSupportMeshSync 가 기둥을 세워 "점만" 원칙(설계 8장 2단계)에 어긋난다.
+  //   liftMm 는 진단서 "리프트로 뜬 모델 바닥 전체 아일랜드 오검출" 방지(수용 C).
+  const handleRunRedesignDetect = useCallback(() => {
+    if (redesignBusy) return;
+    runWithBusy(setRedesignBusy, () => {
+      const res = sceneHandleRef.current?.runRedesignDetect(projectId ?? "", {
+        layerHeightMm,
+        liftMm: supportParams.liftMm,
+      });
+      if (!res) return;
+      if (res.ok) {
+        setRedesignStatus({
+          ok: true,
+          message:
+            `아일랜드 ${res.stats.islandCount} · 오버행 ${res.stats.overhangCount} · ` +
+            `서포트 점 ${res.stats.pointCount}개 (층 ${res.stats.nLayers})`,
+        });
+      } else {
+        setRedesignStatus({ ok: false, message: res.reason });
+      }
+    });
+  }, [redesignBusy, projectId, layerHeightMm, supportParams.liftMm, sceneHandleRef]);
+
+  const handleClearRedesignDetect = useCallback(() => {
+    sceneHandleRef.current?.clearRedesignDetect();
+    setRedesignStatus(null);
+  }, [sceneHandleRef]);
+
   // ----- 검출 영역 자동 서포트 (Step 2-4, ADR-3: 검출→생성 파이프라인) -----
   //   아일랜드 검출 결과의 island 영역에만 자동 서포트를 생성한다. BabylonScene 이
   //   faceFilter + 마진 가드까지 적용해 점을 반환하면, 여기서 기존 자동 생성 배선
@@ -242,6 +278,8 @@ export function useDentalWorkflow({
     islandBusy,
     islandSupportBusy,
     islandSupportResult,
+    redesignBusy,
+    redesignStatus,
     // 핸들러
     handlePaintedFacesChange,
     handleClearDentalPaint,
@@ -251,5 +289,7 @@ export function useDentalWorkflow({
     handleDetectIslands,
     handleClearIslands,
     handleAutoSupportIslands,
+    handleRunRedesignDetect,
+    handleClearRedesignDetect,
   };
 }
