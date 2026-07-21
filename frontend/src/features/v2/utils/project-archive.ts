@@ -148,25 +148,29 @@ export async function importProjectArchive(
   }
 
   // 3) Supports — id / stlId / baseStlId / attachedTo.supportId 모두 remap.
-  const newSupports: SupportPointV2[] = meta.supports.map((s) => ({
-    ...s,
-    id: newId(s.id),
-    projectId: newProjectId,
-    stlId: newId(s.stlId),
-    baseStlId: s.baseStlId ? newId(s.baseStlId) : undefined,
-    contactAttachedTo: s.contactAttachedTo
-      ? {
-          supportId: newId(s.contactAttachedTo.supportId),
-          t: s.contactAttachedTo.t,
-        }
-      : undefined,
-    baseAttachedTo: s.baseAttachedTo
-      ? {
-          supportId: newId(s.baseAttachedTo.supportId),
-          t: s.baseAttachedTo.t,
-        }
-      : undefined,
-  }));
+  //   폐기된 dental disc 서포트(variant==="disc") 레코드는 조용히 걸러낸다
+  //   (옛 아카이브 하위 호환 — 마이그레이션 불필요, 무시만).
+  const newSupports: SupportPointV2[] = meta.supports
+    .filter((s) => (s as { variant?: string }).variant !== "disc")
+    .map((s) => ({
+      ...s,
+      id: newId(s.id),
+      projectId: newProjectId,
+      stlId: newId(s.stlId),
+      baseStlId: s.baseStlId ? newId(s.baseStlId) : undefined,
+      contactAttachedTo: s.contactAttachedTo
+        ? {
+            supportId: newId(s.contactAttachedTo.supportId),
+            t: s.contactAttachedTo.t,
+          }
+        : undefined,
+      baseAttachedTo: s.baseAttachedTo
+        ? {
+            supportId: newId(s.baseAttachedTo.supportId),
+            t: s.baseAttachedTo.t,
+          }
+        : undefined,
+    }));
   await supportRepo.addSupports(newSupports);
 
   return { projectId: newProjectId };

@@ -1,28 +1,24 @@
-// 서포트 편집 모드 툴바 — Bridge/Disc 토글, 직선 복원, 선택 삭제 + 모드 안내 문구.
+// 서포트 편집 모드 툴바 — Bridge 토글, 직선 복원, 선택 삭제 + 모드 안내 문구.
 // (ViewerV2Page 의 editMode==="support" 오버레이 마크업 그대로 추출.)
 
 import type { SupportPointV2 } from "../../../support/types";
 
 interface SupportEditToolbarProps {
   bridgeMode: boolean;
-  discMode: boolean;
   pendingBridge: unknown | null;
   selectedSupportId: string | null;
   supports: SupportPointV2[];
   onToggleBridge: () => void;
-  onToggleDisc: () => void;
   onResetBridgeCurve: () => void;
   onDeleteSelected: () => void;
 }
 
 export default function SupportEditToolbar({
   bridgeMode,
-  discMode,
   pendingBridge,
   selectedSupportId,
   supports,
   onToggleBridge,
-  onToggleDisc,
   onResetBridgeCurve,
   onDeleteSelected,
 }: SupportEditToolbarProps) {
@@ -35,12 +31,6 @@ export default function SupportEditToolbar({
             ? "두 번째 지점을 클릭"
             : "첫 번째 지점을 클릭"}{" "}
           · <kbd className="px-1 border rounded">Esc</kbd> = 취소
-        </span>
-      ) : discMode ? (
-        <span className="pointer-events-none">
-          <strong>디스크 서포트 모드</strong> · 모델 표면 = 배치 ·
-          기둥 클릭 = 선택 ·{" "}
-          <kbd className="px-1 border rounded">Delete</kbd> = 삭제
         </span>
       ) : (
         <span className="pointer-events-none">
@@ -58,17 +48,6 @@ export default function SupportEditToolbar({
         }`}
       >
         Bridge
-      </button>
-      <button
-        onClick={onToggleDisc}
-        className={`px-2 py-0.5 text-xs border rounded transition-colors ${
-          discMode
-            ? "bg-primary-600 text-white border-primary-600"
-            : "border-primary-600 text-primary-700 hover:bg-primary-50"
-        }`}
-        title="지현규 dental disc 서포트 — 모델 표면 클릭으로 배치"
-      >
-        Disc
       </button>
       <button
         onClick={onResetBridgeCurve}

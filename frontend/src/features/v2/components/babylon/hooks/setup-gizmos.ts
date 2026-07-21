@@ -130,17 +130,6 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
     if (started.kind === "support") {
       const sMesh = ctx.supportMeshMapRef.current.get(started.id);
       if (!sMesh) return;
-      // disc 는 world-baked geometry (mesh.position = 원점)이라 trunk
-      //   처럼 position.x/z 로 base 이동을 표현할 수 없다. 좌표 손상을
-      //   막기 위해 disc 기둥 gizmo 이동은 무시한다 (선택·삭제는 유지).
-      //   재배치가 필요하면 삭제 후 다시 배치. (trunk 이동 경로 무변경.)
-      const sup = ctx.supportsRef.current.find((s) => s.id === started.id);
-      if (sup?.variant === "disc") {
-        // gizmo 가 옮긴 만큼 원위치로 되돌린다 (baked geometry 라
-        //   position=원점이 정상 상태 → 시각적 잔상 방지).
-        sMesh.position.set(0, 0, 0);
-        return;
-      }
       ctx.onMoveSupportRef.current(started.id, [
         sMesh.position.x,
         sMesh.position.z,

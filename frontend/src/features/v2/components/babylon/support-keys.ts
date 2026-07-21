@@ -33,21 +33,8 @@ export function buildSupportKey(
   const c = localContact.map(f).join(",");
   const b = localBase.map(f).join(",");
   const cps = localCps ? localCps.map((p) => p.map(f).join(",")).join(";") : "";
-  // disc variant 는 dental 치수 스냅샷도 key 에 반영 (형상 결정 요소).
-  //   trunk/bridge 는 discSettings 가 없어 빈 문자열 → 기존 key 와 동일.
-  const ds = point.discSettings;
-  const disc = ds
-    ? [
-        ds.tipTopDiameter,
-        ds.tipBottomDiameter,
-        ds.contactDepth,
-        ds.supportAngle,
-        ds.touchTipDistance,
-      ].join(",")
-    : "";
   return [
     point.source,
-    point.variant ?? "trunk",
     c,
     b,
     cps,
@@ -57,6 +44,5 @@ export function buildSupportKey(
     params.baseTransitionMm,
     params.tipTransitionMm,
     params.bridgeDiameterMm,
-    disc,
   ].join("|");
 }
