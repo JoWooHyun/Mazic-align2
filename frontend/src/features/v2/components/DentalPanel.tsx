@@ -94,6 +94,19 @@ interface DentalPanelProps {
    * 예: "서포트 12개 생성됨 …". 성공/배제 모두 이 문구로 통지.
    */
   autoSupportResult?: string | null;
+  /**
+   * 서포트 재설계(S-4) 검출·점생성 실행 (설계 8장 1~2단계, 검증용 병행 경로).
+   *   활성 STL 을 층 그래프로 검출 → 아일랜드/오버행 색 표시 → 검출 영역에서
+   *   직접 서포트 점 생성(크기별 3분기) → 점만 표시(기둥 없음). 기존 격자/아일랜드
+   *   경로와 독립. 정식 UI 는 설계 8장 5단계 몫이라 이 PR 은 디버그 버튼만.
+   */
+  onRunRedesignDetect?: () => void;
+  /** 재설계 검출·점생성 진행 중 여부 (버튼 비활성/문구). */
+  redesignBusy?: boolean;
+  /** 재설계 검출·점생성 시각화 지우기. */
+  onClearRedesignDetect?: () => void;
+  /** 재설계 검출·점생성 결과 상태 (없으면 미실행). ok=false → 실패 사유. */
+  redesignStatus?: { ok: boolean; message: string } | null;
   className?: string;
 }
 
@@ -115,6 +128,10 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
   onAutoSupportIslands,
   autoSupportBusy = false,
   autoSupportResult = null,
+  onRunRedesignDetect,
+  redesignBusy = false,
+  onClearRedesignDetect,
+  redesignStatus = null,
   className = "",
 }) => {
   const commitThickness = (raw: number) => {
@@ -307,6 +324,49 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
           비침범 가드 적용
         </p>
       </div>
+
+      {/* 서포트 재설계(S-4) 검출·점생성 — 설계 8장 1~2단계 (검증용 디버그) */}
+      {onRunRedesignDetect && (
+        <div className="mt-5 pt-4 border-t border-gray-200">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700">
+              서포트 재설계 (검증)
+            </span>
+            <span className="text-[10px] text-gray-400">S-4 · 1~2단계</span>
+          </div>
+          <button
+            onClick={onRunRedesignDetect}
+            disabled={redesignBusy}
+            className="w-full px-3 py-2 text-sm rounded bg-primary-600 text-white hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {redesignBusy ? "검출·점생성 중…" : "재설계 검출·점생성"}
+          </button>
+          <p className="mt-2 text-xs text-gray-500">
+            층 그래프로 아일랜드(마젠타)·오버행(주황)을 검출하고 검출 영역에 직접
+            서포트 점(파랑)을 생성 · 기둥은 세우지 않음(점만)
+          </p>
+
+          {redesignStatus && (
+            <p
+              className={`mt-2 text-xs ${
+                redesignStatus.ok ? "text-green-700" : "text-amber-600"
+              }`}
+            >
+              {redesignStatus.message}
+            </p>
+          )}
+
+          {onClearRedesignDetect && (
+            <button
+              onClick={onClearRedesignDetect}
+              disabled={!redesignStatus?.ok}
+              className="mt-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              재설계 표시 지우기
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };

@@ -57,6 +57,11 @@ interface ViewerSidePanelProps {
   onAutoSupportIslands: () => void;
   autoSupportBusy: boolean;
   autoSupportResult: string | null;
+  // 서포트 재설계(S-4) 검출·점생성 (검증용 병행 경로).
+  onRunRedesignDetect: () => void;
+  redesignBusy: boolean;
+  onClearRedesignDetect: () => void;
+  redesignStatus: { ok: boolean; message: string } | null;
 }
 
 export default function ViewerSidePanel({
@@ -87,6 +92,10 @@ export default function ViewerSidePanel({
   onAutoSupportIslands,
   autoSupportBusy,
   autoSupportResult,
+  onRunRedesignDetect,
+  redesignBusy,
+  onClearRedesignDetect,
+  redesignStatus,
 }: ViewerSidePanelProps) {
   return (
     <aside className="w-80 border-l bg-white overflow-y-auto flex flex-col">
@@ -148,6 +157,10 @@ export default function ViewerSidePanel({
             onAutoSupportIslands={onAutoSupportIslands}
             autoSupportBusy={autoSupportBusy}
             autoSupportResult={autoSupportResult}
+            onRunRedesignDetect={onRunRedesignDetect}
+            redesignBusy={redesignBusy}
+            onClearRedesignDetect={onClearRedesignDetect}
+            redesignStatus={redesignStatus}
           />
         )}
       </div>

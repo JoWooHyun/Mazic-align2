@@ -138,4 +138,21 @@ export interface SupportPointV2 {
     supportAngle: number;
     touchTipDistance: number;
   };
+  /**
+   * 서포트 재설계(S-4) 점 생성이 요구하는 팁(접점) 반경. mm.
+   *   설계 3-4 "서포트 점 목록" 계약의 "필요한 팁 반경" 항목. 작은 아일랜드는
+   *   가는 팁, 넓은 곳은 굵은 팁을 요구하도록 점 단위로 실린다. 옵셔널 —
+   *   기존 trunk/bridge/disc 서포트와 옛 데이터는 undefined (하위 호환).
+   *   3단계(기둥 세우기)에서 접점 굵기 입력으로 소비될 예정 (이 PR 범위 밖).
+   */
+  tipRadius?: number;
+  /**
+   * 서포트 재설계(S-4) 점의 검출 출처.
+   *   · 'island' : 아일랜드(공중에 뜬 조각) 검출에서 나온 점.
+   *   · 'slope'  : 오버행(처지는 가장자리) 검출에서 나온 점.
+   *   · 'manual' : 사용자가 손으로 찍은 점.
+   * source('auto'|'manual'|'bridge')와 직교한다. 옵셔널 — 기존/옛 데이터는
+   * undefined (하위 호환). 3단계에서 유형별 구조 규칙 분기에 쓰일 예정.
+   */
+  kind?: "island" | "slope" | "manual";
 }

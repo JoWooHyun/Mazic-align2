@@ -6,6 +6,7 @@ import type { SliceMask } from "../../utils/slice-rasterize";
 import type { FdmSettings } from "../../utils/gcode/types";
 import type { FindMarginStats } from "../../utils/dental/margin-detect";
 import type { SupportParams, SupportPointV2 } from "../../support/types";
+import type { RedesignDetectStats } from "./redesign-detect-actions";
 import type { EditMode } from "../EditModeControls";
 import type { ViewPreset } from "../../utils/camera-views";
 import type { STLFileV2 } from "../../types/stl";
@@ -350,6 +351,23 @@ export interface BabylonSceneHandle {
     projectId: string,
     params: SupportParams,
   ) => SupportPointV2[] | null;
+  /**
+   * 서포트 재설계(S-4) 1~2단계 실행 (설계 8장). 기존 dental island 경로와
+   * 독립된 별도 경로다 — 활성 STL 을 층 그래프로 검출(1단계)해 아일랜드/오버행을
+   * 색으로 표시하고, 검출 영역에서 직접 서포트 점을 생성(2단계, 크기별 3분기)해
+   * 점만(기둥 없이) 구로 표시한다. 생성된 점 목록을 반환한다(저장은 호출 측 몫 —
+   * 이 PR 은 검증용이라 호출 측에서 저장하지 않을 수도 있다). liftMm 는 진단서
+   * "리프트로 뜬 모델 바닥 전체 아일랜드 오검출" 방지(수용 C)를 위해 검출각과
+   * 함께 넘긴다.
+   */
+  runRedesignDetect: (
+    projectId: string,
+    opts: { layerHeightMm: number; liftMm: number },
+  ) =>
+    | { ok: true; points: SupportPointV2[]; stats: RedesignDetectStats }
+    | { ok: false; reason: string };
+  /** 서포트 재설계(S-4) 오버레이(아일랜드/오버행 색 + 점 구)를 모두 지운다. */
+  clearRedesignDetect: () => void;
 }
 
 /** 아일랜드 검출 요약 통계 (패널 표시용). 원본 onIslandDetectionComplete 페이로드 축약. */

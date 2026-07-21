@@ -20,6 +20,7 @@ import { buildTransformHandle } from "./babylon/handle/transform-handle";
 import { buildSupportGenHandle } from "./babylon/handle/support-gen-handle";
 import { buildSliceExportHandle } from "./babylon/handle/slice-export-handle";
 import { buildDentalHandle } from "./babylon/handle/dental-handle";
+import { buildRedesignDetectHandle } from "./babylon/handle/redesign-detect-handle";
 import type {
   BabylonSceneHandle,
   BabylonSceneProps,
@@ -96,6 +97,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
         ...buildSupportGenHandle(ctx),
         ...buildSliceExportHandle(ctx),
         ...buildDentalHandle(ctx),
+        ...buildRedesignDetectHandle(ctx),
       }),
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [],
