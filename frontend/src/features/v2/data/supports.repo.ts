@@ -1,6 +1,16 @@
 import { openDb, STORE_SUPPORTS } from "./db";
 import type { SupportPointV2 } from "../support/types";
 
+/**
+ * 폐기된 dental disc 서포트 레코드 판별 (하위 호환).
+ *   disc 서포트는 제거됐지만 기존 IndexedDB 에는 variant==="disc" 레코드가
+ *   남아있을 수 있다. 로드 시 조용히 걸러 앱이 죽지 않게 한다 (마이그레이션
+ *   불필요 — 무시만). variant 필드는 타입에서 제거됐으므로 raw 값으로 확인.
+ */
+function isDiscRecord(value: unknown): boolean {
+  return (value as { variant?: string } | null)?.variant === "disc";
+}
+
 /** 프로젝트의 모든 서포트 점. */
 export async function listSupportsByProject(
   projectId: string,
@@ -13,7 +23,7 @@ export async function listSupportsByProject(
     idx.openCursor(IDBKeyRange.only(projectId)).onsuccess = (e) => {
       const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
       if (cursor) {
-        out.push(cursor.value as SupportPointV2);
+        if (!isDiscRecord(cursor.value)) out.push(cursor.value as SupportPointV2);
         cursor.continue();
       }
     };
@@ -34,7 +44,7 @@ export async function listSupportsByStl(
     idx.openCursor(IDBKeyRange.only(stlId)).onsuccess = (e) => {
       const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
       if (cursor) {
-        out.push(cursor.value as SupportPointV2);
+        if (!isDiscRecord(cursor.value)) out.push(cursor.value as SupportPointV2);
         cursor.continue();
       }
     };

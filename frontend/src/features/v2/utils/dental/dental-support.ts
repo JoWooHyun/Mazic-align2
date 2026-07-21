@@ -1,35 +1,25 @@
 /**
- * dental-support — 지현규 dental disc 서포트 생성 알고리즘 (v2 이식).
+ * dental-support — 지현규 dental 검출용 헬퍼 모음 (v2 이식).
  *
- * 원본: frontend/src/utils/support.utils.ts (468줄, 지현규 브랜치) 전체 이식.
- * 로직 무변경 — 순수 이동 + v2 트리 재배치. v2 에 이미 존재하는 유승제의
- * trunk/브릿지 서포트(features/v2/utils/support-render.ts 등)와 구분하기 위해
- * 파일명을 dental-support 로 명명한다.
+ * 원본: frontend/src/utils/support.utils.ts (지현규 브랜치) 이식.
+ * disc(원판형) 서포트는 폐기됐고(리드 결정 2026-07-21), 이 파일에는 검출
+ * 워크플로우가 쓰는 순수 헬퍼만 남긴다:
+ *   · readWorldTriangles      — 월드 좌표 삼각형 산출 (island-detection 등에서 사용)
+ *   · createUnsupportedHighlight / createFaceOverlay / createMarginLines
+ *                              — 검출 결과 시각화(미지지 점·면 그룹·마진선)
  *
  * 의존성: @babylonjs/core 만. v1 stl.types / 다른 유틸 의존 없음 —
- * TriInfo·SupportSettings·SupportTool 등 타입은 원본에서 자기완결적으로
- * 정의되어 있어 그대로 옮긴다(v2 에 대응 타입이 없어 얇은 어댑터 불필요).
+ * TriInfo·SupportTool 등 타입은 원본에서 자기완결적으로 정의되어 있어
+ * 그대로 옮긴다(v2 에 대응 타입이 없어 얇은 어댑터 불필요).
  */
 import {
   Scene,
   Mesh,
   Vector3,
-  MeshBuilder,
   StandardMaterial,
   Color3,
   VertexData,
 } from '@babylonjs/core';
-
-/**
- * 서포트 치수 설정 (mm)
- */
-export interface SupportSettings {
-  tipTopDiameter: number; // 팁 상부 직경 — 모델 표면 접촉부
-  tipBottomDiameter: number; // 팁 하부 직경 — tip→neck 전환부
-  contactDepth: number; // 접점 깊이 — 터치팁 상부가 STL 표면에 파고드는 깊이 (mm)
-  supportAngle: number; // 서포트 목이 표면과 이루는 각도 (°)
-  touchTipDistance: number; // 터치 팁 거리 — 필수 서포트로부터 보조 서포트까지 간격 (mm)
-}
 
 /** 서포트 배치 도구 — none / point(점) / mask(보호영역 칠하기) */
 export type SupportTool = 'none' | 'point' | 'mask';
@@ -259,222 +249,5 @@ export function createMarginLines(
   mat.disableLighting = true;
   mat.backFaceCulling = false;
   mesh.material = mat;
-  return mesh;
-}
-
-export const DEFAULT_SUPPORT_SETTINGS: SupportSettings = {
-  tipTopDiameter: 0.3,
-  tipBottomDiameter: 0.5,
-  contactDepth: 0.2,
-  supportAngle: 45,
-  touchTipDistance: 1.0,
-};
-
-/**
- * 부드러운 튜브형 서포트 (치투박스식: 구형 팁 - 목 - 연결부 - 중간)
- *
- * 터치 팁 = 구(sphere). 구의 윗부분이 STL 표면을 contactDepth 만큼 침투한다.
- * 목(튜브)은 구의 '중심'에서 시작 → 구 안쪽에서 자라나와 자연스럽게 연결된다.
- *
- * 척추 = 구 중심(tubeTop) → bendPoint(목 끝) → 수직으로 플레이트.
- *   목(tubeTop→bend)은 기울어질 수 있고, 몸통(bend→플레이트)은 수직이다.
- *   bendPoint 를 옮겨 STL 을 우회한다.
- *
- * @param contactPoint  표면 접점 (월드 좌표)
- * @param _surfaceNormal 표면 법선 (현재 미사용)
- * @param bendPoint     목 끝 = 몸통 시작점. 생략 시 접점 바로 아래(수직).
- */
-export function createSupport(
-  scene: Scene,
-  contactPoint: Vector3,
-  _surfaceNormal: Vector3,
-  settings: SupportSettings,
-  bendPoint?: Vector3,
-  color?: Color3
-): Mesh | null {
-  const CONN = 1.6; // 연결부(목→중간) 길이
-
-  // 반경 프로파일
-  const neckR = Math.max(settings.tipBottomDiameter / 2, 0.1);
-  const bodyR = Math.max(settings.tipBottomDiameter, neckR * 1.6);
-  // 터치 팁 = 구. tipTopDiameter 로 크기 결정, 최소 목 두께 이상.
-  const sphereR = Math.max(settings.tipTopDiameter / 2, neckR);
-
-  // 구 중심 — 구의 꼭대기가 (접점 + contactDepth) 가 되도록.
-  // → 구는 STL 표면을 정확히 contactDepth 만큼 침투한다.
-  const sphereCenter = new Vector3(
-    contactPoint.x,
-    contactPoint.y + settings.contactDepth - sphereR,
-    contactPoint.z
-  );
-  // 튜브 시작점 = 구의 중심. 목의 윗부분이 구 안에 묻혀 자라나오므로
-  //   목이 기울어도 끊김 없이 자연스럽게 연결된다.
-  //   (구 바닥의 한 점에서만 만나면 목이 기울 때 연결이 끊겨 보인다)
-  const tubeTop = sphereCenter.clone();
-
-  // bendPoint 기본값 — 접점 바로 아래(수직 서포트)
-  const bend =
-    bendPoint ??
-    new Vector3(
-      contactPoint.x,
-      Math.max(0.5, contactPoint.y - 4),
-      contactPoint.z
-    );
-  const plate = new Vector3(bend.x, 0, bend.z);
-
-  const neckLen = Vector3.Distance(tubeTop, bend); // 목 길이(기울 수 있음)
-  const bodyLen = Math.max(0, bend.y); // bend → 플레이트 (수직)
-  if (neckLen < CONN + 0.5) return null; // 목이 너무 짧음
-
-  // 반경 프로파일 (시작점에서의 누적거리 d) — 목→연결부→중간 매끄럽게
-  const dConnStart = neckLen - CONN; // 연결부 = 목의 마지막 CONN 구간
-  const smoothstep = (a: number, b: number, t: number): number => {
-    const x = Math.min(1, Math.max(0, t));
-    return a + (b - a) * x * x * (3 - 2 * x);
-  };
-  const radiusAt = (d: number): number => {
-    if (d <= dConnStart) return neckR; // 목 (가늘게)
-    if (d <= neckLen)
-      return smoothstep(neckR, bodyR, (d - dConnStart) / CONN); // 연결부
-    return bodyR; // 중간(body)
-  };
-
-  // 척추 path — 목(tubeTop→bend, 기울 수 있음) + 몸통(bend→플레이트, 수직)
-  const STEP = 0.35;
-  const path: Vector3[] = [];
-  const nN = Math.max(1, Math.ceil(neckLen / STEP));
-  for (let i = 0; i <= nN; i++) path.push(Vector3.Lerp(tubeTop, bend, i / nN));
-  if (bodyLen > 1e-3) {
-    const nB = Math.max(1, Math.ceil(bodyLen / STEP));
-    for (let i = 1; i <= nB; i++) path.push(Vector3.Lerp(bend, plate, i / nB));
-  }
-  const tube = MeshBuilder.CreateTube(
-    'supportTube',
-    {
-      path,
-      radiusFunction: (_i: number, distance: number) => radiusAt(distance),
-      tessellation: 14,
-      cap: Mesh.CAP_ALL,
-    },
-    scene
-  );
-
-  // 터치 팁 구
-  const tipSphere = MeshBuilder.CreateSphere(
-    'supportTip',
-    { diameter: sphereR * 2, segments: 12 },
-    scene
-  );
-  tipSphere.position.copyFrom(sphereCenter);
-
-  const support = Mesh.MergeMeshes(
-    [tube, tipSphere],
-    true,
-    true,
-    undefined,
-    false,
-    false
-  );
-  if (!support) return null;
-  support.name = `support_${Date.now()}_${Math.random()
-    .toString(36)
-    .slice(2, 6)}`;
-  support.isPickable = false;
-
-  const mat = new StandardMaterial('supportMat', scene);
-  mat.diffuseColor = color ?? new Color3(0.35, 0.65, 0.95);
-  mat.specularColor = new Color3(0.12, 0.12, 0.12);
-  support.material = mat;
-  return support;
-}
-
-/** 2D 점들의 볼록 껍질 (XZ 평면, Andrew monotone chain) */
-function convexHullXZ(
-  pts: { x: number; z: number }[]
-): { x: number; z: number }[] {
-  const uniq = pts.filter(
-    (p, i) => pts.findIndex((q) => q.x === p.x && q.z === p.z) === i
-  );
-  if (uniq.length < 3) return uniq;
-  const p = [...uniq].sort((a, b) => a.x - b.x || a.z - b.z);
-  const cross = (
-    o: { x: number; z: number },
-    a: { x: number; z: number },
-    b: { x: number; z: number }
-  ) => (a.x - o.x) * (b.z - o.z) - (a.z - o.z) * (b.x - o.x);
-  const lower: { x: number; z: number }[] = [];
-  for (const pt of p) {
-    while (
-      lower.length >= 2 &&
-      cross(lower[lower.length - 2], lower[lower.length - 1], pt) <= 0
-    )
-      lower.pop();
-    lower.push(pt);
-  }
-  const upper: { x: number; z: number }[] = [];
-  for (let i = p.length - 1; i >= 0; i--) {
-    const pt = p[i];
-    while (
-      upper.length >= 2 &&
-      cross(upper[upper.length - 2], upper[upper.length - 1], pt) <= 0
-    )
-      upper.pop();
-    upper.push(pt);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
-/**
- * 영역 지정 솔리드 서포트
- * footprint(XZ 점들)의 볼록 껍질을 빌드플레이트(Y=0)부터 topY 까지 수직 압출한
- * 단일 솔리드 메쉬. grid pattern 이 아닌 solid support polygon.
- */
-export function createSolidRegionSupport(
-  scene: Scene,
-  footprintPoints: { x: number; z: number }[],
-  topY: number
-): Mesh | null {
-  if (topY < 0.5) return null;
-  const hull = convexHullXZ(footprintPoints);
-  if (hull.length < 3) return null;
-
-  const n = hull.length;
-  const cx = hull.reduce((s, p) => s + p.x, 0) / n;
-  const cz = hull.reduce((s, p) => s + p.z, 0) / n;
-
-  const positions: number[] = [];
-  for (const p of hull) positions.push(p.x, 0, p.z); // 0..n-1   바닥 링
-  for (const p of hull) positions.push(p.x, topY, p.z); // n..2n-1  윗 링
-  positions.push(cx, 0, cz); // 2n     바닥 중심
-  positions.push(cx, topY, cz); // 2n+1   윗 중심
-  const cBot = 2 * n;
-  const cTop = 2 * n + 1;
-
-  const indices: number[] = [];
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    indices.push(i, j, n + j, i, n + j, n + i); // 옆면 (사각형)
-    indices.push(cBot, j, i); // 바닥면 (fan)
-    indices.push(cTop, n + i, n + j); // 윗면 (fan)
-  }
-
-  const mesh = new Mesh(`regionSupport_${Date.now()}`, scene);
-  const normals: number[] = [];
-  VertexData.ComputeNormals(positions, indices, normals);
-  const vd = new VertexData();
-  vd.positions = positions;
-  vd.indices = indices;
-  vd.normals = normals;
-  vd.applyToMesh(mesh);
-  mesh.isPickable = false;
-
-  const mat = new StandardMaterial('regionSupportMat', scene);
-  mat.diffuseColor = new Color3(0.35, 0.65, 0.95);
-  mat.specularColor = new Color3(0.12, 0.12, 0.12);
-  mat.backFaceCulling = false;
-  mesh.material = mat;
-
   return mesh;
 }

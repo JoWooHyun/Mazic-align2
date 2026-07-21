@@ -139,7 +139,7 @@ const ViewerV2Page: React.FC = () => {
       patchSupport,
     });
 
-  // 서포트/브릿지/disc 편집 상태·핸들러 (followAttachedChildren 주입).
+  // 서포트/브릿지 편집 상태·핸들러 (followAttachedChildren 주입).
   const support = useSupportEditing({
     projectId,
     files,
@@ -184,8 +184,6 @@ const ViewerV2Page: React.FC = () => {
   const {
     bridgeMode,
     setBridgeMode,
-    discMode,
-    setDiscMode,
     pendingBridge,
     setPendingBridge,
     selectedSupportId,
@@ -469,7 +467,6 @@ const ViewerV2Page: React.FC = () => {
             gizmoMode={gizmoMode}
             alignFloorMode={alignFloorMode}
             bridgeMode={bridgeMode}
-            discMode={discMode}
             pendingBridge={pendingBridge}
             selectedSupportId={selectedSupportId}
             supports={supports}
@@ -484,7 +481,6 @@ const ViewerV2Page: React.FC = () => {
               if (m !== "support") {
                 setSelectedSupportId(null);
                 setBridgeMode(false);
-                setDiscMode(false);
                 setPendingBridge(null);
               }
               // 모드 진입 시 우측 패널을 해당 탭으로 전환 (Dental·Support 일관, 감사 #4).
@@ -493,12 +489,6 @@ const ViewerV2Page: React.FC = () => {
             }}
             onToggleBridge={() => {
               setBridgeMode((v) => !v);
-              setDiscMode(false); // bridge 와 disc 는 상호 배타.
-              setPendingBridge(null);
-            }}
-            onToggleDisc={() => {
-              setDiscMode((v) => !v);
-              setBridgeMode(false); // disc 와 bridge 는 상호 배타.
               setPendingBridge(null);
             }}
             onResetBridgeCurve={() => void support.handleResetBridgeCurve()}
@@ -580,7 +570,6 @@ const ViewerV2Page: React.FC = () => {
             setSelectedCp(null);
             setSelectedSupportId(null);
             setBridgeMode(false);
-            setDiscMode(false);
             setPendingBridge(null);
           }}
           brushThicknessMm={dental.brushThicknessMm}

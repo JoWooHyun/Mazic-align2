@@ -1,4 +1,4 @@
-// 서포트/브릿지/disc 배치·이동·삭제·변곡점 편집 핸들러 묶음 + 관련 편집 상태.
+// 서포트/브릿지 배치·이동·삭제·변곡점 편집 핸들러 묶음 + 관련 편집 상태.
 // (ViewerV2Page 에서 추출 — undo push·supportsRef·cascade 동작 불변.)
 //
 // followAttachedChildren 은 useTransformCommit 이 소유하며 인자로 주입받는다.
@@ -8,7 +8,6 @@ import { useCallback, useRef, useState } from "react";
 import { useUndoStore } from "../../../hooks/useUndoStore";
 import * as supportRepo from "../../../data/supports.repo";
 import type { SupportPointV2 } from "../../../support/types";
-import { DEFAULT_SUPPORT_SETTINGS } from "../../../utils/dental/dental-support";
 import type { BabylonSceneHandle } from "../../../components/BabylonScene";
 import type { EditMode } from "../../../components/EditModeControls";
 import type { SupportParams } from "../../../support";
@@ -83,10 +82,6 @@ export function useSupportEditing({
   setCtxMenu,
 }: UseSupportEditingArgs) {
   const [bridgeMode, setBridgeMode] = useState(false);
-  // disc(디스크 서포트) 배치 서브 모드 — support 편집 모드 안에서만 의미.
-  //   bridge 와 상호 배타 (동시에 켤 수 없음). 켜져 있으면 모델 표면 클릭이
-  //   trunk 대신 지현규 dental disc 서포트를 배치한다.
-  const [discMode, setDiscMode] = useState(false);
   const [pendingBridge, setPendingBridge] = useState<PendingBridge | null>(
     null,
   );
@@ -205,25 +200,8 @@ export function useSupportEditing({
         return;
       }
 
-      // 단점 모드 (기존) / disc 모드 (지현규 dental disc).
-      //   둘 다 "모델 표면 클릭 → 단일 서포트 배치" 로 동작이 동일하고,
-      //   저장·undo·삭제 경로도 공유한다. 차이는 variant / discSettings 뿐.
+      // 단점 모드 — 모델 표면 클릭 → 단일 trunk 서포트 배치.
       if (contact[1] <= 0.5) return;
-      // disc: dental createSupport 는 목 길이(tubeTop→bend)가 하한
-      //   (CONN 1.6 + 0.5) 미만이면 null 을 반환한다. 그대로 저장하면
-      //   mesh 없는 유령 DB 레코드가 남아 UI 로 삭제할 수 없으므로,
-      //   저장 전에 dental 과 동일한 계산으로 생성 가능 여부를 검증한다.
-      //   (모델 표면이 베드에 너무 가까울 때 조용히 무시 — 새 UI 없음.)
-      if (discMode) {
-        const ds = DEFAULT_SUPPORT_SETTINGS;
-        const sphereR = Math.max(
-          ds.tipTopDiameter / 2,
-          Math.max(ds.tipBottomDiameter / 2, 0.1),
-        );
-        const tubeTopY = contact[1] + ds.contactDepth - sphereR;
-        const bendY = Math.max(0.5, contact[1] - 4);
-        if (tubeTopY - bendY < 1.6 + 0.5) return; // 목 길이 하한 미달 → 배치 안 함.
-      }
       // base: contact 에서 -Y 로 가장 가까운 표면 (자기 모델 제외).
       // 다른 STL 위에 단점이 서 있으면 그 모델 상단에 base 부착되어
       // 기둥 직선이 다른 STL 을 통과하지 않게 된다.
@@ -243,14 +221,6 @@ export function useSupportEditing({
         source: "manual",
         addedAt: Date.now(),
         contactNormal: normal,
-        // disc 모드면 variant='disc' + 배치 시점 dental 치수 스냅샷.
-        // (trunk 는 variant 미지정 → 기존 코드 경로 그대로.)
-        ...(discMode
-          ? {
-              variant: "disc" as const,
-              discSettings: { ...DEFAULT_SUPPORT_SETTINGS },
-            }
-          : {}),
       };
       await addSupports([newPoint]);
       useUndoStore.getState().push({
@@ -264,7 +234,7 @@ export function useSupportEditing({
         },
       });
     },
-    [projectId, bridgeMode, discMode, pendingBridge, addSupports, refreshSupports, sceneHandleRef],
+    [projectId, bridgeMode, pendingBridge, addSupports, refreshSupports, sceneHandleRef],
   );
 
   const handleRemoveSupport = useCallback(
@@ -470,8 +440,6 @@ export function useSupportEditing({
     // 상태
     bridgeMode,
     setBridgeMode,
-    discMode,
-    setDiscMode,
     pendingBridge,
     setPendingBridge,
     selectedSupportId,

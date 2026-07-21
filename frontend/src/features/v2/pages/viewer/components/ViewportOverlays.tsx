@@ -21,7 +21,6 @@ interface ViewportOverlaysProps {
   gizmoMode: GizmoMode;
   alignFloorMode: boolean;
   bridgeMode: boolean;
-  discMode: boolean;
   pendingBridge: unknown | null;
   selectedSupportId: string | null;
   supports: SupportPointV2[];
@@ -31,7 +30,6 @@ interface ViewportOverlaysProps {
   onToggleAlignFloor: () => void;
   onEditModeChange: (m: EditMode) => void;
   onToggleBridge: () => void;
-  onToggleDisc: () => void;
   onResetBridgeCurve: () => void;
   onDeleteSelected: () => void;
 }
@@ -43,7 +41,6 @@ export default function ViewportOverlays({
   gizmoMode,
   alignFloorMode,
   bridgeMode,
-  discMode,
   pendingBridge,
   selectedSupportId,
   supports,
@@ -53,7 +50,6 @@ export default function ViewportOverlays({
   onToggleAlignFloor,
   onEditModeChange,
   onToggleBridge,
-  onToggleDisc,
   onResetBridgeCurve,
   onDeleteSelected,
 }: ViewportOverlaysProps) {
@@ -114,12 +110,10 @@ export default function ViewportOverlays({
       {editMode === "support" && (
         <SupportEditToolbar
           bridgeMode={bridgeMode}
-          discMode={discMode}
           pendingBridge={pendingBridge}
           selectedSupportId={selectedSupportId}
           supports={supports}
           onToggleBridge={onToggleBridge}
-          onToggleDisc={onToggleDisc}
           onResetBridgeCurve={onResetBridgeCurve}
           onDeleteSelected={onDeleteSelected}
         />
