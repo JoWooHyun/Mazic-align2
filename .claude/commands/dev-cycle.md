@@ -1,5 +1,5 @@
 ---
-description: 계획(Opus) → 구현(Opus coder) → 검수(reviewer) → 재작업 루프로 기능을 개발한다
+description: 계획(Fable) → 구현(Opus coder) → 검수(Fable reviewer) → 재작업 루프로 기능을 개발한다
 argument-hint: <작업 내용 또는 개발계획서의 Step/항목 번호>
 ---
 

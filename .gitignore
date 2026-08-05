@@ -33,3 +33,7 @@ node_modules
 .env
 .env.local
 .env.production
+
+# CHITUBOX 부품 STL 원본 (로컬 참고 전용 — 재배포 회피, docs/계획_20260805.md 4장 #2)
+stl모음/
+*.output
