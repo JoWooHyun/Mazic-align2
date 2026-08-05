@@ -35,6 +35,11 @@ export function buildSupportKey(
   const cps = localCps ? localCps.map((p) => p.map(f).join(",")).join(";") : "";
   return [
     point.source,
+    // 재설계(island/slope) 점은 화살촉 조립 경로라 kind·tipRadius·새 파라미터가
+    //   형상에 영향 → key 에 포함해 값 변경 시 재조립. 기존 점은 kind undefined
+    //   라 "" 로 들어가 종전 key 와 사실상 동일(경로 무변경).
+    point.kind ?? "",
+    point.tipRadius ?? "",
     c,
     b,
     cps,
@@ -44,5 +49,8 @@ export function buildSupportKey(
     params.baseTransitionMm,
     params.tipTransitionMm,
     params.bridgeDiameterMm,
+    params.headBackDiameterMm,
+    params.headLengthMm,
+    params.contactPenetrationMm,
   ].join("|");
 }

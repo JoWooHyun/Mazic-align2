@@ -17,13 +17,27 @@ export const DEFAULT_SUPPORT_PARAMS: SupportParams = {
   contactSpacingMm: 4.0,
   liftMm: 5.0,
   bridgeDiameterMm: 1.2,
+  // 서포트 재설계(S-4b) 화살촉 접점 기본값 (설계 4-1). 재설계 경로 전용.
+  //   이번 PR 은 새 파라미터의 UI 슬라이더를 만들지 않는다(S-4d 몫) — 값만 동작.
+  headBackDiameterMm: 1.0,
+  headLengthMm: 1.0,
+  contactPenetrationMm: 0.2,
 };
 
 /**
  * 각 파라미터의 허용 범위. UI 슬라이더 / 유효성 검사 양쪽에서 쓴다.
+ *   ※ 재설계(S-4b) 신규 파라미터(headBackDiameterMm / headLengthMm /
+ *     contactPenetrationMm)는 이번 PR 에서 슬라이더를 만들지 않으므로(S-4d 몫)
+ *     여기서 제외한다. 기본값(DEFAULT_SUPPORT_PARAMS)으로만 동작한다.
  */
 export const SUPPORT_PARAM_LIMITS: Record<
-  keyof Omit<SupportParams, "autoSizeTrunk">,
+  keyof Omit<
+    SupportParams,
+    | "autoSizeTrunk"
+    | "headBackDiameterMm"
+    | "headLengthMm"
+    | "contactPenetrationMm"
+  >,
   { min: number; max: number; step: number; unit: string; label: string }
 > = {
   overhangAngleDeg: { min: 10, max: 80, step: 1, unit: "°", label: "오버행 임계각" },
