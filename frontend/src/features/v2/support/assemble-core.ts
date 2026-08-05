@@ -122,9 +122,10 @@ function appendTransformed(
  *      앞구슬 중심에 오도록(위로 좁아짐). cone 로컬은 밑면 Z=0·꼭짓점 Z=1 →
  *      Z-up→Y-up 회전으로 밑면 아래(뒷구슬쪽)·꼭짓점 위(앞구슬쪽)에 놓인다.
  *  - 뒷구슬(4-1): sphere 를 ⌀headBack 으로, 중심 = 원뿔 밑면 중심.
- *  - 기둥(4-2): cylinder 를 ⌀trunk 로, 뒷구슬 중심 → (baseY + baseTransitionMm).
+ *  - 기둥(4-2): cylinder 를 ⌀trunk 로, 뒷구슬 중심 → baseY(플레이트)까지. 발
+ *      원뿔과 겹치게 baseY 까지 내려 접합부 단면적 0 수렴을 막는다(리뷰 #1).
  *  - 바닥 발(4-2 전이): cone 을 넓은 밑면 ⌀base 가 Y=baseY(플레이트)에 닿고 위로
- *      좁아져 기둥에 연결. 높이 baseTransitionMm.
+ *      좁아져 기둥에 연결. 높이 baseTransitionMm (기둥과 겹침, union 무해).
  *
  * 총 높이(surfaceY−baseY)가 baseTransitionMm+headLengthMm 보다 작으면 화살촉+
  * 바닥 전이 구간을 비례 축소(기존 createSupportMesh 의 0.95 축소 패턴 참고).
@@ -156,8 +157,6 @@ export function assembleVerticalSupport(
   const frontCenterY = spec.surfaceY + spec.contactPenetrationMm - tipR;
   // 뒷구슬 중심 Y = 앞구슬 중심에서 화살촉 길이만큼 아래.
   const backCenterY = frontCenterY - headLen;
-  // 바닥 발 상단(=기둥 하단) Y.
-  const footTopY = spec.baseY + baseTrans;
 
   // ── 앞구슬: sphere ⌀tip, 중심 frontCenterY ──────────────────────────────
   appendTransformed(
@@ -202,13 +201,19 @@ export function assembleVerticalSupport(
     accIdx,
   );
 
-  // ── 기둥: cylinder ⌀trunk, 뒷구슬 중심(backCenterY) → footTopY ──────────
-  //   cylinder 로컬 Z 0→1 → Y-up 후 Y 0→1. 높이 = backCenterY − footTopY.
-  const trunkH = Math.max(backCenterY - footTopY, 1e-4);
+  // ── 기둥: cylinder ⌀trunk, 뒷구슬 중심(backCenterY) → baseY(플레이트) ─────
+  //   cylinder 로컬 Z 0→1 → Y-up 후 Y 0→1. 높이 = backCenterY − baseY.
+  //   ★ footTopY 가 아니라 baseY 까지 세워 발 원뿔과 겹치게 한다(리뷰 수정 #1).
+  //     발 cone 은 footTopY 에서 꼭짓점(⌀0)으로 끝나 기둥과 점 접합이 되면
+  //     그 구간(발 위쪽 ~baseTrans)이 ⌀trunk 보다 가늘어져 슬라이스 단면적 0
+  //     근접 → 출력 파단. 기둥을 baseY 까지 내려 발과 겹치면 슬라이스 union 이
+  //     둘을 합쳐 footTopY 근방 단면이 항상 ≥ ⌀trunk 로 유지된다(중복 솔리드
+  //     무해 — 기존 검증에서 확인된 사실).
+  const trunkH = Math.max(backCenterY - spec.baseY, 1e-4);
   appendTransformed(
     parts.cylinder,
     matMul(
-      matTranslate(0, footTopY, 0),
+      matTranslate(0, spec.baseY, 0),
       matMul(matScale(trunkD, trunkH, trunkD), matZupToYup()),
     ),
     accPos,

@@ -249,6 +249,12 @@ export function useDentalWorkflow({
           await addSupports(finalized);
         },
       });
+    } catch (e) {
+      // 저장/스냅 중 예외도 사용자에게 실패 사유를 남긴다(감사 #5 취지).
+      setRedesignStatus({
+        ok: false,
+        message: `서포트 생성 실패: ${e instanceof Error ? e.message : String(e)}`,
+      });
     } finally {
       setRedesignBusy(false);
     }

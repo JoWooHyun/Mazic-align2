@@ -53,6 +53,80 @@ function bbox(geo) {
   return { min, max };
 }
 
+/**
+ * Y=y0 근방(±band) 삼각형들이 그 평면을 가로지르는 지점의 XZ 반경 최대치×2 를
+ * 대략적 단면 폭으로 본다. 각 삼각형의 세 변에서 Y=y0 교차점의 XZ 를 모아
+ * 중심(평균) 대비 최대 반경으로 폭을 근사한다. (정밀 슬라이스는 아니지만 발
+ * 원뿔·기둥 접합부가 ⌀trunk 이상인지 보기엔 충분.)
+ */
+function sectionWidthAtY(geo, y0) {
+  const p = geo.positions;
+  const idx = geo.indices;
+  const pts = [];
+  for (let t = 0; t < idx.length; t += 3) {
+    const vs = [idx[t], idx[t + 1], idx[t + 2]].map((k) => [
+      p[k * 3], p[k * 3 + 1], p[k * 3 + 2],
+    ]);
+    for (let e = 0; e < 3; e++) {
+      const a = vs[e], b = vs[(e + 1) % 3];
+      const ya = a[1], yb = b[1];
+      if ((ya - y0) * (yb - y0) > 0) continue; // 같은 쪽 → 미교차.
+      if (Math.abs(yb - ya) < 1e-9) continue;
+      const s = (y0 - ya) / (yb - ya);
+      if (s < 0 || s > 1) continue;
+      pts.push([a[0] + s * (b[0] - a[0]), a[2] + s * (b[2] - a[2])]);
+    }
+  }
+  if (pts.length === 0) return 0;
+  let cx = 0, cz = 0;
+  for (const [x, z] of pts) { cx += x; cz += z; }
+  cx /= pts.length; cz /= pts.length;
+  let rmax = 0;
+  for (const [x, z] of pts) rmax = Math.max(rmax, Math.hypot(x - cx, z - cz));
+  return rmax * 2;
+}
+
+/** Y=y0 단면 교차점들의 XZ 중심(평균). 미교차면 null. */
+function sectionCenterXZAtY(geo, y0) {
+  const p = geo.positions;
+  const idx = geo.indices;
+  let cx = 0, cz = 0, n = 0;
+  for (let t = 0; t < idx.length; t += 3) {
+    const vs = [idx[t], idx[t + 1], idx[t + 2]].map((k) => [
+      p[k * 3], p[k * 3 + 1], p[k * 3 + 2],
+    ]);
+    for (let e = 0; e < 3; e++) {
+      const a = vs[e], b = vs[(e + 1) % 3];
+      if ((a[1] - y0) * (b[1] - y0) > 0) continue;
+      if (Math.abs(b[1] - a[1]) < 1e-9) continue;
+      const s = (y0 - a[1]) / (b[1] - a[1]);
+      if (s < 0 || s > 1) continue;
+      cx += a[0] + s * (b[0] - a[0]);
+      cz += a[2] + s * (b[2] - a[2]);
+      n++;
+    }
+  }
+  return n === 0 ? null : [cx / n, cz / n];
+}
+
+/** 4x4 row-major 행렬로 [x,y,z] 변환. */
+function apply4(m, v) {
+  return [
+    m[0] * v[0] + m[1] * v[1] + m[2] * v[2] + m[3],
+    m[4] * v[0] + m[5] * v[1] + m[6] * v[2] + m[7],
+    m[8] * v[0] + m[9] * v[1] + m[10] * v[2] + m[11],
+  ];
+}
+/** Z축 회전(rad) 4x4. */
+function rotZ(a) {
+  const c = Math.cos(a), s = Math.sin(a);
+  return [c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+}
+/** 4x4 역행렬(회전+평행이동 한정이면 충분한 일반 역행렬, 여기선 순수 회전). */
+function invRotZ(a) {
+  return rotZ(-a);
+}
+
 let failed = 0;
 function assert(cond, msg) {
   if (cond) {
@@ -135,6 +209,68 @@ function main() {
   const geo2 = assembleVerticalSupport(parts, spec2);
   const w2 = bbox(geo2).max[0] - bbox(geo2).min[0];
   approx(w2, 2.0, 5e-2, "headBackDiameter=2.0 반영 → 최대 폭 ≈ 2.0");
+
+  // ── 리뷰 수정 #1: 발↔기둥 접합부 단면 폭 ≥ ⌀trunk (구조 안 끊김) ──────────
+  //   footTopY = baseY + baseTransitionMm 근방에서 단면 폭이 기둥 지름 이상이어야
+  //   한다(기둥을 baseY 까지 겹쳐 세운 결과). 예전(꼭짓점 접합)이면 여기 ~0.
+  console.log("\n리뷰 #1 — 발↔기둥 접합부 단면:");
+  const footTopY = spec.baseY + spec.baseTransitionMm;
+  const wJunction = sectionWidthAtY(geo, footTopY);
+  console.log(`  Y=${footTopY} 단면 폭 = ${wJunction.toFixed(4)}mm (⌀trunk=${spec.trunkDiameterMm})`);
+  assert(
+    wJunction >= spec.trunkDiameterMm - 1e-3,
+    `footTopY 근방 단면 폭 ≥ ⌀trunk (${wJunction.toFixed(4)} ≥ ${spec.trunkDiameterMm})`,
+  );
+
+  // ── 리뷰 수정 #2: 회전된 STL 에서도 월드 수직·발 Y=0 ────────────────────
+  //   assemble-support.ts 의 월드 프레임 조립을 헤드리스로 재현: STL 이 Z축 30°
+  //   회전일 때, world contact/base 로 월드 수직 조립 후 inv(world) 로 로컬화하고
+  //   다시 parent(world) 를 곱해 최종 world 형상을 얻는다. 결과가 월드 수직(발
+  //   Y=0, 기둥 XZ 가 앞구슬 XZ 와 동일)이어야 한다.
+  console.log("\n리뷰 #2 — STL Z축 30° 회전 시 월드 수직·발 Y=0:");
+  const ang = (30 * Math.PI) / 180;
+  const W = rotZ(ang); // STL world matrix (순수 회전).
+  const invW = invRotZ(ang);
+  // 실제 데이터 흐름 재현: snapAndFinalizePoints 는 world contact(표면)와
+  //   world base=[x,0,z](플레이트 Y=0)를 만든 뒤 worldToStlLocal(invW)로 저장한다.
+  //   여기선 world 값에서 출발한다: contact world=(2, 8, -1), base world=(2, 0, -1).
+  const wContact = [2, 8, -1];
+  const wBase = [2, 0, -1]; // ★ world Y=0 (플레이트).
+  // (저장되는 로컬 좌표는 invW·world 이지만, 래퍼가 다시 world 로 되돌리므로
+  //   최종 검산은 world 값으로 한다.)
+  // world 수직 조립: XZ=contact world XZ, surfaceY/baseY=world Y.
+  const rspec = { ...spec, surfaceY: wContact[1], baseY: wBase[1] };
+  const rgeo = assembleVerticalSupport(parts, rspec);
+  // 로컬화(inv(world)) 후 다시 parent(world) → 최종 world positions 복원.
+  const finalPos = new Float32Array(rgeo.positions.length);
+  for (let i = 0; i < rgeo.positions.length; i += 3) {
+    const world0 = [
+      rgeo.positions[i] + wContact[0],
+      rgeo.positions[i + 1],
+      rgeo.positions[i + 2] + wContact[2],
+    ];
+    const local = apply4(invW, world0); // 저장될 로컬 좌표.
+    const world = apply4(W, local); // parent 로 복원되는 world.
+    finalPos[i] = world[0];
+    finalPos[i + 1] = world[1];
+    finalPos[i + 2] = world[2];
+  }
+  const rgb = bbox({ positions: finalPos, indices: rgeo.indices });
+  console.log(`  최종 world bbox min=[${rgb.min.map((v) => v.toFixed(3))}] max=[${rgb.max.map((v) => v.toFixed(3))}]`);
+  // 발이 플레이트(world Y=0)에 닿아야 한다.
+  approx(rgb.min[1], 0, 1e-2, "회전 STL: 최종 world 발 Y = 0 (플레이트)");
+  // 기둥이 월드 수직 → 서로 다른 Y 단면의 XZ 중심이 같아야 한다(축이 +Y 평행).
+  const finalGeo = { positions: finalPos, indices: rgeo.indices };
+  const cLow = sectionCenterXZAtY(finalGeo, 1.0);
+  const cHigh = sectionCenterXZAtY(finalGeo, wContact[1] - 2.0);
+  assert(cLow && cHigh, "회전 STL: 하부·상부 단면 존재");
+  if (cLow && cHigh) {
+    approx(cLow[0], cHigh[0], 5e-2, "회전 STL: 기둥 축 world X 일정(수직)");
+    approx(cLow[1], cHigh[1], 5e-2, "회전 STL: 기둥 축 world Z 일정(수직)");
+  }
+  // 앞구슬 꼭대기 world Y = contact world Y + 침투.
+  approx(rgb.max[1], wContact[1] + spec.contactPenetrationMm, 5e-2,
+    "회전 STL: 앞구슬 꼭대기 = contact world Y + 침투");
 
   console.log(failed === 0 ? "\n검증 통과 (전 항목 ok)." : `\n검증 실패 ${failed}건.`);
   process.exit(failed === 0 ? 0 : 1);
