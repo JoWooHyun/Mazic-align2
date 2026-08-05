@@ -62,6 +62,8 @@ interface ViewerSidePanelProps {
   redesignBusy: boolean;
   onClearRedesignDetect: () => void;
   redesignStatus: { ok: boolean; message: string } | null;
+  // 서포트 생성(재설계) — 점 생성 + 표면 스냅 + 저장 → 뷰어에 기둥 (S-4b-1).
+  onGenerateRedesignSupports: () => void;
 }
 
 export default function ViewerSidePanel({
@@ -96,6 +98,7 @@ export default function ViewerSidePanel({
   redesignBusy,
   onClearRedesignDetect,
   redesignStatus,
+  onGenerateRedesignSupports,
 }: ViewerSidePanelProps) {
   return (
     <aside className="w-80 border-l bg-white overflow-y-auto flex flex-col">
@@ -161,6 +164,7 @@ export default function ViewerSidePanel({
             redesignBusy={redesignBusy}
             onClearRedesignDetect={onClearRedesignDetect}
             redesignStatus={redesignStatus}
+            onGenerateRedesignSupports={onGenerateRedesignSupports}
           />
         )}
       </div>

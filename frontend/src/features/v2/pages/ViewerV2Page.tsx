@@ -594,6 +594,7 @@ const ViewerV2Page: React.FC = () => {
           redesignBusy={dental.redesignBusy}
           onClearRedesignDetect={dental.handleClearRedesignDetect}
           redesignStatus={dental.redesignStatus}
+          onGenerateRedesignSupports={dental.handleGenerateRedesignSupports}
         />
       </div>
 

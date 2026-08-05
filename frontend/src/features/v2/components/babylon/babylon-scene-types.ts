@@ -368,6 +368,15 @@ export interface BabylonSceneHandle {
     | { ok: false; reason: string };
   /** 서포트 재설계(S-4) 오버레이(아일랜드/오버행 색 + 점 구)를 모두 지운다. */
   clearRedesignDetect: () => void;
+  /**
+   * 서포트 재설계(S-4b) 점을 저장 가능한 최종 형태로 확정한다.
+   *   각 점을 활성 STL 표면에 레이캐스트로 Y 스냅하고, base 를 플레이트(Y=0)로
+   *   재계산한 뒤, world→stl-local 변환해 coordSpace='stl-local' 로 반환한다.
+   *   반환 점을 저장하면 useSupportMeshSync 가 화살촉+수직 기둥을 세운다.
+   */
+  snapAndFinalizeRedesignPoints: (
+    points: SupportPointV2[],
+  ) => SupportPointV2[];
 }
 
 /** 아일랜드 검출 요약 통계 (패널 표시용). 원본 onIslandDetectionComplete 페이로드 축약. */

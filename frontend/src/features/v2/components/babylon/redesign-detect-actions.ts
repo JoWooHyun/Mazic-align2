@@ -9,11 +9,14 @@
 
 import {
   Color3,
+  type AbstractMesh,
   MeshBuilder,
+  Ray,
   StandardMaterial,
   Vector3,
 } from "@babylonjs/core";
 import { extractWorldTriangles } from "../../utils/slice-section";
+import { worldToStlLocal } from "../../utils/coord-space";
 import {
   detectLayerGraph,
   placeSupportPoints,
@@ -192,4 +195,58 @@ function renderSupportPointSpheres(
     sphere.renderingGroupId = 0;
     ctx.redesignMarkersRef.current.push(sphere);
   }
+}
+
+/** 표면 스냅 레이 최대 거리 (mm). contact 아래에서 위로 이 거리 안의 표면을 찾는다. */
+const SNAP_RAY_MAX_MM = 2.0;
+
+/**
+ * 검출 점을 저장 가능한 최종 형태로 확정한다 (설계 4-1 접점 준비 / S-4b-1 저장).
+ *   각 점마다:
+ *     1) 표면 스냅: 활성 STL 메시에 contact 바로 아래(−SNAP_RAY_MAX_MM/2)에서
+ *        +Y 로 레이캐스트(상한 SNAP_RAY_MAX_MM)해 실제 표면 Y 로 contact.y 를
+ *        보정. 실패(미교차) 시 원래 contact 유지.
+ *     2) base 확정: [contact.x, 0, contact.z] (플레이트 Y=0). S-4a 임시 base 재계산.
+ *     3) 좌표 공간: world contact/base 를 STL local 로 변환해 저장하고
+ *        coordSpace='stl-local' 로 둔다(types.ts 규약 = 신규 점 정본). STL
+ *        transform 시 mesh.parent=stlMesh 로 자동 동기(race 없음).
+ *   활성 STL 이 없으면 world 좌표 그대로(coordSpace 미지정) 반환한다.
+ *
+ *   ※ S-4b-1 한계(TODO): 수직 스냅만. 경사면 법선 방향 스냅·3단 폴백은 S-4b-2.
+ */
+export function snapAndFinalizePoints(
+  ctx: SceneCtx,
+  points: SupportPointV2[],
+): SupportPointV2[] {
+  const scene = ctx.sceneRef.current;
+  const active = getActiveStl(ctx);
+  if (!scene || !active) return points;
+  const { mesh } = active;
+  mesh.computeWorldMatrix(true);
+  const predicate = (m: AbstractMesh) => m === mesh;
+
+  const up = new Vector3(0, 1, 0);
+  return points.map((p) => {
+    // 1) 표면 스냅 — contact 바로 아래에서 위로 레이.
+    const [cx, cy, cz] = p.contact;
+    const origin = new Vector3(cx, cy - SNAP_RAY_MAX_MM * 0.5, cz);
+    const ray = new Ray(origin, up, SNAP_RAY_MAX_MM);
+    const hit = scene.pickWithRay(ray, predicate);
+    const snappedY =
+      hit?.hit && hit.pickedPoint ? hit.pickedPoint.y : cy;
+
+    // 2) base = 플레이트(Y=0) 바로 아래 (수직 기둥).
+    const worldContact: [number, number, number] = [cx, snappedY, cz];
+    const worldBase: [number, number, number] = [cx, 0, cz];
+
+    // 3) world → stl-local 저장 (신규 점 정본, coord-space.ts 유틸 재사용).
+    const localContact = worldToStlLocal(worldContact, mesh);
+    const localBase = worldToStlLocal(worldBase, mesh);
+    return {
+      ...p,
+      contact: localContact,
+      base: localBase,
+      coordSpace: "stl-local" as const,
+    };
+  });
 }

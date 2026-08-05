@@ -54,10 +54,6 @@ export interface VerticalSupportSpec {
 // ── 4×4 어파인 행렬 유틸 (row-major, column-vector 곱: v' = M·v) ──────────
 type Mat4 = number[]; // 길이 16.
 
-function matIdentity(): Mat4 {
-  return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-}
-
 function matMul(a: Mat4, b: Mat4): Mat4 {
   const out = new Array(16).fill(0) as Mat4;
   for (let r = 0; r < 4; r++) {
@@ -124,11 +120,11 @@ function appendTransformed(
  *      깊이만큼 파고든다.
  *  - 화살촉 원뿔(4-1): cone 을 밑면 ⌀headBack·높이 headLengthMm 로, 꼭짓점이
  *      앞구슬 중심에 오도록(위로 좁아짐). cone 로컬은 밑면 Z=0·꼭짓점 Z=1 →
- *      Z-up→Y-up 회전 후 뒤집어(꼭짓점이 위로) 배치.
+ *      Z-up→Y-up 회전으로 밑면 아래(뒷구슬쪽)·꼭짓점 위(앞구슬쪽)에 놓인다.
  *  - 뒷구슬(4-1): sphere 를 ⌀headBack 으로, 중심 = 원뿔 밑면 중심.
  *  - 기둥(4-2): cylinder 를 ⌀trunk 로, 뒷구슬 중심 → (baseY + baseTransitionMm).
- *  - 바닥 발(4-2 전이): cone 을 뒤집어(넓은 면 아래) 밑면 ⌀base 가 Y=baseY,
- *      높이 baseTransitionMm 로 기둥에 연결.
+ *  - 바닥 발(4-2 전이): cone 을 넓은 밑면 ⌀base 가 Y=baseY(플레이트)에 닿고 위로
+ *      좁아져 기둥에 연결. 높이 baseTransitionMm.
  *
  * 총 높이(surfaceY−baseY)가 baseTransitionMm+headLengthMm 보다 작으면 화살촉+
  * 바닥 전이 구간을 비례 축소(기존 createSupportMesh 의 0.95 축소 패턴 참고).
@@ -141,7 +137,6 @@ export function assembleVerticalSupport(
   const accIdx: number[] = [];
 
   const tipR = spec.tipDiameterMm * 0.5;
-  const headBackR = spec.headBackDiameterMm * 0.5;
   const trunkD = spec.trunkDiameterMm;
   const baseD = spec.baseDiameterMm;
 
