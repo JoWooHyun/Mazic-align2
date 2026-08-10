@@ -107,6 +107,11 @@ interface DentalPanelProps {
   onClearRedesignDetect?: () => void;
   /** 재설계 검출·점생성 결과 상태 (없으면 미실행). ok=false → 실패 사유. */
   redesignStatus?: { ok: boolean; message: string } | null;
+  /**
+   * 서포트 생성(재설계) — 점 생성 + 표면 스냅 + IndexedDB 저장 (S-4b-1).
+   *   디버그 버튼과 달리 저장까지 해 뷰어에 화살촉+수직 기둥을 세운다.
+   */
+  onGenerateRedesignSupports?: () => void;
   className?: string;
 }
 
@@ -132,6 +137,7 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
   redesignBusy = false,
   onClearRedesignDetect,
   redesignStatus = null,
+  onGenerateRedesignSupports,
   className = "",
 }) => {
   const commitThickness = (raw: number) => {
@@ -345,6 +351,17 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
             층 그래프로 아일랜드(마젠타)·오버행(주황)을 검출하고 검출 영역에 직접
             서포트 점(파랑)을 생성 · 기둥은 세우지 않음(점만)
           </p>
+
+          {/* 서포트 생성(재설계) — 점 생성 + 표면 스냅 + 저장 → 뷰어에 기둥 (S-4b-1) */}
+          {onGenerateRedesignSupports && (
+            <button
+              onClick={onGenerateRedesignSupports}
+              disabled={redesignBusy}
+              className="mt-2 w-full px-3 py-2 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {redesignBusy ? "생성 중…" : "서포트 생성(재설계)"}
+            </button>
+          )}
 
           {redesignStatus && (
             <p

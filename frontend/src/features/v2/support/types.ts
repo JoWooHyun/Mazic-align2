@@ -43,6 +43,25 @@ export interface SupportParams {
    *  원형 단면. 일반 서포트의 trunk 와 분리해 두꺼운 보강용으로
    *  쓰기 좋다. */
   bridgeDiameterMm: number;
+
+  /**
+   * 서포트 재설계(S-4b) 화살촉 접점 — 뒷구슬 지름. mm.
+   *   설계 4-1: 앞구슬(팁)에서 뒷구슬로 굵어지며 기둥에 연결. 기본 1.0.
+   *   재설계(island/slope) 경로만 사용. 기존 trunk/bridge/manual 경로 무관.
+   */
+  headBackDiameterMm: number;
+
+  /**
+   * 서포트 재설계(S-4b) 화살촉 길이 — 앞구슬 중심 → 뒷구슬 중심. mm.
+   *   설계 4-1: 접점 길이(구슬 중심 간) 약 1.0mm. 기본 1.0.
+   */
+  headLengthMm: number;
+
+  /**
+   * 서포트 재설계(S-4b) 접점 침투 깊이. mm.
+   *   설계 4-1: 앞구슬이 모델 표면을 이만큼 파고든다(안 미끄러지게). 기본 0.2.
+   */
+  contactPenetrationMm: number;
 }
 
 export type SupportParamKey = keyof SupportParams;

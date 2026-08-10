@@ -10,6 +10,7 @@ import { useSceneRefs } from "./babylon/scene-refs";
 import { useSceneBootstrap } from "./babylon/hooks/useSceneBootstrap";
 import { useFileMeshSync } from "./babylon/hooks/useFileMeshSync";
 import { useSupportMeshSync } from "./babylon/hooks/useSupportMeshSync";
+import { useSupportPartsReady } from "../support/hooks/useSupportPartsReady";
 import { useSelectionSync } from "./babylon/hooks/useSelectionSync";
 import { useSlicePreview } from "./babylon/hooks/useSlicePreview";
 import { useBridgeVisualization } from "./babylon/hooks/useBridgeVisualization";
@@ -56,6 +57,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     // 씬 상태(ref 45개) + props→ref 미러링을 한 컨텍스트로 묶는다.
     const ctx = useSceneRefs(props);
 
+    // 재설계 서포트 부품 STL 로드 완료 여부 (useSupportMeshSync 재설계 경로 dep).
+    const supportPartsReady = useSupportPartsReady();
+
     // ★ 훅 호출 순서 = 원본 effect 선언 순서 (불변식 1). React 는 언마운트 시 passive
     //   effect cleanup 을 등록 순서대로 실행하고, 이 파일은 그 순서에 의존한다:
     //   bootstrap cleanup 이 먼저 실행돼 isUnmountingRef 를 세팅해야, 뒤에 오는 brush
@@ -63,7 +67,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     //   #1/#1.5 → #2/#3 → #3.5 → #4/#5 → #5.5 → #5.6/#5.7 → #6 → #6.5 로 고정한다.
     useSceneBootstrap(ctx, plateWidthMm, plateDepthMm); // #1 씬 부트스트랩 + #1.5 plate
     useFileMeshSync(ctx, files, overhangAngleDeg); // #2 files→mesh + #3 overhang 색
-    useSupportMeshSync(ctx, supports, supportParams); // #3.5 서포트 mesh diff 동기화
+    useSupportMeshSync(ctx, supports, supportParams, supportPartsReady); // #3.5 서포트 mesh diff 동기화
     useSelectionSync(
       ctx,
       selectedIds,

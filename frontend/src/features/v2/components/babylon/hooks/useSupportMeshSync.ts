@@ -5,15 +5,23 @@
 import { useEffect } from "react";
 import { Matrix, StandardMaterial, Vector3 } from "@babylonjs/core";
 import { createSupportMesh } from "../../../utils/support-render";
+import { createRedesignSupportMesh } from "../../../support/assemble-support";
 import type { SupportParams, SupportPointV2 } from "../../../support/types";
 import type { SceneCtx } from "../scene-refs";
 import { buildSupportKey } from "../support-keys";
 import { clipBridgeWithManifold } from "../bridge-clip";
 
+/** 재설계(화살촉+수직 기둥) 경로로 갈 점인지. kind 있는 점만 새 경로. */
+function isRedesignPoint(p: SupportPointV2): boolean {
+  return p.kind === "island" || p.kind === "slope";
+}
+
 export function useSupportMeshSync(
   ctx: SceneCtx,
   supports: SupportPointV2[],
   supportParams: SupportParams,
+  /** 부품 STL 로드 완료 여부. false 면 재설계 점은 skip 후 로드되면 재실행. */
+  partsReady: boolean,
 ): void {
   // 3.5) 서포트 점 동기화 — diff-based.
   //   · 각 support 의 rebuild key = STL local 좌표 + params (STL transform
@@ -66,25 +74,44 @@ export function useSupportMeshSync(
         : null;
       const key = buildSupportKey(p, supportParams, lc, lb, lcps);
 
+      // 재설계(island/slope) 점인데 부품 미로드면 이번엔 skip (기존 mesh 는
+      //   그대로 둔다). partsReady 가 true 로 바뀌면 effect 재실행되어 세운다.
+      const redesign = isRedesignPoint(p);
+      if (redesign && !partsReady) continue;
+
       const existing = map.get(p.id);
       // skip 조건: key 동일 + mesh 가 stlMesh child (auto-follow). parent
       // 없는 mesh 는 STL 이동 시 world 위치 그대로 남으므로 재생성 필요.
+      // 단 base 가 플레이트(Y=0, coordSpace!=='stl-local')인 재설계 점은 parent
+      // 가 없어도 정상 — parent 유무 skip 조건에서 제외한다.
       if (
         existing &&
         existing.metadata?.rebuildKey === key &&
-        existing.parent
+        (existing.parent || p.coordSpace !== "stl-local")
       ) {
         continue;
       }
       if (existing) existing.dispose();
 
-      const m = createSupportMesh(
-        scene,
-        p,
-        supportParams,
-        mat,
-        ctx.meshMapRef.current,
-      );
+      // 재설계 점 → 화살촉+수직 기둥 조립 경로. 그 외(trunk/bridge/manual) →
+      //   기존 createSupportMesh 경로(무변경).
+      const m = redesign
+        ? createRedesignSupportMesh(
+            scene,
+            p,
+            supportParams,
+            mat as StandardMaterial,
+            ctx.meshMapRef.current,
+          )
+        : createSupportMesh(
+            scene,
+            p,
+            supportParams,
+            mat,
+            ctx.meshMapRef.current,
+          );
+      // 부품 미로드 등으로 null 이면 이번 점은 skip (다음 재실행에서 재시도).
+      if (!m) continue;
       m.isPickable = ctx.editModeRef.current === "support";
 
       let finalMesh = m;
@@ -115,5 +142,5 @@ export function useSupportMeshSync(
       map.set(p.id, finalMesh);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supports, supportParams]);
+  }, [supports, supportParams, partsReady]);
 }

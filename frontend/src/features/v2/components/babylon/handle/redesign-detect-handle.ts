@@ -6,11 +6,12 @@ import type { SceneCtx } from "../scene-refs";
 import {
   disposeRedesignVisualization,
   runRedesignDetect,
+  snapAndFinalizePoints,
 } from "../redesign-detect-actions";
 
 type RedesignDetectHandle = Pick<
   BabylonSceneHandle,
-  "runRedesignDetect" | "clearRedesignDetect"
+  "runRedesignDetect" | "clearRedesignDetect" | "snapAndFinalizeRedesignPoints"
 >;
 
 export function buildRedesignDetectHandle(ctx: SceneCtx): RedesignDetectHandle {
@@ -20,6 +21,9 @@ export function buildRedesignDetectHandle(ctx: SceneCtx): RedesignDetectHandle {
     },
     clearRedesignDetect() {
       disposeRedesignVisualization(ctx);
+    },
+    snapAndFinalizeRedesignPoints(points) {
+      return snapAndFinalizePoints(ctx, points);
     },
   };
 }

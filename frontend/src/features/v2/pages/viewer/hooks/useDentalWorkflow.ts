@@ -204,6 +204,70 @@ export function useDentalWorkflow({
     setRedesignStatus(null);
   }, [sceneHandleRef]);
 
+  // ----- 서포트 생성(재설계) — 점 생성 + 표면 스냅 + IndexedDB 저장 (S-4b-1) -----
+  //   디버그 "재설계 검출·점생성"(handleRunRedesignDetect)과 달리, 여기서는 생성된
+  //   점을 표면 스냅·base 재계산(snapAndFinalizeRedesignPoints)한 뒤 저장한다.
+  //   저장되면 useSupportMeshSync 가 화살촉+수직 기둥을 자동으로 세운다(설계 8장
+  //   3단계 일부). 저장·undo 배선은 handleAutoSupportIslands 패턴을 그대로 따른다.
+  const handleGenerateRedesignSupports = useCallback(async () => {
+    if (!projectId || redesignBusy) return;
+    setRedesignBusy(true);
+    setRedesignStatus(null);
+    try {
+      const res = sceneHandleRef.current?.runRedesignDetect(projectId, {
+        layerHeightMm,
+        liftMm: supportParams.liftMm,
+      });
+      if (!res) return;
+      if (!res.ok) {
+        setRedesignStatus({ ok: false, message: res.reason });
+        return;
+      }
+      // 표면 스냅 + base(Y=0) 재계산 + world→stl-local 변환.
+      const finalized =
+        sceneHandleRef.current?.snapAndFinalizeRedesignPoints(res.points) ??
+        res.points;
+      if (finalized.length === 0) {
+        setRedesignStatus({ ok: true, message: "생성할 서포트 점이 없습니다." });
+        return;
+      }
+      await addSupports(finalized);
+      setRedesignStatus({
+        ok: true,
+        message:
+          `서포트 점 ${finalized.length}개 저장 · 뷰어에 기둥 생성 ` +
+          `(아일랜드 ${res.stats.islandCount} · 오버행 ${res.stats.overhangCount})`,
+      });
+      const ids = finalized.map((p) => p.id);
+      useUndoStore.getState().push({
+        label: "redesign-supports",
+        undo: async () => {
+          for (const id of ids) await supportRepo.deleteSupport(id);
+          await refreshSupports();
+        },
+        redo: async () => {
+          await addSupports(finalized);
+        },
+      });
+    } catch (e) {
+      // 저장/스냅 중 예외도 사용자에게 실패 사유를 남긴다(감사 #5 취지).
+      setRedesignStatus({
+        ok: false,
+        message: `서포트 생성 실패: ${e instanceof Error ? e.message : String(e)}`,
+      });
+    } finally {
+      setRedesignBusy(false);
+    }
+  }, [
+    projectId,
+    redesignBusy,
+    layerHeightMm,
+    supportParams.liftMm,
+    addSupports,
+    refreshSupports,
+    sceneHandleRef,
+  ]);
+
   // ----- 검출 영역 자동 서포트 (Step 2-4, ADR-3: 검출→생성 파이프라인) -----
   //   아일랜드 검출 결과의 island 영역에만 자동 서포트를 생성한다. BabylonScene 이
   //   faceFilter + 마진 가드까지 적용해 점을 반환하면, 여기서 기존 자동 생성 배선
@@ -291,5 +355,6 @@ export function useDentalWorkflow({
     handleAutoSupportIslands,
     handleRunRedesignDetect,
     handleClearRedesignDetect,
+    handleGenerateRedesignSupports,
   };
 }
