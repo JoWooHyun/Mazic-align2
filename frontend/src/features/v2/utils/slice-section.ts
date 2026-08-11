@@ -2,6 +2,7 @@ import { Mesh, Vector3, VertexBuffer } from "@babylonjs/core";
 
 import {
   chainSegments,
+  normalizeTriangleWinding,
   sliceTrianglesAtY,
   type SlicePolygon,
   type SliceSegment,
@@ -18,6 +19,12 @@ export type { SlicePolygon, SliceSegment };
  *
  * 이렇게 뽑은 배열은 Babylon 없이 sliceTrianglesAtY 로 자를 수 있으므로
  * Web Worker 로 (transferable 로) 넘겨 슬라이스할 수 있다.
+ *
+ * 반환 직전 normalizeTriangleWinding 으로 **감김을 통일한다** (B-7 재작업).
+ * Babylon STL 로더의 Y/Z 스왑(반사)으로 뒤집힌 모델 메시와 정상 감김인 조립
+ * 서포트가 섞이면 겹친 부위의 nonzero 감김수가 0 이 되어 마스크에 검은 틈이
+ * 생기기 때문. world 변환에 음수 스케일이 섞인 경우도 여기서 함께 정규화된다.
+ * 이 함수가 프리뷰·ZIP/CTB 워커·FDM gcode 로 가는 삼각형의 **단일 관문**이다.
  */
 export function extractWorldTriangles(mesh: Mesh): Float32Array {
   const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
@@ -48,7 +55,7 @@ export function extractWorldTriangles(mesh: Mesh): Float32Array {
     }
   }
 
-  return out;
+  return normalizeTriangleWinding(out);
 }
 
 /**
