@@ -67,10 +67,18 @@ export function useSupportMeshSync(
         );
         return [v.x, v.y, v.z];
       };
-      const lc = toLocal(p.contact);
-      const lb = toLocal(p.base);
+      // stl-local 점은 저장 좌표가 **이미 로컬**이라 그대로 키에 쓴다.
+      //   toLocal 을 또 걸면 inv(world) 가 이중으로 곱해져, 모델 transform 후
+      //   effect 가 재실행될 때마다 키가 달라진다 → 불필요한 재생성(B-2).
+      //   그대로 쓰면 transform 후에도 키 불변 = 재생성 skip, parent follow 유지.
+      //   world 점(구 경로)은 기존대로 inv(world) 로 로컬화한다.
+      const isLocal = p.coordSpace === "stl-local";
+      const lc = isLocal ? p.contact : toLocal(p.contact);
+      const lb = isLocal ? p.base : toLocal(p.base);
       const lcps = p.curveControlPoints
-        ? p.curveControlPoints.map(toLocal)
+        ? isLocal
+          ? p.curveControlPoints
+          : p.curveControlPoints.map(toLocal)
         : null;
       const key = buildSupportKey(p, supportParams, lc, lb, lcps);
 

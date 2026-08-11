@@ -53,8 +53,9 @@ export default function ViewportOverlays({
   onResetBridgeCurve,
   onDeleteSelected,
 }: ViewportOverlaysProps) {
+  // select-none: 카메라 드래그가 뷰포트 위 UI 글자를 긁어 선택하는 것 방지(B-6).
   return (
-    <div className="absolute top-3 right-3 flex flex-col items-end gap-2 max-w-[calc(100%-1.5rem)]">
+    <div className="absolute top-3 right-3 flex flex-col items-end gap-2 max-w-[calc(100%-1.5rem)] select-none">
       <ViewControls onSetView={onSetView} onFit={onFit} />
 
       <GizmoControls

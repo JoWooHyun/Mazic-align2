@@ -15,9 +15,10 @@ const ViewControls: React.FC<ViewControlsProps> = ({
   onFit,
   className = "",
 }) => {
+  // select-none: 카메라 드래그가 버튼 글자를 긁어 선택하는 것 방지(B-6).
   return (
     <div
-      className={`flex flex-col items-stretch bg-white/95 backdrop-blur rounded-md shadow border border-gray-200 text-xs ${className}`}
+      className={`flex flex-col items-stretch bg-white/95 backdrop-blur rounded-md shadow border border-gray-200 text-xs select-none ${className}`}
     >
       <Btn label="Home" onClick={() => onSetView("home")} />
       <Btn label="Fit" onClick={onFit} />

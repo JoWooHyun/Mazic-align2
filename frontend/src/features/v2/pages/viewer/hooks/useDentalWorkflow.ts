@@ -232,6 +232,12 @@ export function useDentalWorkflow({
         return;
       }
       await addSupports(finalized);
+      // 검출 디버그 오버레이(마젠타/주황/파랑 점) 정리 — 저장이 끝나면 기둥이
+      //   실물로 서므로 오버레이는 역할이 끝났다. world 좌표 고정이라 남겨두면
+      //   모델을 움직였을 때 허공에 떠 보인다(B-4). 상태 메시지는 통계 표시용으로
+      //   유지하고, 디버그 버튼 경로(handleRunRedesignDetect)는 점 눈확인이
+      //   목적이므로 오버레이를 그대로 둔다.
+      sceneHandleRef.current?.clearRedesignDetect();
       setRedesignStatus({
         ok: true,
         message:
