@@ -39,6 +39,60 @@ export interface SlicePolygon {
 const EPS = 1e-6;
 
 /**
+ * 삼각형 수프의 감김을 "바깥 법선 = 양수 부호 부피" 관례로 통일한다 (B-7 재작업).
+ *
+ * 왜 필요한가: 감김 관례는 **소스마다 다르다**. Babylon STL 로더는 기본 설정
+ * (DO_NOT_ALTER_FILE_COORDINATES=false)에서 정점을 (x, z, y) 로 넣어 Y/Z 를
+ * 스왑하는데, 스왑은 반사(행렬식 −1)라 **데이터 감김이 뒤집힌다**. 반면
+ * assemble-core 로 조립한 재설계 서포트나 Babylon 기본 도형은 정상 감김이다.
+ * 감김이 섞인 채 nonzero 로 래스터화하면 서로 겹친 부위에서 감김수가 +1 + (−1)
+ * = 0 이 되어 마스크에 검은 틈(미경화)이 생긴다 — 실물에서 관찰된 초승달 구멍.
+ *
+ * 판정: 각 삼각형의 스칼라 삼중곱 v0·(v1×v2) 를 합산한다(닫힌 메시의 부호
+ * 부피 ×6). 부호만 쓰므로 ÷6 은 생략. 음수면 각 삼각형의 v1↔v2 를 교환해
+ * 감김을 뒤집는다. **in-place** 로 바꾸고 같은 배열을 반환한다.
+ *
+ * 전제와 한계: 닫힌(watertight) 메시를 전제한다. 열린 셸은 부호 부피가 0 근처라
+ * 부호가 불안정하지만, 애초에 슬라이스(내부/외부)가 잘 정의되지 않는 입력이므로
+ * 그대로 둔다. 전체를 일괄로 뒤집으므로 **내강(구멍)의 상대 감김은 보존된다** —
+ * 속 빈 모델의 구멍이 메워지지 않는다.
+ */
+export function normalizeTriangleWinding(triangles: Float32Array): Float32Array {
+  let vol6 = 0;
+
+  for (let t = 0; t + 9 <= triangles.length; t += 9) {
+    const v0x = triangles[t];
+    const v0y = triangles[t + 1];
+    const v0z = triangles[t + 2];
+    const v1x = triangles[t + 3];
+    const v1y = triangles[t + 4];
+    const v1z = triangles[t + 5];
+    const v2x = triangles[t + 6];
+    const v2y = triangles[t + 7];
+    const v2z = triangles[t + 8];
+
+    // v0 · (v1 × v2).
+    vol6 +=
+      v0x * (v1y * v2z - v1z * v2y) +
+      v0y * (v1z * v2x - v1x * v2z) +
+      v0z * (v1x * v2y - v1y * v2x);
+  }
+
+  if (vol6 >= 0) return triangles;
+
+  // 감김 뒤집기: 각 삼각형의 v1(오프셋 3..5) ↔ v2(6..8) 교환.
+  for (let t = 0; t + 9 <= triangles.length; t += 9) {
+    for (let k = 0; k < 3; k++) {
+      const tmp = triangles[t + 3 + k];
+      triangles[t + 3 + k] = triangles[t + 6 + k];
+      triangles[t + 6 + k] = tmp;
+    }
+  }
+
+  return triangles;
+}
+
+/**
  * world 좌표 삼각형 배열(Float32Array)을 Y=`y` 평면으로 자른 line segment 들.
  *
  * `triangles` 는 삼각형당 9 개 float (v0.x, v0.y, v0.z, v1.x … v2.z) 로

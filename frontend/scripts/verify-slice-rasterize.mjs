@@ -6,6 +6,10 @@
 //   예전 even-odd 규칙은 겹침을 XOR 로 지워 마스크에 검은 구멍(미경화)을
 //   만들었다 — (a)(b)(f) 가 그 회귀를 잡는다.
 //
+//   (g)는 그 후속 FAIL: 소스별 감김 관례가 섞이면(Babylon STL 로더의 Y/Z 스왑으로
+//   뒤집힌 모델 + 정상 감김 조립 서포트) nonzero 감김수가 상쇄돼 겹친 부위에
+//   검은 틈이 남는다. normalizeTriangleWinding 이 이를 막는지 확인한다.
+//
 //   실행: npx tsx scripts/verify-slice-rasterize.mjs
 //   통과 로그는 커밋 메시지에 기록.
 
@@ -16,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { assembleVerticalSupport } from "../src/features/v2/support/assemble-core.ts";
 import {
   chainSegments,
+  normalizeTriangleWinding,
   sliceTrianglesAtY,
 } from "../src/features/v2/utils/slice-geometry.ts";
 import { rasterizePolygons } from "../src/features/v2/utils/slice-rasterize.ts";
@@ -323,6 +328,58 @@ function caseAssembledSupport() {
   assert(sampleAt(maskTrunk, opts, 0, 0) === 1, `기둥 구간(Y=${yTrunk}) 축 중심 = 1`);
 }
 
+/**
+ * (g) 혼합 감김 회귀 — 리드 실물 확인 FAIL 재현.
+ *
+ * 모델 메시(Babylon STL 로더 Y/Z 스왑으로 감김 뒤집힘)와 조립 서포트(정상 감김)가
+ * 겹친 상황을 상자 2개로 재현한다. 정규화 없으면 감김수 +1 + (−1) = 0 → 검은 틈.
+ */
+function caseMixedWinding() {
+  console.log("\n(g) 혼합 감김 회귀 — 정상 감김 + 뒤집힌 감김 겹침:");
+
+  // A = 정상 감김(조립 서포트 쪽), B = 감김 뒤집힘(STL 로더로 읽은 모델 쪽).
+  //   겹침 구간 X ∈ [-2, 2].
+  const makeA = () => boxTriangles([-8, 0, -5], [2, 10, 5]);
+  const makeB = () => boxTriangles([-2, 0, -5], [8, 10, 5], true);
+
+  // g-1: 정규화 없이 → 겹침 중심이 상쇄돼 0 (버그 재현).
+  const rawMask = maskAtY(concatTris(makeA(), makeB()), 5);
+  const rawCenter = sampleAt(rawMask, OPTS, 0, 0);
+  console.log(`  g-1 정규화 없음: 겹침 중심(0, 0) = ${rawCenter}`);
+  assert(rawCenter === 0, "g-1 정규화 없으면 겹침 중심 = 0 (FAIL 재현 확인)");
+
+  // g-2: 각 메시를 개별 정규화 후 합치면 → 겹침 중심 = 1.
+  //   (실제 파이프라인도 mesh 단위로 extractWorldTriangles 를 거친다.)
+  const normA = normalizeTriangleWinding(makeA());
+  const normB = normalizeTriangleWinding(makeB());
+  const mask = maskAtY(concatTris(normA, normB), 5);
+  const center = sampleAt(mask, OPTS, 0, 0);
+  console.log(`  g-2 정규화 후: 겹침 중심(0, 0) = ${center}`);
+  assert(center === 1, "g-2 정규화 후 겹침 중심 = 1 (검은 틈 해소)");
+  assert(sampleAt(mask, OPTS, -6, 0) === 1, "g-2 A 단독 영역 = 1");
+  assert(sampleAt(mask, OPTS, 6, 0) === 1, "g-2 B 단독 영역 = 1");
+  const area = pixelsToMm2(filledCount(mask));
+  console.log(`  g-2 union 면적 = ${area.toFixed(2)}mm² (기대 160)`);
+  assert(Math.abs(area - 160) / 160 <= 0.02, "g-2 union 면적 ≈ 160mm² (±2%)");
+
+  // g-3: 감김 뒤집힌 속 빈 상자를 정규화 → 내강은 그대로 구멍이어야 한다.
+  //   (전체를 일괄로 뒤집으므로 내강의 '상대' 감김은 보존된다.)
+  const outer = boxTriangles([-10, 0, -10], [10, 10, 10], true); // 뒤집힘.
+  const cavity = boxTriangles([-4, 0, -4], [4, 10, 4]); // 내강도 함께 뒤집힘.
+  const hollowMask = maskAtY(
+    normalizeTriangleWinding(concatTris(outer, cavity)),
+    5,
+  );
+  const wall = sampleAt(hollowMask, OPTS, 7, 0);
+  const hollow = sampleAt(hollowMask, OPTS, 0, 0);
+  console.log(`  g-3 뒤집힌 속 빈 상자 정규화: 벽(7, 0) = ${wall}, 내강(0, 0) = ${hollow}`);
+  assert(wall === 1, "g-3 벽 위 픽셀 = 1");
+  assert(hollow === 0, "g-3 내강 중심 = 0 (내강 상대 감김 보존)");
+  const ring = pixelsToMm2(filledCount(hollowMask));
+  console.log(`  g-3 링 면적 = ${ring.toFixed(2)}mm² (기대 336)`);
+  assert(Math.abs(ring - 336) / 336 <= 0.02, "g-3 링 면적 ≈ 336mm² (±2%)");
+}
+
 // ── main ─────────────────────────────────────────────────────────────────
 
 function main() {
@@ -333,6 +390,7 @@ function main() {
   const baseArea = caseSingleBox();
   caseRotationInvariance(baseArea);
   caseAssembledSupport();
+  caseMixedWinding();
 
   console.log(failed === 0 ? "\n검증 통과 (전 항목 ok)." : `\n검증 실패 ${failed}건.`);
   process.exit(failed === 0 ? 0 : 1);
