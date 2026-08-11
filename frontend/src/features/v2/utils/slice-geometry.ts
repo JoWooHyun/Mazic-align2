@@ -14,13 +14,24 @@
 /**
  * 평면 Y = `y` 와 삼각형의 교차로 얻는 선분 한 개.
  * 점은 world 좌표의 (X, Z) — 평면 위라 Y 는 생략.
+ *
+ * **a → b 는 방향(directed)이다.** 삼각형 감김(바깥 법선)에서 유도하며,
+ * 진행 방향 왼쪽이 솔리드 내부가 되도록 잡는다. 이 방향이 chainSegments 를
+ * 거쳐 폴리곤 점 순서로 이어지고, rasterizePolygons 의 nonzero 감김 규칙이
+ * 그 순서로 "겹친 솔리드(같은 방향) vs 진짜 구멍(반대 방향)" 을 구분한다.
  */
 export interface SliceSegment {
   a: [number, number];
   b: [number, number];
 }
 
-/** 닫힌 polygon (시계/반시계 무관, 마지막 점은 첫 점과 연결된 것으로 본다). */
+/**
+ * 닫힌 polygon (마지막 점은 첫 점과 연결된 것으로 본다).
+ *
+ * **점 순서(감김 방향)에 의미가 있다** — 선분 방향을 따라 이어붙인 결과라
+ * 바깥 윤곽과 내벽(구멍) 윤곽이 서로 반대 감김을 갖는다. 래스터화의
+ * nonzero 규칙이 이 감김을 사용하므로 점 순서를 임의로 뒤집지 말 것.
+ */
 export interface SlicePolygon {
   points: [number, number][];
 }
@@ -40,6 +51,14 @@ const EPS = 1e-6;
  *
  * vertex 가 정확히 평면 위 (|d| < EPS) 인 경우는 1 회만 카운트.
  * triangle 전체가 코플레너 (3 vertex 다 평면 위) 인 경우 skip.
+ *
+ * **선분 방향(B-7)**: 삼각형 감김에서 얻은 바깥 법선 n = (v1−v0)×(v2−v0) 로
+ * 단면 선분의 진행 방향 t = ŷ×n = XZ 평면의 (n_z, −n_x) 를 구하고, a→b 가 t
+ * 와 같은 쪽을 향하도록 필요하면 두 교차점을 스왑한다. 이렇게 하면 겹쳐 놓은
+ * 두 솔리드의 윤곽은 같은 감김, 속 빈 모델의 내벽은 반대 감김이 되어 래스터화
+ * 단계의 nonzero 규칙이 "겹침=채움 / 구멍=비움" 을 정확히 구분한다.
+ * |t| 가 극소(법선이 거의 ±Y = 평면에 거의 평행한 삼각형)면 방향이 무의미하므로
+ * 원래 순서를 유지한다.
  */
 export function sliceTrianglesAtY(
   triangles: Float32Array,
@@ -94,7 +113,30 @@ export function sliceTrianglesAtY(
     tryEdge(v2x, v2z, v0x, v0z, d2, d0);
 
     if (cross.length >= 2) {
-      out.push({ a: cross[0], b: cross[1] });
+      const p0 = cross[0];
+      const p1 = cross[1];
+
+      // 삼각형 감김에서 바깥 법선 n = (v1−v0)×(v2−v0). 부호만 쓰므로 정규화 불필요.
+      const e1x = v1x - v0x;
+      const e1y = v1y - v0y;
+      const e1z = v1z - v0z;
+      const e2x = v2x - v0x;
+      const e2y = v2y - v0y;
+      const e2z = v2z - v0z;
+      const nx = e1y * e2z - e1z * e2y;
+      const nz = e1x * e2y - e1y * e2x;
+
+      // 단면 선분의 진행 방향 t = ŷ×n → XZ 평면에서 (n_z, −n_x).
+      const tx = nz;
+      const tz = -nx;
+
+      // |t|² 가 극소면 법선이 거의 ±Y (평면에 거의 평행한 삼각형) → 방향이
+      //   무의미하므로 스왑 없이 원래 순서를 유지한다.
+      const swap =
+        tx * tx + tz * tz >= 1e-12 &&
+        (p1[0] - p0[0]) * tx + (p1[1] - p0[1]) * tz < 0;
+
+      out.push(swap ? { a: p1, b: p0 } : { a: p0, b: p1 });
     }
   }
 
@@ -105,8 +147,17 @@ export function sliceTrianglesAtY(
  * Segment 들을 endpoint matching 으로 연결해 닫힌 polygon 들로 만든다.
  *
  * 좌표를 1 µm (1e-3 mm) 단위로 양자화하여 endpoint 동등성 비교를 안전
- * 하게 한다. 한 점에 segment 가 정확히 2 개 incident 면 그 점은 폴리곤
- * 위. 시작점에서 한쪽으로 따라가다 시작점으로 돌아오면 폴리곤 1 개 완성.
+ * 하게 한다. 시작점에서 out-edge 를 따라가다 시작점으로 돌아오면 폴리곤
+ * 1 개 완성.
+ *
+ * **방향 보존(B-7)**: 인접 리스트를 무방향이 아니라 **유방향**(a→b 순방향만)
+ * 으로 만든다. 그래야 결과 폴리곤의 점 순서가 선분 방향을 그대로 따르고,
+ * 감김 방향(바깥 윤곽 vs 내벽)이 의미를 갖는다 — rasterizePolygons 의
+ * nonzero 규칙이 이 감김에 의존한다. 점 순서를 뒤집는 후처리를 넣지 말 것.
+ *
+ * 퇴화 케이스(꼭짓점이 정확히 평면 위 등)로 out-edge 가 끊긴 지점에서 멈추면
+ * 열린 체인이 되는데, 기존과 동일하게 3 점 이상일 때만 채택하고 예외는 던지지
+ * 않는다(관용적 처리).
  */
 export function chainSegments(segs: SliceSegment[]): SlicePolygon[] {
   const QUANT = 1000; // 1µm
@@ -129,37 +180,36 @@ export function chainSegments(segs: SliceSegment[]): SlicePolygon[] {
     return id;
   }
 
-  // adjacency 리스트 (각 점에 인접한 점 ID).
-  const adj = new Map<number, number[]>();
+  // 유방향 인접 리스트: out.get(a) = a 에서 나가는 선분들의 도착점 ID.
+  //   (무방향으로 양쪽에 넣으면 감김 방향이 소실된다 — B-7.)
+  const out = new Map<number, number[]>();
   for (const s of segs) {
     const ia = ensureId(s.a);
     const ib = ensureId(s.b);
     if (ia === ib) continue;
-    if (!adj.has(ia)) adj.set(ia, []);
-    if (!adj.has(ib)) adj.set(ib, []);
-    adj.get(ia)!.push(ib);
-    adj.get(ib)!.push(ia);
+    if (!out.has(ia)) out.set(ia, []);
+    out.get(ia)!.push(ib);
   }
 
   const visited = new Set<number>();
   const polygons: SlicePolygon[] = [];
 
-  for (const startId of adj.keys()) {
+  for (const startId of out.keys()) {
     if (visited.has(startId)) continue;
 
     const polygon: [number, number][] = [];
-    let prev = -1;
     let curr = startId;
-    let safety = adj.size + 4; // 안전 카운터
+    let safety = out.size + 4; // 안전 카운터
 
     while (safety-- > 0) {
       visited.add(curr);
       polygon.push(points[curr]);
 
-      const neighbors = adj.get(curr) ?? [];
+      // out-edge 중 다음 점을 고른다. 시작점으로 닫을 수 있으면 닫고,
+      //   아니면 아직 안 지난 점으로 진행한다.
+      const succs = out.get(curr) ?? [];
       let next = -1;
-      for (const n of neighbors) {
-        if (n === prev) continue;
+      for (const n of succs) {
         if (n === startId && polygon.length > 2) {
           next = n;
           break;
@@ -171,7 +221,6 @@ export function chainSegments(segs: SliceSegment[]): SlicePolygon[] {
       }
 
       if (next === -1 || next === startId) break;
-      prev = curr;
       curr = next;
     }
 
