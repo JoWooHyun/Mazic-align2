@@ -17,6 +17,7 @@ import type {
   ScaleGizmo,
   Scene,
   StandardMaterial,
+  TransformNode,
   UtilityLayerRenderer,
 } from "@babylonjs/core";
 import type { Manifold, ManifoldToplevel } from "manifold-3d";
@@ -100,6 +101,12 @@ export interface SceneCtx {
   scaleGizmoRef: MutableRefObject<ScaleGizmo | null>;
   gizmoDragStartRef: MutableRefObject<GizmoDragStart>;
   gizmoModeRef: MutableRefObject<GizmoMode>;
+  /**
+   * 회전/스케일 기즈모가 attach 되는 피벗 프록시 노드 (B-9). 메인 씬에 있고,
+   * 드래그 시작·선택 동기화 시점마다 현재 bbox 중심으로 재배치된다. mesh 를
+   * 이 노드의 자식으로 임시 부모화해 "bbox 중심 기준 회전/스케일"을 만든다.
+   */
+  pivotProxyRef: MutableRefObject<TransformNode | null>;
 
   // ── prop 미러 ref (effect 바깥 최신값 참조) ──
   overhangRef: MutableRefObject<number>;
@@ -193,6 +200,8 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
   const gizmoDragStartRef = useRef<GizmoDragStart>(null);
   const gizmoModeRef = useRef<GizmoMode>(props.gizmoMode);
   gizmoModeRef.current = props.gizmoMode;
+  // 회전/스케일 피벗 프록시 (B-9). setupGizmos 가 메인 씬에 생성해 채운다.
+  const pivotProxyRef = useRef<TransformNode | null>(null);
 
   // 최신 값을 effect 바깥에서 참조할 수 있게 ref 로 동기화.
   const overhangRef = useRef<number>(props.overhangAngleDeg);
@@ -299,6 +308,7 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
     scaleGizmoRef,
     gizmoDragStartRef,
     gizmoModeRef,
+    pivotProxyRef,
     overhangRef,
     liftRef,
     bridgeDiamRef,

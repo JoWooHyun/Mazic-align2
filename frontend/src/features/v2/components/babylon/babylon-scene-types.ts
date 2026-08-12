@@ -233,6 +233,12 @@ export interface BabylonSceneHandle {
     local: [number, number, number],
   ) => [number, number, number] | null;
   /**
+   * 모델의 현재 world 바운딩박스 중심 = 회전·스케일 피벗 (B-9).
+   * 수치 패널(TransformPanel)이 회전/스케일 값을 바꿀 때 이 점을 고정해
+   * 제자리 회전을 만든다. 모델이 없으면 null.
+   */
+  getModelWorldPivot: (id: string) => [number, number, number] | null;
+  /**
    * Bridge 경로 (base → cp1 → cp2 → cp3 → contact) 가 STL 메쉬와
    * 교차하면 변곡점들을 모든 STL 의 maxY + margin 위로 들어올린 새
    * 변곡점 배열을 반환. 교차 없으면 입력 그대로.

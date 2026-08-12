@@ -358,6 +358,18 @@ const ViewerV2Page: React.FC = () => {
       }
     : null;
 
+  // 수치 패널의 회전·스케일 피벗 = 선택 모델의 현재 bbox 중심 (B-9).
+  //   패널이 드래그 시작 시점에 한 번 물어 스냅샷으로 쓴다. 씬/모델이 아직
+  //   없으면 null → 패널은 기존 무보정 동작으로 폴백한다.
+  //   ⚠️ 평범한 함수로 둔다 — 이 지점은 위쪽 early return(!projectId) 아래라
+  //   useCallback 을 쓰면 훅 호출 순서가 렌더마다 달라진다(rules-of-hooks).
+  //   호출 시점에 최신 ref/선택을 읽으므로 메모이제이션이 필요 없다.
+  const selectedFileId = selectedFile?.id ?? null;
+  const getTransformPivot = () => {
+    if (!selectedFileId) return null;
+    return sceneHandleRef.current?.getModelWorldPivot(selectedFileId) ?? null;
+  };
+
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       <ViewerHeader
@@ -560,6 +572,7 @@ const ViewerV2Page: React.FC = () => {
           transformPanelSelected={transformPanelSelected}
           onPreviewTransform={handlePreviewTransform}
           onCommitTransform={handleCommitTransform}
+          getTransformPivot={getTransformPivot}
           onAutoGenerate={support.handleAutoGenerate}
           onClearAllSupports={support.handleClearAllSupports}
           supportCount={supports.length}
