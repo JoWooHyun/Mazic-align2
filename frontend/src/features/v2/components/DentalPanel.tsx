@@ -24,6 +24,8 @@
  * 스타일은 SupportParamsPanel 패턴을 따른다 (흰 카드 · 회색 라벨 · primary 버튼).
  */
 
+import NumberInput from "./common/NumberInput";
+
 /** dental-brush 두께 입력 한계 (원본 SHIFT+휠 clamp 0.5~30mm 과 일치). */
 const BRUSH_MIN = 0.5;
 const BRUSH_MAX = 30;
@@ -188,13 +190,17 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
             onChange={(e) => commitThickness(Number(e.target.value))}
             className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
           />
-          <input
-            type="number"
+          {/* 숫자칸은 Enter/blur 에서만 커밋한다 (B-14). 슬라이더는 연속
+              조작이라 종전대로 즉시 반영. 클램프는 commitThickness 가 이미
+              하지만, NumberInput 이 커밋 시점에 먼저 범위로 맞춰 준다. */}
+          <NumberInput
             min={BRUSH_MIN}
             max={BRUSH_MAX}
             step={BRUSH_STEP}
+            decimals={2}
             value={brushThicknessMm}
-            onChange={(e) => commitThickness(Number(e.target.value))}
+            onChange={commitThickness}
+            ariaLabel="브러쉬 두께"
             className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
           />
           <span className="w-6 text-xs text-gray-500">mm</span>

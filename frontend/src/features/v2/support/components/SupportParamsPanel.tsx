@@ -1,3 +1,4 @@
+import NumberInput from "../../components/common/NumberInput";
 import { useSupportParamsStore } from "../hooks/useSupportParamsStore";
 import {
   SUPPORT_PARAM_LIMITS,
@@ -201,14 +202,19 @@ const ParamRow: React.FC<ParamRowProps> = ({
           onChange={(e) => commit(Number(e.target.value))}
           className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer disabled:cursor-not-allowed"
         />
-        <input
-          type="number"
+        {/* 숫자칸은 Enter/blur 에서만 커밋 (B-14). 슬라이더는 종전대로 즉시 반영.
+            리드가 "서포트쪽도 다 이상함" 으로 보고한 칸이다 — 여기는 클램프에
+            더해 step 스냅까지 타자마다 걸려서, step 0.5 인 항목에 "1.7" 을
+            치면 "1" 이 1.0 으로, "1.7" 이 1.5 로 끌려갔다. */}
+        <NumberInput
           min={limit.min}
           max={limit.max}
           step={limit.step}
+          decimals={3}
           value={value}
           disabled={disabled}
-          onChange={(e) => commit(Number(e.target.value))}
+          onChange={commit}
+          ariaLabel={limit.label}
           className="w-20 px-2 py-1 text-sm border border-gray-300 rounded disabled:bg-gray-100 disabled:cursor-not-allowed"
         />
         <span className="w-6 text-xs text-gray-500">{limit.unit}</span>

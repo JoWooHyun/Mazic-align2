@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Quaternion, Vector3 } from "@babylonjs/core";
 
+import NumberInput from "./common/NumberInput";
 import {
   DISPLAY_AXIS_LABELS,
   fromDisplayAxes,
@@ -106,6 +107,10 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
   //   매번 다시 물으면 피벗이 따라 흘러 회전축이 미끄러진다. 시작 시점 값을
   //   드래그 내내 고정해 쓴다.
   const pivotRef = useRef<[number, number, number] | null>(null);
+  // 이번 편집에서 마지막으로 계산된 transform (B-14). setLocal 은 비동기라
+  //   같은 이벤트 안에서 커밋까지 끝내는 숫자칸 경로에서는 `local` 이 아직
+  //   옛 값이다. endDrag 가 읽을 최신값을 여기 담아 둔다. 상세는 endDrag 주석.
+  const latestRef = useRef<TransformV2 | null>(null);
   // Scale uniform 토글: ON 시 sx/sy/sz 가 한 값으로 동기 변경.
   const [uniformScale, setUniformScale] = useState(true);
 
@@ -113,6 +118,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
     setLocal(selected ? selected.transform : IDENTITY_TRANSFORM);
     startRef.current = null;
     pivotRef.current = null;
+    latestRef.current = null;
   }, [selected]);
 
   /**
@@ -155,6 +161,8 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
 
   function beginDrag() {
     startRef.current = { ...local };
+    // 아직 아무것도 안 바꿨으니 끝값은 시작값과 같다 (B-14).
+    latestRef.current = { ...local };
     // 드래그 시작 시점의 피벗을 스냅샷 (B-9).
     pivotRef.current = getPivot ? getPivot() : null;
   }
@@ -240,6 +248,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
       // 이동은 피벗 보정 대상이 아니지만, 같은 드래그에서 회전/스케일이 함께
       //   들어올 수 있으므로 기존 경로(withPivot)를 그대로 태운다.
       const next = base ? withPivot(base, raw) : raw;
+      latestRef.current = next;
       onPreview(selected!.id, next);
       return next;
     });
@@ -261,6 +270,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
       const [rx, ry, rz] = fromDisplayEulerDeg(disp);
       const raw = { ...src, rx, ry, rz };
       const next = base ? withPivot(base, raw) : raw;
+      latestRef.current = next;
       onPreview(selected!.id, next);
       return next;
     });
@@ -288,24 +298,42 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
         raw = { ...src, sx, sy, sz };
       }
       const next = base ? withPivot(base, raw) : raw;
+      latestRef.current = next;
       onPreview(selected!.id, next);
       return next;
     });
   }
 
+  /**
+   * 편집 한 묶음의 끝. 슬라이더는 pointerup, 숫자칸은 커밋(Enter/blur) 직후.
+   *
+   * ⚠️ 끝값을 `local`(렌더 클로저) 이 아니라 `latestRef` 에서 읽는다 (B-14).
+   * 슬라이더는 onBegin/onChange/onEnd 가 **서로 다른 이벤트**라 onEnd 시점엔
+   * 이미 리렌더가 끝나 `local` 이 최신이었다. 그런데 숫자칸 커밋은
+   * onBegin → onChange → onEnd 를 **한 이벤트 핸들러 안에서 동기로** 부르므로,
+   * setLocal 이 아직 반영되지 않아 `local` 은 편집 **이전** 값이다.
+   * 그대로 두면 `transformsEqual(start, local)` 이 참이 되어 커밋이 통째로
+   * 사라지거나(DB 미저장·undo 누락) 옛 값이 저장된다.
+   * `apply*Field` 가 계산 즉시 채워 넣는 `latestRef` 를 쓰면 양쪽 경로가 다 맞다.
+   */
   function endDrag() {
     const start = startRef.current;
+    const end = latestRef.current ?? local;
     startRef.current = null;
     pivotRef.current = null;
+    latestRef.current = null;
     if (!start) return;
-    if (transformsEqual(start, local)) return;
-    onCommit(selected!.id, start, local);
+    if (transformsEqual(start, end)) return;
+    onCommit(selected!.id, start, end);
   }
 
   function resetAll() {
     if (transformsEqual(local, IDENTITY_TRANSFORM)) return;
     const start = { ...local };
     setLocal(IDENTITY_TRANSFORM);
+    // 진행 중이던 편집 흔적을 지운다 — 남아 있으면 다음 endDrag 가 옛 값을
+    //   끝값으로 커밋할 수 있다 (B-14).
+    latestRef.current = null;
     onPreview(selected!.id, IDENTITY_TRANSFORM);
     onCommit(selected!.id, start, IDENTITY_TRANSFORM);
   }
@@ -347,6 +375,8 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
             min={-200}
             max={200}
             step={0.1}
+            // 위치는 µm 단위까지 보이게 소수 3자리 (B-14).
+            decimals={3}
             onBegin={beginDrag}
             onChange={(v) => applyPositionField(i as 0 | 1 | 2, v)}
             onEnd={endDrag}
@@ -364,6 +394,9 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
             min={-180}
             max={180}
             step={1}
+            // 각도는 소수 2자리. Euler↔quaternion 왕복 찌꺼기(89.9999999)를
+            //   여기서 흡수해 "90" 으로 보이게 한다 — 리드 보고 케이스 (B-14).
+            decimals={2}
             onBegin={beginDrag}
             onChange={(v) => applyRotationField(i as 0 | 1 | 2, v)}
             onEnd={endDrag}
@@ -433,6 +466,8 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
             min={0.1}
             max={5}
             step={0.01}
+            // 배율은 step 0.01 보다 한 자리 여유를 둔다 (B-14).
+            decimals={3}
             onBegin={beginDrag}
             onChange={(v) => applyScaleField(0, v)}
             onEnd={endDrag}
@@ -447,6 +482,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
               min={0.1}
               max={5}
               step={0.01}
+              decimals={3}
               onBegin={beginDrag}
               onChange={(v) => applyScaleField(i as 0 | 1 | 2, v)}
               onEnd={endDrag}
@@ -486,12 +522,36 @@ interface RowProps {
   min: number;
   max: number;
   step: number;
+  /** 숫자칸 표시 반올림 자릿수 (B-14). 내부 값은 반올림하지 않는다. */
+  decimals: number;
   onBegin: () => void;
   onChange: (v: number) => void;
   onEnd: () => void;
 }
 
-function Row({ axis, value, min, max, step, onBegin, onChange, onEnd }: RowProps) {
+/**
+ * 슬라이더 + 숫자칸 한 줄.
+ *
+ * 두 입력의 커밋 규약이 **다르다** (B-14):
+ *   · 슬라이더 — 드래그는 연속 조작이라 실시간 프리뷰가 맞다. 종전대로
+ *     pointerdown=onBegin / onChange 즉시 반영 / pointerup=onEnd.
+ *     undo 단위 = 한 번의 드래그.
+ *   · 숫자칸 — 타자 도중의 반쪽 숫자가 즉시 적용되던 것이 리드가 보고한 증상의
+ *     원인이었다. `NumberInput` 이 Enter/blur 에서만 커밋하고, 값이 실제로
+ *     바뀔 때만 onBegin→onChange→onEnd 를 한 묶음으로 낸다.
+ *     undo 단위 = 한 번의 편집.
+ */
+function Row({
+  axis,
+  value,
+  min,
+  max,
+  step,
+  decimals,
+  onBegin,
+  onChange,
+  onEnd,
+}: RowProps) {
   return (
     <div className="flex items-center space-x-2">
       <span className="w-4 text-xs font-bold text-gray-600">{axis}</span>
@@ -506,16 +566,18 @@ function Row({ axis, value, min, max, step, onBegin, onChange, onEnd }: RowProps
         onPointerCancel={onEnd}
         onChange={(e) => onChange(Number(e.target.value))}
         className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+        aria-label={`${axis} 슬라이더`}
       />
-      <input
-        type="number"
+      <NumberInput
+        value={value}
         min={min}
         max={max}
         step={step}
-        value={value}
-        onFocus={onBegin}
-        onBlur={onEnd}
-        onChange={(e) => onChange(Number(e.target.value))}
+        decimals={decimals}
+        onBegin={onBegin}
+        onChange={onChange}
+        onEnd={onEnd}
+        ariaLabel={axis}
         className="w-16 px-1.5 py-0.5 text-xs border border-gray-300 rounded"
       />
     </div>
