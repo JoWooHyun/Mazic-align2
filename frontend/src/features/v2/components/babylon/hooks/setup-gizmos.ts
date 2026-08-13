@@ -38,6 +38,21 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
   rotationGizmo.scaleRatio = SCALE;
   scaleGizmo.scaleRatio = SCALE;
 
+  // 이동/회전 기즈모 축을 **world 에 고정** 한다 (B-12).
+  //   Babylon 기본값은 true(local 모드)라 화살표/링이 attach 된 노드의 회전을
+  //   매 프레임 따라간다. 그러면 모델을 95° 돌린 뒤 링도 95° 기울어, 어느 링이
+  //   어느 축인지 사용자가 알 수 없다. CHITUBOX 는 회전 후에도 링 방향이
+  //   그대로다(리드 실물 대조). 구 v1 도 명시적으로 껐던 설정인데
+  //   (utils/babylon.utils.ts:378·384) v2 이관에서 누락된 회귀다.
+  //   이 플래그 하나로 충분하다 — Gizmo._update 는 flag=false 면 attach 노드
+  //   자세와 무관하게 rootMesh 회전을 identity 로 세운다. 즉 피벗 프록시가
+  //   기울어 있어도 링은 world 축에 그려진다.
+  //   ⚠️ ScaleGizmo 에는 걸지 않는다 — Babylon 이 false 를 **거부하는 no-op
+  //   setter** 라(scaleGizmo.js: Logger.Warn "not supported") 콘솔 경고만 남고
+  //   아무 효과가 없다. 스케일 축은 프록시 자세로만 정해진다(scene-actions.ts).
+  positionGizmo.updateGizmoRotationToMatchAttachedMesh = false;
+  rotationGizmo.updateGizmoRotationToMatchAttachedMesh = false;
+
   const onDragStart = () => {
     const attached = positionGizmo.attachedMesh;
     if (attached) {
@@ -99,12 +114,12 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
     //   유지하며 로컬 좌표를 재계산하므로 시각적 점프가 없다(서포트 임시 부모화와
     //   같은 패턴). 이동 기즈모는 mesh 에 직접 attach 라 이 경로를 타지 않는다.
     const proxy = ctx.pivotProxyRef.current;
-    const rotOrScale =
-      proxy !== null &&
-      (rotationGizmo.attachedNode === proxy ||
-        scaleGizmo.attachedNode === proxy);
-    if (proxy && rotOrScale) {
-      placePivotProxy(ctx, mesh);
+    const isRotate = proxy !== null && rotationGizmo.attachedNode === proxy;
+    const isScale = proxy !== null && scaleGizmo.attachedNode === proxy;
+    if (proxy && (isRotate || isScale)) {
+      // 자세는 기즈모별로 다르다 (B-12) — 스케일은 모델 로컬 축을 써야
+      //   전단(shear)이 생기지 않는다. placePivotProxy 주석 참고.
+      placePivotProxy(ctx, mesh, isScale ? "mesh" : "identity");
       mesh.setParent(proxy);
     }
     // STL drag 중 race 차단: 영향 받는 supports mesh 들을 STL
@@ -187,7 +202,9 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
     const proxy = ctx.pivotProxyRef.current;
     if (proxy && mesh.parent === proxy) {
       mesh.setParent(null);
-      // 다음 드래그를 위해 프록시 자세 초기화 (위치는 재배치 시 갱신).
+      // 다음 드래그를 위해 프록시 자세 초기화 (위치·자세는 다음 placePivotProxy
+      //   호출이 기즈모 종류에 맞게 다시 세운다). 드래그로 기울거나 늘어난
+      //   프록시가 그 사이에 남지 않도록 여기서 되돌려 둔다.
       proxy.rotationQuaternion?.copyFrom(Quaternion.Identity());
       proxy.scaling.set(1, 1, 1);
     }
