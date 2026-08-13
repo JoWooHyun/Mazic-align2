@@ -1,11 +1,32 @@
 // 선택 하이라이트 · STL 드래그 · gizmo attach · 활성 STL 조회 — ctx 기반 액션.
 //   원본 BabylonScene 본문의 내부 함수(refreshHighlight/attachDragBehavior/
 //   syncGizmo/getActiveStl)를 순수 이동. ref 접근을 ctx 인자로 바꾼 것 외 로직 무변경.
-import { Color3, Mesh, PointerDragBehavior, Vector3 } from "@babylonjs/core";
-import { readMeshTransform } from "../../utils/transform";
+import { Color3, Mesh, PointerDragBehavior, Quaternion, Vector3 } from "@babylonjs/core";
+import { meshWorldBBoxCenter, readMeshTransform } from "../../utils/transform";
 import type { SceneCtx } from "./scene-refs";
 
 export const HIGHLIGHT_COLOR = new Color3(1.0, 0.78, 0.18); // 따뜻한 노랑
+
+/**
+ * 피벗 프록시를 mesh 의 **현재 world bbox 중심**에 놓고 모델 회전에 정렬한다 (B-9).
+ *
+ * 회전/스케일 기즈모는 이 프록시에 attach 되므로, 링이 항상 실루엣 중심에 보이고
+ * 드래그가 그 점을 축으로 돈다. 회전은 모델 회전에 맞춰 로컬 축 링을 유지하고
+ * (현행 UX), 스케일은 항상 1 에서 시작해 드래그 배율이 그대로 읽히게 한다.
+ *
+ * 드래그 시작 시점과 선택 동기화(syncGizmo) 양쪽에서 호출한다 — 드래그 전에도
+ * 링이 중심에 보여야 하기 때문.
+ */
+export function placePivotProxy(ctx: SceneCtx, mesh: Mesh): void {
+  const proxy = ctx.pivotProxyRef.current;
+  if (!proxy) return;
+  proxy.position.copyFrom(meshWorldBBoxCenter(mesh));
+  const q = mesh.rotationQuaternion ?? Quaternion.FromEulerVector(mesh.rotation);
+  if (!proxy.rotationQuaternion) proxy.rotationQuaternion = q.clone();
+  else proxy.rotationQuaternion.copyFrom(q);
+  proxy.scaling.set(1, 1, 1);
+  proxy.computeWorldMatrix(true);
+}
 
 export function refreshHighlight(ctx: SceneCtx): void {
   const hl = ctx.highlightRef.current;
@@ -78,12 +99,21 @@ export function syncGizmo(ctx: SceneCtx): void {
   //   · Bridge 변곡점/끝점 sphere 선택됨 → PositionGizmo 가 그 sphere
   //     X/Y/Z 축으로 깊이 방향 정확 드래그 가능.
   //   · 그 외 + 단점 서포트 기둥 선택 → 기둥에 attach.
+  // ⚠️ rg/sg 는 attachedNode(피벗 프록시, B-9)도 함께 풀어야 한다. Babylon 에서
+  //   attachedMesh=null 은 attachedNode 를 지우지 않아, select+rotate 에서
+  //   다른 모드로 전환하면 링이 프록시에 붙은 채 남는다.
+  const detachRotScale = () => {
+    rg.attachedMesh = null;
+    sg.attachedMesh = null;
+    rg.attachedNode = null;
+    sg.attachedNode = null;
+  };
+
   if (ctx.editModeRef.current === "support") {
     const handleMesh = ctx.selectedBridgeSphereRef.current;
     if (handleMesh) {
       pg.attachedMesh = handleMesh;
-      rg.attachedMesh = null;
-      sg.attachedMesh = null;
+      detachRotScale();
       return;
     }
     const sid = ctx.selectedSupportRef.current;
@@ -91,8 +121,7 @@ export function syncGizmo(ctx: SceneCtx): void {
       ? ctx.supportMeshMapRef.current.get(sid) ?? null
       : null;
     pg.attachedMesh = sMesh;
-    rg.attachedMesh = null;
-    sg.attachedMesh = null;
+    detachRotScale();
     return;
   }
 
@@ -102,8 +131,7 @@ export function syncGizmo(ctx: SceneCtx): void {
   //   마다 syncGizmo 를 재호출하므로 select 복귀 시 자동 재attach.
   if (ctx.editModeRef.current !== "select") {
     pg.attachedMesh = null;
-    rg.attachedMesh = null;
-    sg.attachedMesh = null;
+    detachRotScale();
     return;
   }
 
@@ -113,9 +141,20 @@ export function syncGizmo(ctx: SceneCtx): void {
   const mesh = single ? ctx.meshMapRef.current.get(single) ?? null : null;
   const mode = ctx.gizmoModeRef.current;
 
+  // 이동 기즈모는 기존대로 mesh 에 직접 attach (경로 무변경).
   pg.attachedMesh = mode === "translate" ? mesh : null;
-  rg.attachedMesh = mode === "rotate" ? mesh : null;
-  sg.attachedMesh = mode === "scale" ? mesh : null;
+
+  // 회전/스케일은 피벗 프록시에 attach 해 bbox 중심을 축으로 돌린다 (B-9).
+  //   attachedMesh/attachedNode 는 같은 슬롯을 공유하므로, 프록시를 쓰지 않는
+  //   경우 둘 다 null 로 정리해 이전 attach 가 남지 않게 한다.
+  const proxy = ctx.pivotProxyRef.current;
+  const usePivot = mesh !== null && proxy !== null;
+  detachRotScale();
+  if (usePivot && (mode === "rotate" || mode === "scale")) {
+    placePivotProxy(ctx, mesh);
+    if (mode === "rotate") rg.attachedNode = proxy;
+    else sg.attachedNode = proxy;
+  }
 }
 
 /**

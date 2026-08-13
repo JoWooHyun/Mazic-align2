@@ -34,6 +34,8 @@ interface ViewerSidePanelProps {
   transformPanelSelected: TransformPanelSelected | null;
   onPreviewTransform: (id: string, t: TransformV2) => void;
   onCommitTransform: (id: string, start: TransformV2, end: TransformV2) => void;
+  /** 선택 모델의 현재 bbox 중심 = 회전·스케일 피벗 (B-9). 없으면 무보정 폴백. */
+  getTransformPivot?: () => [number, number, number] | null;
   // Support
   onAutoGenerate: () => void;
   onClearAllSupports: () => void;
@@ -73,6 +75,7 @@ export default function ViewerSidePanel({
   transformPanelSelected,
   onPreviewTransform,
   onCommitTransform,
+  getTransformPivot,
   onAutoGenerate,
   onClearAllSupports,
   supportCount,
@@ -133,6 +136,7 @@ export default function ViewerSidePanel({
             selected={transformPanelSelected}
             onPreview={onPreviewTransform}
             onCommit={onCommitTransform}
+            getPivot={getTransformPivot}
           />
         ) : panelTab === "support" ? (
           <SupportParamsPanel

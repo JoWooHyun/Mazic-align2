@@ -6,6 +6,7 @@ import {
   worldToStlLocal as worldToStlLocalUtil,
   stlLocalToWorld as stlLocalToWorldUtil,
 } from "../../../utils/coord-space";
+import { meshWorldBBoxCenter } from "../../../utils/transform";
 import type { BabylonSceneHandle } from "../babylon-scene-types";
 import type { SceneCtx } from "../scene-refs";
 
@@ -13,6 +14,7 @@ type TransformHandle = Pick<
   BabylonSceneHandle,
   | "worldToStlLocal"
   | "stlLocalToWorld"
+  | "getModelWorldPivot"
   | "autoRouteBridge"
   | "findSurfaceBelow"
   | "projectToStlSurface"
@@ -29,6 +31,12 @@ export function buildTransformHandle(ctx: SceneCtx): TransformHandle {
       const stlMesh = ctx.meshMapRef.current.get(stlId);
       if (!stlMesh) return null;
       return stlLocalToWorldUtil(local, stlMesh);
+    },
+    getModelWorldPivot(id) {
+      const mesh = ctx.meshMapRef.current.get(id);
+      if (!mesh) return null;
+      const c = meshWorldBBoxCenter(mesh);
+      return [c.x, c.y, c.z];
     },
     autoRouteBridge(base, contact, cps, excludeStlIds) {
       const SAFETY_MM = 5;
