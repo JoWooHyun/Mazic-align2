@@ -6,7 +6,10 @@ import { useCallback } from "react";
 import { useUndoStore } from "../../../hooks/useUndoStore";
 import type { SupportPointV2 } from "../../../support/types";
 import type { BabylonSceneHandle } from "../../../components/BabylonScene";
-import { type TransformV2 } from "../../../types/transform";
+import {
+  transformKeepsRedesignValid,
+  type TransformV2,
+} from "../../../types/transform";
 import { transformPointBetween } from "../../../utils/transform";
 import {
   getBridgePathPoint,
@@ -25,6 +28,18 @@ interface UseTransformCommitArgs {
   sceneHandleRef: React.RefObject<BabylonSceneHandle>;
   updateTransform: UpdateTransform;
   patchSupport: PatchSupport;
+  /**
+   * 재설계 서포트 무효화 삭제용 (B-1). useSupportsV2 의 removeMany —
+   * 단일 tx + refresh 1회라 대량 삭제에서도 재렌더가 한 번만 돈다.
+   */
+  removeSupports: (ids: string[]) => Promise<void>;
+  /** 무효화 undo 시 삭제된 점 복원용 (B-1). useSupportsV2 의 addMany. */
+  addSupports: (points: SupportPointV2[]) => Promise<void>;
+  /**
+   * 재설계 서포트가 무효화돼 삭제됐을 때의 사용자 안내 (B-1).
+   * count = 삭제된 개수. 미제공이면 안내를 생략한다.
+   */
+  onRedesignInvalidated?: (count: number) => void;
 }
 
 interface UseTransformCommitResult {
@@ -49,6 +64,9 @@ export function useTransformCommit({
   sceneHandleRef,
   updateTransform,
   patchSupport,
+  removeSupports,
+  addSupports,
+  onRedesignInvalidated,
 }: UseTransformCommitArgs): UseTransformCommitResult {
   const handlePreviewTransform = useCallback(
     (id: string, t: TransformV2) => {
@@ -146,13 +164,52 @@ export function useTransformCommit({
       // 영향 받는 서포트: stlId == id (contact 쪽) 또는 baseStlId == id
       // (Bridge base 쪽). closure stale 방지 위해 ref 사용.
       const currentSupports = supportsRef.current;
+
+      // ── B-1: 재설계 서포트 무효화 (리드 확정 = CHITUBOX 식 삭제+안내) ────────
+      //   재설계 점(kind='island'|'slope')은 stl-local 이라 모델 변형을 그대로
+      //   따라간다 → 회전·스케일·수직이동이면 기둥이 기울거나 접지가 깨져 출력
+      //   불가. 이때는 유지하지 않고 삭제한다. **순수 XZ 평행이동만 예외**로,
+      //   수직성과 바닥 접지가 보존되므로 그대로 따라가게 둔다.
+      //   기존 world 서포트(trunk/bridge/manual) 경로는 아래 affected 로직 그대로.
+      //   ※ affected 보다 먼저 계산한다 — 삭제 대상을 affected 에서 빼야 하므로.
+      const invalidates = !transformKeepsRedesignValid(start, end);
+      const invalidated = invalidates
+        ? currentSupports.filter(
+            (s) =>
+              s.stlId === id && (s.kind === "island" || s.kind === "slope"),
+          )
+        : [];
+      const invalidatedIds = new Set(invalidated.map((s) => s.id));
+
       const affected = currentSupports.filter(
         // stl-local 좌표 supports 는 mesh.parent 가 자동 follow → patch X.
         (s) =>
           s.coordSpace !== "stl-local" &&
-          (s.stlId === id || s.baseStlId === id),
+          (s.stlId === id || s.baseStlId === id) &&
+          // 삭제 대상은 patch 하지 않는다. 활성 STL 부재로 coordSpace 가
+          // 미지정(world)인 채 저장된 재설계 점은 두 목록에 동시에 걸릴 수
+          // 있는데, 그러면 이미 지워진 id 에 updateSupport 가 걸려
+          // "support not found" 로 patch Promise.all 전체가 죽는다.
+          !invalidatedIds.has(s.id),
       );
 
+      // 무효화 삭제는 undo/redo 보다 반드시 먼저 끝나야 한다 (B-1).
+      //   fire-and-forget 으로 두면 사용자가 "변형 → 즉시 Ctrl+Z" 했을 때
+      //   삭제가 끝나기 전에 undo 의 복원(addSupports)이 돌아 순서가 뒤집힌다.
+      //   undo/redo 클로저에서 이 promise 를 먼저 await 해 직렬화한다.
+      const invalidationDone: Promise<void> =
+        invalidated.length > 0
+          ? (async () => {
+              try {
+                await removeSupports(invalidated.map((s) => s.id));
+                onRedesignInvalidated?.(invalidated.length);
+              } catch (e) {
+                // 삭제 실패 시 안내 배너를 띄우지 않는다 — 실제로 지워지지
+                // 않았는데 "제거되었습니다" 라고 말하면 안 되므로. 로그만 남김.
+                console.error("재설계 서포트 무효화 삭제 실패 (B-1):", e);
+              }
+            })()
+          : Promise.resolve();
 
       type CpsArr = [number, number, number][];
       type SupportPatch = {
@@ -314,20 +371,33 @@ export function useTransformCommit({
       useUndoStore.getState().push({
         label: "transform",
         undo: async () => {
+          // 커밋 시 시작된 무효화 삭제가 끝난 뒤에 복원해야 한다 (B-1).
+          //   먼저 await 하지 않으면 아직 안 지워진 점을 다시 넣게 되고,
+          //   뒤늦게 도착한 삭제가 복원본을 도로 지워버린다.
+          await invalidationDone;
           // undo 도 STL 을 다시 이동시키므로 검출 결과 무효화 (감사 B1).
           sceneHandleRef.current?.invalidateDentalResults(id);
           await updateTransform(id, start);
           await Promise.all(
             oldStates.map(({ id: sid, patch }) => patchSupport(sid, patch)),
           );
+          // B-1: 무효화로 삭제됐던 재설계 서포트를 원본 그대로 복원. transform
+          //   되돌림과 같은 entry 라 Ctrl+Z 한 번으로 둘 다 돌아온다.
+          if (invalidated.length > 0) await addSupports(invalidated);
         },
         redo: async () => {
+          // undo 와 같은 이유로 최초 삭제 완료를 먼저 기다린다 (B-1).
+          await invalidationDone;
           // redo 도 마찬가지로 무효화 (감사 B1).
           sceneHandleRef.current?.invalidateDentalResults(id);
           await updateTransform(id, end);
           await Promise.all(
             newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
           );
+          // B-1: 다시 변형했으므로 재설계 서포트도 다시 삭제 (단일 tx).
+          if (invalidated.length > 0) {
+            await removeSupports(invalidated.map((s) => s.id));
+          }
         },
       });
     },
@@ -339,6 +409,9 @@ export function useTransformCommit({
       supports,
       patchSupport,
       followAttachedChildren,
+      removeSupports,
+      addSupports,
+      onRedesignInvalidated,
     ],
   );
 

@@ -168,10 +168,17 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
     if (!mesh) return;
     // STL drag 종료 — supports mesh 의 parent 해제. setParent(null)
     // 은 world transform 유지하면서 parent 만 푸는 안전한 호출.
-    for (const supMesh of ctx.supportMeshMapRef.current.values()) {
-      if (supMesh.parent === mesh) {
-        supMesh.setParent(null);
-      }
+    //
+    // ⚠️ B-11: **stl-local 서포트는 풀지 않는다.** 그 점들은 정본 parent 가
+    //   stlMesh 라서(useSupportMeshSync 가 그렇게 세운다) 여기서 함께 풀면
+    //   다음 sync effect 재실행 전까지 모델 이동에 따라오지 못한다. 드래그
+    //   시작 때 임시로 부모화한 것은 world 서포트뿐이므로 그것만 되돌린다.
+    const supportsNow = ctx.supportsRef.current;
+    for (const [supId, supMesh] of ctx.supportMeshMapRef.current) {
+      if (supMesh.parent !== mesh) continue;
+      const sup = supportsNow.find((s) => s.id === supId);
+      if (sup?.coordSpace === "stl-local") continue; // 정본 parent 유지.
+      supMesh.setParent(null);
     }
     // 피벗 프록시 부모화 해제 (B-9). readMeshTransform 은 mesh 의 **로컬** SRT 를
     //   읽으므로, 프록시 자식인 상태로 읽으면 프록시 회전이 빠진 값이 나온다.

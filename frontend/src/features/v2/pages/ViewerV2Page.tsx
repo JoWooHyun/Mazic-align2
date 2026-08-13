@@ -54,6 +54,7 @@ const ViewerV2Page: React.FC = () => {
   const {
     supports,
     addMany: addSupports,
+    removeMany: removeSupports,
     clearAll: clearAllSupports,
     refresh: refreshSupports,
     patchSupport,
@@ -129,6 +130,30 @@ const ViewerV2Page: React.FC = () => {
     sceneHandleRef,
   });
 
+  // 재설계 서포트 무효화 안내 (B-1). 5초 뒤 자동 소멸.
+  const [redesignInvalidNotice, setRedesignInvalidNotice] = useState<
+    string | null
+  >(null);
+  const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleRedesignInvalidated = (count: number) => {
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    setRedesignInvalidNotice(
+      `모델 변형으로 재설계 서포트 ${count}개가 제거되었습니다. ` +
+        `서포트 생성을 다시 실행하세요. (Ctrl+Z로 되돌리기 가능)`,
+    );
+    noticeTimerRef.current = setTimeout(
+      () => setRedesignInvalidNotice(null),
+      5000,
+    );
+  };
+  // 언마운트 시 타이머 정리 (setState 누수 방지).
+  useEffect(
+    () => () => {
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    },
+    [],
+  );
+
   // STL transform 프리뷰/커밋 + 부착 서포트 추종.
   const { handlePreviewTransform, handleCommitTransform, followAttachedChildren } =
     useTransformCommit({
@@ -137,6 +162,9 @@ const ViewerV2Page: React.FC = () => {
       sceneHandleRef,
       updateTransform,
       patchSupport,
+      removeSupports,
+      addSupports,
+      onRedesignInvalidated: handleRedesignInvalidated,
     });
 
   // 서포트/브릿지 편집 상태·핸들러 (followAttachedChildren 주입).
@@ -517,6 +545,15 @@ const ViewerV2Page: React.FC = () => {
               <div className="bg-white/90 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-600">
                 좌측 '+ 추가' · 상단 'STL 열기' · STL 을 여기로 드래그하여
                 가져오세요.
+              </div>
+            </div>
+          )}
+
+          {/* 재설계 서포트 무효화 안내 (B-1). 5초 후 자동 소멸. */}
+          {redesignInvalidNotice && (
+            <div className="absolute inset-x-0 bottom-4 flex justify-center pointer-events-none px-4">
+              <div className="bg-amber-50/95 backdrop-blur border border-amber-300 rounded-md shadow px-4 py-2 text-sm text-amber-900 select-none">
+                {redesignInvalidNotice}
               </div>
             </div>
           )}

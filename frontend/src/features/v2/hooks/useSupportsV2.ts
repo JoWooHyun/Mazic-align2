@@ -4,7 +4,7 @@ import * as repo from "../data/supports.repo";
 import type { SupportPointV2 } from "../support/types";
 
 /**
- * 한 프로젝트의 서포트 점 목록 + 일괄 add / 단일 remove / 전부 clear.
+ * 한 프로젝트의 서포트 점 목록 + 일괄 add / 단일·일괄 remove / 전부 clear.
  */
 export function useSupportsV2(projectId: string | undefined) {
   const [supports, setSupports] = useState<SupportPointV2[]>([]);
@@ -44,6 +44,20 @@ export function useSupportsV2(projectId: string | undefined) {
   const remove = useCallback(
     async (id: string) => {
       await repo.deleteSupport(id);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  /**
+   * 여러 점을 한 번에 삭제 (B-1 무효화 등). 단일 tx + refresh 1회 —
+   * remove 를 N 번 부르면 전체 스캔·setState·메쉬 동기가 N 번 돌아
+   * 서포트가 하나씩 사라지는 깜빡임과 O(N²) 읽기가 생긴다.
+   */
+  const removeMany = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      await repo.deleteSupportsByIds(ids);
       await refresh();
     },
     [refresh],
@@ -90,6 +104,7 @@ export function useSupportsV2(projectId: string | undefined) {
     refresh,
     addMany,
     remove,
+    removeMany,
     clearAll,
     clearForStl,
     patchSupport,
