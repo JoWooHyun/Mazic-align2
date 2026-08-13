@@ -1,8 +1,13 @@
 /**
  * v2 모델 변환.
  *
- * 좌표계는 Babylon (Y-up). 사용자 UI 에서도 Y 가 "위" 라고 안내한다.
+ * **저장 좌표계는 Babylon (Y-up)** — 슬라이서·서포트·G-code 코어가 전부
+ * "Y = 높이" 를 전제하므로 이 의미는 절대 바꾸지 않는다.
  * 회전은 Euler degrees, XYZ 순서.
+ *
+ * ⚠️ 다만 **사용자 UI 표기는 Z-up** 이다 (B-13). TransformPanel 이 표시 직전에
+ * `types/axis-display.ts` 로 환산하고 입력 시 역환산한다. 즉 이 인터페이스의
+ * `ty` 가 높이이고, 화면에 "Z" 로 보이는 값이 그것이다. 두 개를 혼동하지 말 것.
  *
  * 옛 Transform 과 무관. quaternion 이 아닌 Euler 로 보관해 UI 표시가
  * 단순하다.

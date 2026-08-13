@@ -100,9 +100,19 @@ export function addBuildPlateAndGrid(
   grid.alpha = 0.55;
   grid.isPickable = false;
 
-  // 4) 원점 XYZ 좌표축 (X 빨강, Y 초록 / 위로, Z 파랑)
+  // 4) 원점 좌표축 — **표시 규약은 Z-up** (B-13).
+  //
+  // 라인 자체는 내부(Babylon Y-up) 좌표로 그리되, **색 배정을 표시 축에 맞춘다**:
+  //   내부 +X(옆)  → 표시 X → 빨강
+  //   내부 +Y(위)  → 표시 Z → **파랑**   ← 위로 뻗는 선이 파랑이어야 한다
+  //   내부 +Z(안쪽) → 표시 −Y → 초록
+  // 색은 프린터 관례(X 빨강 / Y 초록 / Z 파랑)를 그대로 쓰고, 어느 색이 화면에서
+  // 위를 가리키는지만 규약과 맞췄다. 매핑 근거는 `types/axis-display.ts`.
   // 길이는 빌드플레이트 짧은 변의 20%.
   const axisLen = Math.min(widthMm, depthMm) * 0.18;
+  const AXIS_RED = new Color4(1, 0.3, 0.3, 1);
+  const AXIS_GREEN = new Color4(0.3, 0.9, 0.4, 1);
+  const AXIS_BLUE = new Color4(0.35, 0.55, 1, 1);
   const axes = MeshBuilder.CreateLineSystem(
     "v2_axes",
     {
@@ -112,9 +122,9 @@ export function addBuildPlateAndGrid(
         [Vector3.Zero(), new Vector3(0, 0, axisLen)],
       ],
       colors: [
-        [new Color4(1, 0.3, 0.3, 1), new Color4(1, 0.3, 0.3, 1)],
-        [new Color4(0.3, 0.9, 0.4, 1), new Color4(0.3, 0.9, 0.4, 1)],
-        [new Color4(0.35, 0.55, 1, 1), new Color4(0.35, 0.55, 1, 1)],
+        [AXIS_RED, AXIS_RED], // 내부 X = 표시 X
+        [AXIS_BLUE, AXIS_BLUE], // 내부 Y(위) = 표시 Z
+        [AXIS_GREEN, AXIS_GREEN], // 내부 Z = 표시 Y
       ],
     },
     scene,

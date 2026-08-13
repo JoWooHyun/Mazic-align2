@@ -2,6 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Quaternion, Vector3 } from "@babylonjs/core";
 
 import {
+  DISPLAY_AXIS_LABELS,
+  fromDisplayAxes,
+  fromDisplayEulerDeg,
+  swapScaleAxes,
+  toDisplayAxes,
+  toDisplayEulerDeg,
+} from "../types/axis-display";
+import {
   IDENTITY_TRANSFORM,
   transformsEqual,
   type TransformV2,
@@ -58,7 +66,15 @@ interface TransformPanelProps {
 /**
  * 단일 선택 STL 의 Position / Rotation / Scale 슬라이더 + 숫자 입력.
  *
- * 좌표계는 Babylon (Y 가 "위"). 사용자에게도 그대로 표기.
+ * 내부 좌표계는 Babylon (Y 가 "위") 이지만 **표시는 프린터 관례대로 Z-up**
+ * 으로 환산한다 (B-13). 즉 패널의 Z 가 높이다. 매핑·근거는
+ * `types/axis-display.ts` 참고. 내부 저장값(TransformV2)의 의미는 그대로다.
+ *
+ * ⚠️ 두 환산이 **겹쳐 있다**. 순서를 지켜야 한다:
+ *   표시 = 내부값 → (B-12) bbox 중심 기준 환산 → (B-13) 축 변환
+ *   입력 = 표시값 → (B-13 역) 축 변환 → (B-12 역) bbox 역환산 → 내부값
+ * B-12 는 **내부 축 공간**에서 정의된 오프셋 연산이라 반드시 축 변환 **안쪽**
+ * 에서 이뤄져야 한다. 순서를 바꾸면 오프셋이 엉뚱한 축에 더해진다.
  *
  * POSITION 은 **모델 bbox 중심 기준으로 환산해 표시**한다 (B-12). 내부
  * TransformV2.tx/ty/tz 는 mesh 원점(정점에 베이크된 바닥 중심) 기준 그대로
@@ -194,16 +210,19 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
   }
 
   /**
-   * POSITION 한 축의 **표시값** 입력을 내부 tx/ty/tz 로 되돌려 적용한다 (B-12).
+   * POSITION 한 축의 **표시값** 입력을 내부 tx/ty/tz 로 되돌려 적용한다
+   * (B-12 기준점 + B-13 축 변환).
    *
    * 표시 3축 중 바뀐 축만 새 값으로 갈아끼우고 나머지는 현재 표시값을 그대로 둔
    * 뒤 통째로 역환산한다 — 축별로 오프셋을 따로 빼면 오프셋이 회전돼 있을 때
-   * 축이 섞여 어긋난다.
+   * 축이 섞여 어긋난다. 축 변환이 축을 재배열하므로 이 "통째로" 가 더 중요해졌다.
    *
    * 역환산 오프셋은 **역환산 기준 transform(src) 시점의 값**을 쓴다. 화면에
    * 보이던 값과 같은 기준이라야 사용자가 친 숫자가 그대로 들어간다.
+   *
+   * `axis` 는 **표시 축 인덱스**다. 표시 X/Y/Z 슬라이더가 각각 0/1/2 를 준다.
    */
-  function applyPositionField(key: "tx" | "ty" | "tz", value: number) {
+  function applyPositionField(axis: 0 | 1 | 2, value: number) {
     if (Number.isNaN(value)) return;
     setLocal((prev) => {
       const base = startRef.current;
@@ -212,10 +231,11 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
       //   드래그 중에도 "그 시점 피벗 − src" 를 다시 만들어야 한다. 라이브
       //   피벗은 현재 메쉬(=prev 반영)의 중심이므로 src 로 되돌려 계산한다.
       const offset = anchorOffsetFor(src, prev);
-      const disp = toDisplayPosition(src, offset);
-      const axis = key === "tx" ? 0 : key === "ty" ? 1 : 2;
+      // 내부값 → (B-12) bbox 기준 → (B-13) 축 변환 순으로 현재 표시값을 만든다.
+      const disp = toDisplayAxes(toDisplayPosition(src, offset));
       disp[axis] = value;
-      const [tx, ty, tz] = fromDisplayPosition(disp, offset);
+      // 입력은 정확히 역순 — 축 변환을 먼저 되돌린 뒤 bbox 오프셋을 뺀다.
+      const [tx, ty, tz] = fromDisplayPosition(fromDisplayAxes(disp), offset);
       const raw = { ...src, tx, ty, tz };
       // 이동은 피벗 보정 대상이 아니지만, 같은 드래그에서 회전/스케일이 함께
       //   들어올 수 있으므로 기존 경로(withPivot)를 그대로 태운다.
@@ -225,20 +245,48 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
     });
   }
 
-  function applyField<K extends keyof TransformV2>(key: K, value: number) {
+  /**
+   * ROTATION 한 축의 **표시값** 입력 (B-13). `axis` 는 표시 축 인덱스.
+   *
+   * 현재 내부 회전을 표시 Euler 로 옮겨 해당 성분만 갈아끼운 뒤 내부로 되돌린다.
+   * 성분 교환이 아니라 quaternion 켤레를 경유한다 — `types/axis-display.ts` 참고.
+   */
+  function applyRotationField(axis: 0 | 1 | 2, value: number) {
     if (Number.isNaN(value)) return;
     setLocal((prev) => {
-      const isScale = key === "sx" || key === "sy" || key === "sz";
-      // 보정의 기준(base)은 **드래그 시작 transform**. raw 도 같은 base 에서
-      //   출발해야 "base→목표" 델타가 한 번만 적용된다. prev(이미 보정된 값)를
-      //   기준으로 삼으면 회전 델타가 매 변화마다 누적돼 모델이 튄다.
       const base = startRef.current;
       const src = base ?? prev;
-      // uniformScale ON + scale 축이면 세 축 동시 변경.
-      const raw =
-        uniformScale && isScale
-          ? { ...src, sx: value, sy: value, sz: value }
-          : { ...src, [key]: value };
+      const disp = toDisplayEulerDeg([src.rx, src.ry, src.rz]);
+      disp[axis] = value;
+      const [rx, ry, rz] = fromDisplayEulerDeg(disp);
+      const raw = { ...src, rx, ry, rz };
+      const next = base ? withPivot(base, raw) : raw;
+      onPreview(selected!.id, next);
+      return next;
+    });
+  }
+
+  /**
+   * SCALE 한 축의 **표시값** 입력 (B-13). `axis` 는 표시 축 인덱스.
+   *
+   * 스케일은 부호가 없어 축 교환만 하면 된다(`swapScaleAxes` 는 자기 역함수).
+   * uniform ON 이면 축과 무관하게 세 축을 같은 값으로 맞춘다.
+   */
+  function applyScaleField(axis: 0 | 1 | 2, value: number) {
+    if (Number.isNaN(value)) return;
+    setLocal((prev) => {
+      const base = startRef.current;
+      const src = base ?? prev;
+      let raw: TransformV2;
+      if (uniformScale) {
+        // 세 축 동일 값이면 축 교환이 항등이라 환산이 필요 없다.
+        raw = { ...src, sx: value, sy: value, sz: value };
+      } else {
+        const disp = swapScaleAxes([src.sx, src.sy, src.sz]);
+        disp[axis] = value;
+        const [sx, sy, sz] = swapScaleAxes(disp);
+        raw = { ...src, sx, sy, sz };
+      }
       const next = base ? withPivot(base, raw) : raw;
       onPreview(selected!.id, next);
       return next;
@@ -262,10 +310,15 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
     onCommit(selected!.id, start, IDENTITY_TRANSFORM);
   }
 
-  // 슬라이더/숫자 입력에 실제로 보이는 POSITION (B-12).
-  //   렌더 시점의 라이브 피벗으로 매번 환산한다 → 표시 = 지금 bbox 중심.
-  //   local 은 방금 onPreview 로 메쉬에 반영한 값이라 live === local 이다.
-  const displayPosition = toDisplayPosition(local, anchorOffsetFor(local, local));
+  // 슬라이더/숫자 입력에 실제로 보이는 값 (B-12 기준점 + B-13 축 변환).
+  //   POSITION 은 렌더 시점의 라이브 피벗으로 매번 환산한다 → 표시 = 지금 bbox
+  //   중심. local 은 방금 onPreview 로 메쉬에 반영한 값이라 live === local 이다.
+  //   그 위에 축 변환을 얹어 Z-up 으로 보여준다.
+  const displayPosition = toDisplayAxes(
+    toDisplayPosition(local, anchorOffsetFor(local, local)),
+  );
+  const displayRotation = toDisplayEulerDeg([local.rx, local.ry, local.rz]);
+  const displayScale = swapScaleAxes([local.sx, local.sy, local.sz]);
 
   return (
     <div className={`p-4 bg-white rounded-lg shadow ${className}`}>
@@ -284,56 +337,64 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
       </p>
 
       <Section title="Position (mm)">
-        {(["tx", "ty", "tz"] as const).map((k, i) => (
+        {DISPLAY_AXIS_LABELS.map((label, i) => (
           <Row
-            key={k}
-            axis={"XYZ"[i]}
-            // 표시는 bbox 중심 기준 (B-12) — 회전해도 값이 변하지 않는다.
+            key={label}
+            axis={label}
+            // 표시는 bbox 중심 기준 (B-12) + Z-up 축 변환 (B-13).
+            //   회전해도 값이 변하지 않고, Z 가 높이다.
             value={displayPosition[i]}
             min={-200}
             max={200}
             step={0.1}
             onBegin={beginDrag}
-            onChange={(v) => applyPositionField(k, v)}
+            onChange={(v) => applyPositionField(i as 0 | 1 | 2, v)}
             onEnd={endDrag}
           />
         ))}
       </Section>
 
       <Section title="Rotation (deg)">
-        {(["rx", "ry", "rz"] as const).map((k, i) => (
+        {DISPLAY_AXIS_LABELS.map((label, i) => (
           <Row
-            key={k}
-            axis={"XYZ"[i]}
-            value={local[k]}
+            key={label}
+            axis={label}
+            // 표시 Euler (B-13). Z 가 수직축 회전이다.
+            value={displayRotation[i]}
             min={-180}
             max={180}
             step={1}
             onBegin={beginDrag}
-            onChange={(v) => applyField(k, v)}
+            onChange={(v) => applyRotationField(i as 0 | 1 | 2, v)}
             onEnd={endDrag}
           />
         ))}
         <div className="flex flex-wrap gap-1 mt-1">
           {(
             [
-              { key: "rx", delta: 90, label: "X +90°" },
-              { key: "rx", delta: -90, label: "X −90°" },
-              { key: "ry", delta: 90, label: "Y +90°" },
-              { key: "ry", delta: -90, label: "Y −90°" },
-              { key: "rz", delta: 90, label: "Z +90°" },
-              { key: "rz", delta: -90, label: "Z −90°" },
+              { axis: 0, delta: 90, label: "X +90°" },
+              { axis: 0, delta: -90, label: "X −90°" },
+              { axis: 1, delta: 90, label: "Y +90°" },
+              { axis: 1, delta: -90, label: "Y −90°" },
+              { axis: 2, delta: 90, label: "Z +90°" },
+              { axis: 2, delta: -90, label: "Z −90°" },
             ] as const
-          ).map(({ key, delta, label }) => (
+          ).map(({ axis, delta, label }) => (
             <button
               key={label}
               onClick={() => {
                 const start = { ...local };
-                let next = start[key] + delta;
+                // 버튼도 **표시 축** 기준이다 (B-13). 표시 Euler 로 옮겨 해당
+                //   성분에 델타를 더한 뒤 내부로 되돌린다. 라벨의 Z 가 실제로
+                //   수직축 회전이 되도록 하는 것이 이 변환의 목적.
+                const disp = toDisplayEulerDeg([start.rx, start.ry, start.rz]);
+                let next = disp[axis] + delta;
                 // ±180 안으로 정규화.
                 while (next > 180) next -= 360;
                 while (next <= -180) next += 360;
-                const raw = { ...start, [key]: next };
+                disp[axis] = next;
+                const [rx, ry, rz] = fromDisplayEulerDeg(disp);
+                const raw = { ...start, rx, ry, rz };
                 // 버튼은 beginDrag 를 거치지 않으므로 여기서 피벗을 직접 물어
                 //   보정한다 (B-9). 없으면 기존 무보정 동작.
                 pivotRef.current = getPivot ? getPivot() : null;
@@ -373,20 +434,21 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
             max={5}
             step={0.01}
             onBegin={beginDrag}
-            onChange={(v) => applyField("sx", v)}
+            onChange={(v) => applyScaleField(0, v)}
             onEnd={endDrag}
           />
         ) : (
-          (["sx", "sy", "sz"] as const).map((k, i) => (
+          DISPLAY_AXIS_LABELS.map((label, i) => (
             <Row
-              key={k}
-              axis={"XYZ"[i]}
-              value={local[k]}
+              key={label}
+              axis={label}
+              // 표시 축 배율 (B-13) — 부호 없이 축만 교환한 값.
+              value={displayScale[i]}
               min={0.1}
               max={5}
               step={0.01}
               onBegin={beginDrag}
-              onChange={(v) => applyField(k, v)}
+              onChange={(v) => applyScaleField(i as 0 | 1 | 2, v)}
               onEnd={endDrag}
             />
           ))
