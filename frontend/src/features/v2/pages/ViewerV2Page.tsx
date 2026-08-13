@@ -243,10 +243,15 @@ const ViewerV2Page: React.FC = () => {
   // 그대로 world 좌표로 받아 적고 coordSpace='world' 로 되돌림.
   // 이후 race 옛 동작으로 복귀 (transform 시 patch chain). 새 supports
   // 에 timing-safe stl-local 도입은 별도 commit.
+  // 대상은 **kind 없는 옛 데이터 점만** — 재설계 점(kind='island'|'slope')은
+  // S-4b-1 의 timing-safe stl-local 이 정본이라 되돌리면 안 된다. 되돌리면
+  // 1.5s 뒤 supports 가 바뀌어 서포트가 재생성·점프한다(B-2).
   useEffect(() => {
     if (filesLoading) return;
     if (supports.length === 0) return;
-    const toRevert = supports.filter((s) => s.coordSpace === "stl-local");
+    const toRevert = supports.filter(
+      (s) => s.coordSpace === "stl-local" && s.kind == null,
+    );
     if (toRevert.length === 0) return;
     const handle = sceneHandleRef.current;
     if (!handle) return;
