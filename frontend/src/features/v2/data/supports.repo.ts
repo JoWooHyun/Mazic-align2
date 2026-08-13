@@ -53,7 +53,15 @@ export async function listSupportsByStl(
   });
 }
 
-/** 여러 점을 한 transaction 으로 일괄 추가 (자동 생성 시 유리). */
+/**
+ * 여러 점을 한 transaction 으로 일괄 추가 (자동 생성 시 유리).
+ *   store.add 가 아니라 **put(upsert)** 을 쓴다 (B-1). id 는 앱이 생성하는
+ *   고유값이라 같은 레코드를 다시 넣는 것 외에 키 충돌이 날 일이 없는데,
+ *   add 는 그런 경우 ConstraintError 로 transaction 전체를 abort 시켜
+ *   "삭제 → undo 복원" 같은 경로에서 무관한 점들까지 통째로 날린다.
+ *   put 은 그 상황을 무해한 덮어쓰기로 만든다. (근본 순서 보장은 호출 측
+ *   await 책임 — 여기는 보조 방어선이다.)
+ */
 export async function addSupports(
   points: SupportPointV2[],
 ): Promise<void> {
@@ -63,7 +71,7 @@ export async function addSupports(
     const tx = db.transaction(STORE_SUPPORTS, "readwrite");
     const store = tx.objectStore(STORE_SUPPORTS);
     for (const p of points) {
-      store.add(p);
+      store.put(p);
     }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -100,6 +108,26 @@ export async function deleteSupport(id: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_SUPPORTS, "readwrite");
     tx.objectStore(STORE_SUPPORTS).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * 여러 id 를 한 transaction 으로 일괄 삭제 (B-1 무효화 / 대량 삭제용).
+ *   점마다 deleteSupport 를 반복하면 tx 가 N 개로 쪼개져 그 사이에 다른
+ *   쓰기가 끼어들 수 있고, 호출 측에서 refresh 까지 N 회 돌게 된다.
+ *   여기서 tx 를 하나로 묶어 원자성과 성능을 동시에 확보한다.
+ */
+export async function deleteSupportsByIds(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_SUPPORTS, "readwrite");
+    const store = tx.objectStore(STORE_SUPPORTS);
+    for (const id of ids) {
+      store.delete(id);
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
