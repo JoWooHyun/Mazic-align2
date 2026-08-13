@@ -185,6 +185,61 @@ export function meshWorldBBoxCenter(mesh: Mesh): Vector3 {
 }
 
 /**
+ * POSITION 표시 기준점의 로컬 오프셋 (B-12).
+ *
+ * `TransformV2.tx/ty/tz` 는 mesh **원점**의 world 좌표다. 그런데 stl-loader 의
+ * `alignMeshToPlate` 가 정점을 "XZ 중심 / Y 바닥"에 베이크해 원점 ≠ bbox 중심이고,
+ * 회전 피벗은 bbox 중심이다(B-9). 그래서 제자리 회전을 해도 원점이 중심 둘레를
+ * 공전해 tx/ty/tz 가 바뀐다 — 리드가 지적한 "돌리면 포지션도 바뀐다".
+ *
+ * CHITUBOX 는 회전 후에도 POSITION 이 0 을 유지한다(실물 대조). 이를 재현하려면
+ * **표시 기준점을 회전 피벗과 같은 점(bbox 중심)** 으로 두면 된다. 피벗은 회전
+ * 불변이므로 표시값도 자동으로 불변이 된다.
+ *
+ * 반환값은 "원점 → bbox 중심" 의 **world 벡터** 다. `d = pivotWorld − (tx,ty,tz)`.
+ * 회전하면 원점과 중심이 함께 돌아 d 도 회전하지만, 표시값 `t + d = pivotWorld` 는
+ * 그대로다 — 그것이 이 방식이 불변인 이유다.
+ */
+export function displayAnchorOffset(
+  t: TransformV2,
+  pivotWorld: [number, number, number],
+): [number, number, number] {
+  return [pivotWorld[0] - t.tx, pivotWorld[1] - t.ty, pivotWorld[2] - t.tz];
+}
+
+/**
+ * 내부 저장값(tx/ty/tz = mesh 원점) → 패널 표시값(bbox 중심 기준) (B-12).
+ *
+ * offset 이 없으면(피벗을 못 구한 경우) 기존 동작 그대로 원점 값을 표시한다.
+ */
+export function toDisplayPosition(
+  t: TransformV2,
+  offset: [number, number, number] | null,
+): [number, number, number] {
+  if (!offset) return [t.tx, t.ty, t.tz];
+  return [t.tx + offset[0], t.ty + offset[1], t.tz + offset[2]];
+}
+
+/**
+ * 패널 표시값 → 내부 저장값 (B-12). `toDisplayPosition` 의 역함수라 왕복 무손실.
+ *
+ * ⚠️ 표시만 환산하고 **저장 의미는 그대로** 다. tx/ty/tz 는 DB 에 남고 서포트
+ * 좌표 계산(`coordSpace:"stl-local"`)·마진 오버레이의 입력이므로 절대 의미를
+ * 바꾸지 않는다. 원점 재베이크가 아니라 UI 레이어 환산인 이유.
+ */
+export function fromDisplayPosition(
+  display: [number, number, number],
+  offset: [number, number, number] | null,
+): [number, number, number] {
+  if (!offset) return [display[0], display[1], display[2]];
+  return [
+    display[0] - offset[0],
+    display[1] - offset[1],
+    display[2] - offset[2],
+  ];
+}
+
+/**
  * Mesh 의 한 face 의 world normal n 이 -Y (바닥 방향) 가 되도록
  * 회전 + AABB minY 가 0 이 되도록 Y 이동한 새 TransformV2 반환.
  *

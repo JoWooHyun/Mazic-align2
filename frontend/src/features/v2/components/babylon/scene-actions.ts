@@ -8,20 +8,54 @@ import type { SceneCtx } from "./scene-refs";
 export const HIGHLIGHT_COLOR = new Color3(1.0, 0.78, 0.18); // 따뜻한 노랑
 
 /**
- * 피벗 프록시를 mesh 의 **현재 world bbox 중심**에 놓고 모델 회전에 정렬한다 (B-9).
+ * 피벗 프록시 자세 (B-12).
+ *   · "identity" — world 축 정렬. 회전 기즈모용.
+ *   · "mesh"     — 모델 회전을 복사(로컬 축). 스케일 기즈모용.
+ */
+export type PivotProxyOrientation = "identity" | "mesh";
+
+/**
+ * 피벗 프록시를 mesh 의 **현재 world bbox 중심**에 놓는다 (B-9).
  *
  * 회전/스케일 기즈모는 이 프록시에 attach 되므로, 링이 항상 실루엣 중심에 보이고
- * 드래그가 그 점을 축으로 돈다. 회전은 모델 회전에 맞춰 로컬 축 링을 유지하고
- * (현행 UX), 스케일은 항상 1 에서 시작해 드래그 배율이 그대로 읽히게 한다.
+ * 드래그가 그 점을 축으로 돈다.
+ *
+ * 자세(orientation)는 기즈모 종류에 따라 다르다 (B-12 재작업):
+ *
+ * · **회전 = "identity"**. 링이 world 축에 고정돼야 한다(CHITUBOX 실물 대조).
+ *   사실 `RotationGizmo` 는 `updateGizmoRotationToMatchAttachedMesh = false` 만으로
+ *   이미 world 축 링을 그린다 — `Gizmo._update` 가 flag=false 면 attach 노드 자세와
+ *   무관하게 rootMesh 회전을 identity 로 세우기 때문. 그래서 프록시 identity 는
+ *   회전 기즈모에 **무해한 중복**이다. (초기 B-12 주석의 "프록시가 기울면 링도
+ *   기운다" 는 틀린 서술이었다.)
+ *
+ * · **스케일 = "mesh"**. `AxisScaleGizmo` 는 attach 노드의 **로컬 축**에 스케일을
+ *   건다. 프록시가 identity 면 world 축 스케일이 되는데, 회전된 자식 메쉬에는
+ *   그것이 **전단(shear)** 이다 — SRT 로 표현할 수 없어 `setParent(null)` 의
+ *   decompose 에서 형상이 깨진다(Y 45° 회전 + world X 1.5배에서 10mm 정점당
+ *   2.712mm 오차 실측). 프록시를 모델 회전에 맞추면 로컬 축 스케일 = 기존 동작이
+ *   되어 오차가 0 이다. 핸들이 모델을 따라 기우는 것은 기하학적으로 올바르다.
+ *   (`ScaleGizmo` 는 애초에 flag=false 를 거부하는 no-op setter 라 끌 수도 없다.)
+ *
+ * 피벗 규약(B-9)은 자세와 무관하다 — 제자리 회전/스케일을 만드는 것은 프록시의
+ * **위치**(bbox 중심)이고, 자식은 setParent 로 world 를 보존한 채 매달린다.
+ * 스케일은 항상 1 에서 시작해 드래그 배율이 그대로 읽힌다.
  *
  * 드래그 시작 시점과 선택 동기화(syncGizmo) 양쪽에서 호출한다 — 드래그 전에도
  * 링이 중심에 보여야 하기 때문.
  */
-export function placePivotProxy(ctx: SceneCtx, mesh: Mesh): void {
+export function placePivotProxy(
+  ctx: SceneCtx,
+  mesh: Mesh,
+  orientation: PivotProxyOrientation = "identity",
+): void {
   const proxy = ctx.pivotProxyRef.current;
   if (!proxy) return;
   proxy.position.copyFrom(meshWorldBBoxCenter(mesh));
-  const q = mesh.rotationQuaternion ?? Quaternion.FromEulerVector(mesh.rotation);
+  const q =
+    orientation === "mesh"
+      ? mesh.rotationQuaternion ?? Quaternion.FromEulerVector(mesh.rotation)
+      : Quaternion.Identity();
   if (!proxy.rotationQuaternion) proxy.rotationQuaternion = q.clone();
   else proxy.rotationQuaternion.copyFrom(q);
   proxy.scaling.set(1, 1, 1);
@@ -151,7 +185,9 @@ export function syncGizmo(ctx: SceneCtx): void {
   const usePivot = mesh !== null && proxy !== null;
   detachRotScale();
   if (usePivot && (mode === "rotate" || mode === "scale")) {
-    placePivotProxy(ctx, mesh);
+    // 자세는 기즈모별로 다르다 (B-12) — 회전은 world 축 identity,
+    //   스케일은 모델 로컬 축(전단 방지). placePivotProxy 주석 참고.
+    placePivotProxy(ctx, mesh, mode === "scale" ? "mesh" : "identity");
     if (mode === "rotate") rg.attachedNode = proxy;
     else sg.attachedNode = proxy;
   }

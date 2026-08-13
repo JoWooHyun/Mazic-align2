@@ -8,9 +8,19 @@ import {
 } from "../types/transform";
 import {
   degToRad,
+  displayAnchorOffset,
+  fromDisplayPosition,
   rotateTransformAroundWorldPivot,
   scaleTransformAroundWorldPivot,
+  toDisplayPosition,
+  transformPointBetween,
 } from "../utils/transform";
+
+/**
+ * 선택 모델의 현재 world 바운딩박스 중심 = 회전·스케일 피벗 (B-9).
+ * `null` 이면 피벗을 못 구한 것 → 기존(원점 기준) 동작으로 폴백.
+ */
+type PivotGetter = () => [number, number, number] | null;
 
 interface TransformPanelProps {
   /** 단일 선택된 STL. 없으면 안내문만 표시. */
@@ -35,8 +45,12 @@ interface TransformPanelProps {
    * 선택 모델의 현재 world 바운딩박스 중심 = 회전·스케일 피벗 (B-9).
    * 회전/스케일 값을 바꿀 때 이 점을 고정해 제자리 회전을 만든다.
    * 미제공이거나 null 을 반환하면 **기존 무보정 동작으로 폴백**한다.
+   *
+   * POSITION 표시(B-12)도 이 값을 그대로 쓴다 — 호출 시점의 메쉬를 읽는
+   * **라이브** 게터라야 한다(`getModelWorldPivot` 은 computeWorldMatrix(true)
+   * 후 bbox 를 다시 읽는다). 캐시된 값을 넘기면 드래그 중 표시가 어긋난다.
    */
-  getPivot?: () => [number, number, number] | null;
+  getPivot?: PivotGetter;
 
   className?: string;
 }
@@ -45,6 +59,18 @@ interface TransformPanelProps {
  * 단일 선택 STL 의 Position / Rotation / Scale 슬라이더 + 숫자 입력.
  *
  * 좌표계는 Babylon (Y 가 "위"). 사용자에게도 그대로 표기.
+ *
+ * POSITION 은 **모델 bbox 중심 기준으로 환산해 표시**한다 (B-12). 내부
+ * TransformV2.tx/ty/tz 는 mesh 원점(정점에 베이크된 바닥 중심) 기준 그대로
+ * 저장하고, 이 패널에서만 오프셋을 더해 보이고 입력 시 빼서 되돌린다.
+ *
+ * ⚠️ 오프셋은 **렌더할 때마다 그 시점의 라이브 피벗**으로 다시 구한다
+ * (`d = pivot − t` → `표시 = t + d = pivot`). 즉 표시값은 정의상 "지금 이
+ * 순간의 bbox 중심" 이고, 회전 불변·이동 1:1·스케일 불변이 전부 여기서
+ * 자동으로 따라온다 — CHITUBOX 동작.
+ * 선택 시점 오프셋을 캐시해 쓰면 `표시 = pivot + (Rd−I)(t₀−pivot) ≠ pivot`
+ * 이 되어 슬라이더를 **끄는 동안** 표시값이 크게 드리프트하고 손을 떼는
+ * 순간 되돌아온다(검수 결함 1). 그래서 캐시하지 않는다.
  *
  * undo 단위 = 한 번의 포인터 드래그 (mousedown → mouseup).
  * 그 사이 onChange 는 메쉬만 미리보기로 갱신하고 commit 은
@@ -72,6 +98,31 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
     startRef.current = null;
     pivotRef.current = null;
   }, [selected]);
+
+  /**
+   * POSITION 표시 오프셋 `d = pivot − t` 를 **지금 메쉬에서** 구한다 (B-12).
+   *
+   * 캐시하지 않는 이유는 상단 주석 참고 — `표시 = t + d` 가 pivot 과 같아지려면
+   * d 가 t 와 **같은 시점**의 값이어야 한다.
+   *
+   * getPivot 은 라이브 게터라 `live`(지금 메쉬에 적용된 transform) 시점의 bbox
+   * 중심을 준다. 표시/역환산 기준이 그와 다른 transform(`t`)이면, bbox 중심이
+   * 모델에 부착된 점이라는 성질을 이용해 live→t 로 옮겨 온다
+   * (`transformPointBetween`). t === live 인 렌더 경로에서는 항등이다.
+   *
+   * 피벗을 못 구하면 null → 기존(원점 기준) 표시로 폴백.
+   */
+  function anchorOffsetFor(
+    t: TransformV2,
+    live: TransformV2,
+  ): [number, number, number] | null {
+    const p = getPivot ? getPivot() : null;
+    if (!p) return null;
+    const pivotAtT = transformsEqual(t, live)
+      ? p
+      : transformPointBetween(p, live, t);
+    return displayAnchorOffset(t, pivotAtT);
+  }
 
   if (!selected) {
     return (
@@ -142,6 +193,38 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
     return out;
   }
 
+  /**
+   * POSITION 한 축의 **표시값** 입력을 내부 tx/ty/tz 로 되돌려 적용한다 (B-12).
+   *
+   * 표시 3축 중 바뀐 축만 새 값으로 갈아끼우고 나머지는 현재 표시값을 그대로 둔
+   * 뒤 통째로 역환산한다 — 축별로 오프셋을 따로 빼면 오프셋이 회전돼 있을 때
+   * 축이 섞여 어긋난다.
+   *
+   * 역환산 오프셋은 **역환산 기준 transform(src) 시점의 값**을 쓴다. 화면에
+   * 보이던 값과 같은 기준이라야 사용자가 친 숫자가 그대로 들어간다.
+   */
+  function applyPositionField(key: "tx" | "ty" | "tz", value: number) {
+    if (Number.isNaN(value)) return;
+    setLocal((prev) => {
+      const base = startRef.current;
+      const src = base ?? prev;
+      // src 는 드래그 시작 transform 이라, 메쉬가 이미 미리보기로 움직인
+      //   드래그 중에도 "그 시점 피벗 − src" 를 다시 만들어야 한다. 라이브
+      //   피벗은 현재 메쉬(=prev 반영)의 중심이므로 src 로 되돌려 계산한다.
+      const offset = anchorOffsetFor(src, prev);
+      const disp = toDisplayPosition(src, offset);
+      const axis = key === "tx" ? 0 : key === "ty" ? 1 : 2;
+      disp[axis] = value;
+      const [tx, ty, tz] = fromDisplayPosition(disp, offset);
+      const raw = { ...src, tx, ty, tz };
+      // 이동은 피벗 보정 대상이 아니지만, 같은 드래그에서 회전/스케일이 함께
+      //   들어올 수 있으므로 기존 경로(withPivot)를 그대로 태운다.
+      const next = base ? withPivot(base, raw) : raw;
+      onPreview(selected!.id, next);
+      return next;
+    });
+  }
+
   function applyField<K extends keyof TransformV2>(key: K, value: number) {
     if (Number.isNaN(value)) return;
     setLocal((prev) => {
@@ -179,6 +262,11 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
     onCommit(selected!.id, start, IDENTITY_TRANSFORM);
   }
 
+  // 슬라이더/숫자 입력에 실제로 보이는 POSITION (B-12).
+  //   렌더 시점의 라이브 피벗으로 매번 환산한다 → 표시 = 지금 bbox 중심.
+  //   local 은 방금 onPreview 로 메쉬에 반영한 값이라 live === local 이다.
+  const displayPosition = toDisplayPosition(local, anchorOffsetFor(local, local));
+
   return (
     <div className={`p-4 bg-white rounded-lg shadow ${className}`}>
       <div className="flex items-center justify-between mb-3">
@@ -200,12 +288,13 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
           <Row
             key={k}
             axis={"XYZ"[i]}
-            value={local[k]}
+            // 표시는 bbox 중심 기준 (B-12) — 회전해도 값이 변하지 않는다.
+            value={displayPosition[i]}
             min={-200}
             max={200}
             step={0.1}
             onBegin={beginDrag}
-            onChange={(v) => applyField(k, v)}
+            onChange={(v) => applyPositionField(k, v)}
             onEnd={endDrag}
           />
         ))}
