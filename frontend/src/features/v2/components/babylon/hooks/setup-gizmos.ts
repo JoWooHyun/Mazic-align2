@@ -54,6 +54,9 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
   rotationGizmo.updateGizmoRotationToMatchAttachedMesh = false;
 
   const onDragStart = () => {
+    // 서포트/브릿지 경로는 sphere·기둥 mesh 에 **직접** attach 된 경우만이다.
+    //   STL 이동은 B-17 이후 프록시(attachedNode)를 타므로 attachedMesh 가
+    //   null 이고, 아래 metadata 분기를 자연히 건너뛴다.
     const attached = positionGizmo.attachedMesh;
     if (attached) {
       const meta = (
@@ -108,17 +111,22 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
       id,
       t: readMeshTransform(mesh),
     };
-    // 회전/스케일 드래그면 mesh 를 피벗 프록시의 자식으로 임시 부모화한다 (B-9).
-    //   프록시를 현재 bbox 중심에 놓고 mesh 를 매달면, 기즈모가 프록시를 돌릴 때
-    //   mesh 가 그 중심을 축으로 함께 돈다 = 제자리 회전. setParent 는 world 를
-    //   유지하며 로컬 좌표를 재계산하므로 시각적 점프가 없다(서포트 임시 부모화와
-    //   같은 패턴). 이동 기즈모는 mesh 에 직접 attach 라 이 경로를 타지 않는다.
+    // 이동/회전/스케일 드래그면 mesh 를 피벗 프록시의 자식으로 임시 부모화한다
+    //   (B-9 → 이동 확대가 B-17).
+    //   프록시를 현재 bbox 중심에 놓고 mesh 를 매달면, 기즈모가 프록시를 움직일 때
+    //   mesh 가 따라온다 — 회전이면 그 중심을 축으로 제자리 회전, 이동이면 순수
+    //   병진. setParent 는 world 를 유지하며 로컬 좌표를 재계산하므로 시각적
+    //   점프가 없다(서포트 임시 부모화와 같은 패턴).
+    //   ⚠️ 이동도 이 조건에 포함돼야 프록시 드래그가 mesh 에 전달된다 — 빠뜨리면
+    //   화살표만 움직이고 모델은 제자리에 남는다.
     const proxy = ctx.pivotProxyRef.current;
+    const isMove = proxy !== null && positionGizmo.attachedNode === proxy;
     const isRotate = proxy !== null && rotationGizmo.attachedNode === proxy;
     const isScale = proxy !== null && scaleGizmo.attachedNode === proxy;
-    if (proxy && (isRotate || isScale)) {
+    if (proxy && (isMove || isRotate || isScale)) {
       // 자세는 기즈모별로 다르다 (B-12) — 스케일은 모델 로컬 축을 써야
-      //   전단(shear)이 생기지 않는다. placePivotProxy 주석 참고.
+      //   전단(shear)이 생기지 않는다. 이동/회전은 world 축 identity.
+      //   placePivotProxy 주석 참고.
       placePivotProxy(ctx, mesh, isScale ? "mesh" : "identity");
       mesh.setParent(proxy);
     }
@@ -205,8 +213,14 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
       // 다음 드래그를 위해 프록시 자세 초기화 (위치·자세는 다음 placePivotProxy
       //   호출이 기즈모 종류에 맞게 다시 세운다). 드래그로 기울거나 늘어난
       //   프록시가 그 사이에 남지 않도록 여기서 되돌려 둔다.
+      //   ⚠️ 이동 드래그(B-17)는 프록시 **위치**도 옮겨 놓는다. 여기서 되돌리지
+      //   않아도 다음 placePivotProxy 가 bbox 중심으로 덮어쓰지만, 남은 상태가
+      //   다음 attach 까지의 한 프레임에 비치지 않도록 자세와 함께 정리한다.
       proxy.rotationQuaternion?.copyFrom(Quaternion.Identity());
       proxy.scaling.set(1, 1, 1);
+      // 방금 커밋된 mesh 의 새 bbox 중심으로 프록시를 다시 세운다. 이동 후에도
+      //   화살표가 곧바로 중심에 남아 있어야 하기 때문(리드 요구의 본질).
+      placePivotProxy(ctx, mesh, "identity");
     }
     const end = readMeshTransform(mesh);
     // 무효화(감사 B1)는 페이지 측 handleCommitTransform 수렴점에서 처리.
