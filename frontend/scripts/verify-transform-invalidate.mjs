@@ -1,10 +1,15 @@
-// 모델 변형 시 재설계 서포트 무효화 판정 검증 (B-1, B-15 보강).
+// 모델 변형 시 재설계 서포트 무효화 판정 검증 (B-1, B-15·B-15c 보강).
 //   transformKeepsRedesignValid 는 "이 변형이 재설계 서포트를 유효하게 두는가"를
 //   판정하는 순수 함수다. 재설계 서포트는 stl-local 이라 모델 변형을 그대로 따라
 //   가므로, 모델을 기울이면 기둥이 기울어 출력 불가 → 리드 확정 정책은 삭제+안내.
 //   예외는 두 가지 — 둘 다 "기둥 수직성 + 바닥 접지가 보존된다" 는 같은 논리다:
 //     1) 순수 XZ 평행이동
-//     2) 수직축(내부 Babylon Y = ry) 회전 — 제자리에서 팽이처럼 돌 뿐 (B-15)
+//     2) 수직축(내부 Babylon Y) 회전 — 제자리에서 팽이처럼 돌 뿐 (B-15)
+//
+//   ⚠️ B-15c: 판정이 **Euler 성분 비교 → 기하학적 불변량(로컬 up 의 world Y 성분)**
+//   으로 바뀌었다. B-15(ry 항 제거)만으로는 실물에서 여전히 삭제됐는데, 진범이 ry 가
+//   아니라 **rx/rz 성분 비교에 낀 float32 노이즈**였기 때문이다. 아래 (g) 가 그
+//   대조군이다.
 //
 //   ⚠️ ry/rx/rz 는 **내부 Babylon 축**이다. B-13 은 표시만 Z-up 으로 바꿨으므로
 //   화면에 "Z축 회전" 으로 보이는 것이 여기의 ry 다.
@@ -188,10 +193,16 @@ function caseFloatNoiseKeeps() {
   );
 
   // 반대로 허용치를 넘는 변화는 확실히 잡는다 — 경계가 무의미하지 않음을 확인.
-  //   ry 는 이제 축 자체가 유효 판정이므로 경계 확인에 못 쓴다 → rx 로 확인.
+  //   ⚠️ B-15c: 회전 허용치는 이제 **기울기 각도 0.01°** 기준이라 1e-4° 는 더 이상
+  //   경계 위가 아니다(노이즈 수준). 실제로 잡아야 하는 최소 기울임 0.1° 로 확인한다.
   assert(
-    transformKeepsRedesignValid(BASE, { ...BASE, rx: BASE.rx + 1e-4 }) === false,
-    "1e-4 rx 회전은 허용치를 넘어 무효화(경계 유효성 확인)",
+    transformKeepsRedesignValid(BASE, { ...BASE, rx: BASE.rx + 0.1 }) === false,
+    "0.1° rx 기울임은 허용치를 넘어 무효화(경계 유효성 확인)",
+  );
+  // ty 는 mm 성분 비교라 옛 경계가 그대로 유효하다.
+  assert(
+    transformKeepsRedesignValid(BASE, { ...BASE, ty: BASE.ty + 1e-4 }) === false,
+    "1e-4 mm ty 이동은 허용치를 넘어 무효화(성분 비교 경계 확인)",
   );
 }
 
@@ -272,8 +283,205 @@ function caseBeforeFixControl() {
   }
 }
 
+// ── B-15c: 기하학적 불변량 판정 ───────────────────────────────────────────
+/**
+ * B-15c **수정 전** 구현(= PR #46 시점, ry 항만 제거한 상태) — 대조군.
+ * rx/rz 를 Euler 성분으로 직접 비교하므로 float32 노이즈에 그대로 걸린다.
+ */
+function keepsValidBeforeB15c(start, end) {
+  const changed = (a, b) => Math.abs(a - b) > 1e-6;
+  return !(
+    changed(start.rx, end.rx) || // ← B-15c 가 불변량으로 대체한 항
+    changed(start.rz, end.rz) || // ←
+    changed(start.sx, end.sx) ||
+    changed(start.sy, end.sy) ||
+    changed(start.sz, end.sz) ||
+    changed(start.ty, end.ty)
+  );
+}
+
+/**
+ * NullEngine 실측으로 얻은 **실제 회전 기즈모 왕복 결과**.
+ *   피벗 프록시(B-9) 에 setParent → world Y 축으로 회전 → setParent(null) 후
+ *   readMeshTransform 으로 읽은 (start, end) 쌍이다. Babylon 이 행렬을
+ *   Float32Array 로 보관해 rx/rz 에 노이즈가 낀 것이 그대로 담겨 있다.
+ *   ⚠️ 여기 수치를 임의로 다듬지 말 것 — 리드가 겪은 증상의 물증이다.
+ */
+const REAL_PIVOT_ROUNDTRIPS = [
+  {
+    label: "rx=15,rz=45 에서 수직축 +15°",
+    start: { ...BASE, rx: 15, ry: -30, rz: 45 },
+    end: { ...BASE, rx: 15.000001378, ry: -15, rz: 45.000000991 },
+  },
+  {
+    label: "rx=15,rz=45 에서 수직축 -137°",
+    start: { ...BASE, rx: 15, ry: -30, rz: 45 },
+    end: { ...BASE, rx: 15.000000171, ry: -167, rz: 45.000002492 },
+  },
+  {
+    label: "rx=89.5(gimbal 근처) 에서 수직축 +90°",
+    start: { ...BASE, rx: 89.5, ry: 10, rz: 20 },
+    end: { ...BASE, rx: 89.499874623, ry: 100, rz: 19.999952248 },
+  },
+  {
+    label: "rx=88 에서 수직축 +15°",
+    start: { ...BASE, rx: 88, ry: 30, rz: -15 },
+    end: { ...BASE, rx: 88.000033522, ry: 45, rz: -15.000003368 },
+  },
+  {
+    label: "rx=75,rz=-40 에서 수직축 +15°",
+    start: { ...BASE, rx: 75, ry: 15, rz: -40 },
+    end: { ...BASE, rx: 74.999990995, ry: 30, rz: -40.000005080 },
+  },
+  {
+    label: "rx=60,rz=0 에서 수직축 +90°",
+    start: { ...BASE, rx: 60, ry: 0, rz: 0 },
+    end: { ...BASE, rx: 59.999998219, ry: 90, rz: 0 },
+  },
+  {
+    label: "rx=-45,rz=80 에서 수직축 -137°",
+    start: { ...BASE, rx: -45, ry: 10, rz: 80 },
+    end: { ...BASE, rx: -44.999998300, ry: -127, rz: 79.999997229 },
+  },
+];
+
+function caseFloat32NoiseControl() {
+  console.log(
+    "\n(g) [핵심] 회전 기즈모 float32 왕복 노이즈 — 대조군 대비 (B-15c):",
+  );
+  for (const { label, start, end } of REAL_PIVOT_ROUNDTRIPS) {
+    const drx = Math.abs(end.rx - start.rx);
+    const drz = Math.abs(end.rz - start.rz);
+    // [대조군] 수정 전 구현은 이 노이즈를 "기울임" 으로 오판 → 서포트 삭제.
+    assert(
+      keepsValidBeforeB15c(start, end) === false,
+      `[대조군] ${label}: |drx|=${drx.toExponential(2)} |drz|=${drz.toExponential(
+        2,
+      )} 노이즈를 무효로 오판(= 리드가 겪은 삭제) — 버그 재현`,
+    );
+    // [신규] 불변량 판정은 같은 입력을 유지로 본다.
+    assert(
+      transformKeepsRedesignValid(start, end) === true,
+      `[신규] ${label}: 유효 유지(기둥 수직성 불변)`,
+    );
+  }
+}
+
+function caseBabylonConventionMatch() {
+  console.log("\n(h) 회전 합성 관례가 Babylon 과 일치하는지 (B-15c):");
+  // types/transform.ts 는 Babylon 무의존을 유지해야 하므로(B-1 헤드리스 검증),
+  //   회전행렬을 직접 유도해 쓴다. 그 유도가 Babylon 관례와 실제로 같은지를
+  //   **Babylon 실측값 하드코딩 대조**로 확인한다.
+  //
+  //   아래 m11 은 @babylonjs/core v6.49.0 에서
+  //     const q = Quaternion.FromEulerAngles(x*D, y*D, z*D);
+  //     const m = Matrix.Identity(); q.toRotationMatrix(m);
+  //     m.m[5]  // row=1, col=1 = 로컬 up (0,1,0) 의 world Y 성분
+  //   을 그대로 받아적은 값이다. (같은 스크립트에서 FromEulerAngles(x,y,z) 와
+  //   RotationYawPitchRoll(y,x,z) 의 차가 정확히 0 임도 확인했다 → R=Ry·Rx·Rz)
+  const BABYLON_M11 = [
+    // [rx, ry, rz, Babylon 실측 m.m[5]]
+    [10, 20, 30, 0.852868556976],
+    [90, 45, 0, 0.0],
+    [-89.9, 137, 12, 0.001707188785],
+    [0, 0, 0, 1.0],
+    [15, -30, 45, 0.683012723923],
+  ];
+  const D = Math.PI / 180;
+  // 우리 유도: 로컬 up 의 world Y = cos(rx)·cos(rz) — ry 는 등장하지 않는다.
+  const ourUpWorldY = (rx, rz) => Math.cos(rx * D) * Math.cos(rz * D);
+  for (const [rx, ry, rz, expected] of BABYLON_M11) {
+    const got = ourUpWorldY(rx, rz);
+    // Babylon 은 Float32Array 라 실측값 자체가 float32 정밀도다 → 1e-6 대조.
+    assert(
+      Math.abs(got - expected) < 1e-6,
+      `(${rx},${ry},${rz}): 직접 유도 up.y=${got.toFixed(12)} ≈ Babylon ${expected} (관례 일치)`,
+    );
+  }
+  // ry 가 유도식에 없다는 것 = 수직축 회전 불변성의 근거. 실측으로도 확인.
+  //   [10,20,30] 과 [10,-160,30] 은 ry 만 180° 다른데 Babylon m11 이 같아야 한다.
+  assert(
+    Math.abs(ourUpWorldY(10, 30) - 0.852868556976) < 1e-6,
+    "ry 를 어떤 값으로 바꿔도 up.y 는 cos(rx)·cos(rz) 로 동일(수직축 불변성 근거)",
+  );
+}
+
+function caseTiltedBaseVerticalRotationKeeps() {
+  console.log("\n(i) 기울어진 모델 × 수직축 회전 → 유지 (B-15c):");
+  // 여러 기준 자세 × 여러 각도. 수직축 회전은 rx/rz 를 그대로 두므로 up.y 불변.
+  for (const [rx, rz] of [[15, 45], [60, 0], [89.5, 20], [-45, 80], [33, -124]]) {
+    for (const deg of [1, 15, 90, 180, -137]) {
+      const start = { ...BASE, rx, ry: 10, rz };
+      const end = { ...start, ry: start.ry + deg };
+      assert(
+        transformKeepsRedesignValid(start, end) === true,
+        `rx=${rx},rz=${rz} 에서 수직축 ${deg}° → 유지`,
+      );
+    }
+  }
+}
+
+function caseRealTiltStillInvalidates() {
+  console.log("\n(j) 실제 기울임은 여전히 무효 — 과잉수정 방지 (B-15c):");
+  // 허용치(1e-4)를 넘는 실제 기울임은 확실히 잡아야 한다. 0.1° → up.y 3.2e-4.
+  for (const [rx, rz] of [[15, 45], [0, 0], [60, 10]]) {
+    for (const tilt of [0.1, 0.5, 1, 5, 30, 90]) {
+      const start = { ...BASE, rx, ry: -30, rz };
+      assert(
+        transformKeepsRedesignValid(start, { ...start, rx: rx + tilt }) === false,
+        `rx=${rx},rz=${rz} 에서 rx +${tilt}° 기울임 → 무효`,
+      );
+      assert(
+        transformKeepsRedesignValid(start, { ...start, rz: rz + tilt }) === false,
+        `rx=${rx},rz=${rz} 에서 rz +${tilt}° 기울임 → 무효`,
+      );
+    }
+  }
+  // 수직축 회전에 기울임이 섞이면 무효 — 불변량이 실제로 움직이므로.
+  assert(
+    transformKeepsRedesignValid(
+      { ...BASE, rx: 15, ry: -30, rz: 45 },
+      { ...BASE, rx: 20, ry: 60, rz: 45 },
+    ) === false,
+    "수직축 회전 + rx 기울임 동반 → 무효",
+  );
+}
+
+function casePolicyUnchanged() {
+  console.log("\n(k) 스케일·ty·tx/tz 정책 무변경 확인 (B-15c):");
+  const tilted = { ...BASE, rx: 89.5, ry: 10, rz: 20 };
+  // 스케일은 여전히 무효 (기울지 않은 자세에서도, 기운 자세에서도).
+  for (const [label, patch] of [
+    ["sx", { sx: BASE.sx * 2 }],
+    ["sy", { sy: BASE.sy * 1.1 }],
+    ["sz", { sz: BASE.sz * 0.5 }],
+    ["균일 스케일", { sx: BASE.sx * 1.5, sy: BASE.sy * 1.5, sz: BASE.sz * 1.5 }],
+  ]) {
+    assert(
+      transformKeepsRedesignValid(tilted, { ...tilted, ...patch }) === false,
+      `${label} 변경 → 무효(접점 위치·높이가 달라짐)`,
+    );
+  }
+  // ty 는 현행대로 무효 유지 (별건 B-18 리드 결정 대기 — 건드리지 않음).
+  assert(
+    transformKeepsRedesignValid(tilted, { ...tilted, ty: tilted.ty + 3 }) === false,
+    "ty 상승 → 무효(정책 무변경, B-18 별건)",
+  );
+  assert(
+    transformKeepsRedesignValid(tilted, { ...tilted, ty: tilted.ty - 0.5 }) === false,
+    "ty 하강 → 무효(정책 무변경)",
+  );
+  // tx/tz 는 여전히 유효.
+  assert(
+    transformKeepsRedesignValid(tilted, {
+      ...tilted, tx: tilted.tx + 50, tz: tilted.tz - 50,
+    }) === true,
+    "tx/tz 수평 이동 → 유지(정책 무변경)",
+  );
+}
+
 function main() {
-  console.log("재설계 서포트 무효화 판정 검증 (B-1, B-15 보강)");
+  console.log("재설계 서포트 무효화 판정 검증 (B-1, B-15·B-15c 보강)");
   caseXZMoveKeeps();
   caseTiltRotationInvalidates();
   caseVerticalRotationKeeps();
@@ -283,6 +491,11 @@ function main() {
   caseFloatNoiseKeeps();
   caseIdentityBase();
   caseBeforeFixControl();
+  caseFloat32NoiseControl();
+  caseBabylonConventionMatch();
+  caseTiltedBaseVerticalRotationKeeps();
+  caseRealTiltStillInvalidates();
+  casePolicyUnchanged();
   console.log(
     failed === 0 ? "\n검증 통과 (전 항목 ok)." : `\n검증 실패 ${failed}건.`,
   );

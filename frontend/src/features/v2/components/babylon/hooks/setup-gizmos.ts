@@ -126,9 +126,18 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
     // mesh 의 child 로 임시 설정. drag 진행하는 동안 Babylon 이
     // world transform 자동 동기 → mesh 가 STL 따라 즉시 움직임.
     // setParent 는 world 위치 유지하면서 local 좌표 자동 계산.
+    //
+    // ⚠️ B-15b: **stl-local 서포트는 부모화하지 않는다.** 그 점들은 이미 정본
+    //   parent 가 stlMesh 라(useSupportMeshSync) 부모화가 불필요한데, Babylon
+    //   `setParent` 는 **이미 같은 부모여도 early-return 없이** 로컬 SRT 를
+    //   decompose 로 재계산한다. 재설계 서포트는 정점에 좌표가 베이크돼 로컬 SRT
+    //   가 항등이어야 정상이므로, 비-항등 SRT 가 끼면 world 형상이 두 번 변환된다.
+    //   해제 루프(onDragEnd)에는 이 필터가 이미 있었는데(B-11) 시작 쪽만 빠져
+    //   비대칭이었다 → 여기서 맞춘다. 임시 부모화 대상은 world 서포트뿐이다.
     const supports = ctx.supportsRef.current;
     for (const [supId, supMesh] of ctx.supportMeshMapRef.current) {
       const sup = supports.find((s) => s.id === supId);
+      if (sup?.coordSpace === "stl-local") continue; // 정본 parent 유지.
       if (
         sup &&
         (sup.stlId === id || sup.baseStlId === id)
