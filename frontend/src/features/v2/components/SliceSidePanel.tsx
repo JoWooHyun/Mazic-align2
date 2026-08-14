@@ -9,6 +9,7 @@ import {
 import { estimatePrintTimeSec } from "../utils/print-time";
 import { sliceBatchService } from "../utils/slice-batch-service";
 import type { BabylonSceneHandle } from "./BabylonScene";
+import NumberInput from "./common/NumberInput";
 import SliceMaskPreview from "./SliceMaskPreview";
 
 /** SLA 레진 평균 밀도 (g/cm³). 메이커마다 1.05 ~ 1.15. */
@@ -155,16 +156,17 @@ const SliceSidePanel: React.FC<Props> = ({
 
         <Card title="레이어 두께">
           <div className="flex items-center gap-2">
-            <input
-              type="number"
+            {/* Enter/blur 에서만 커밋한다 (B-14). 타자 도중 "0." 같은 중간값이
+                레이어 두께로 적용돼 전체 레이어 수가 튀던 것을 막는다.
+                범위 클램프도 커밋 시점에만 걸리므로 하한 0.01 로 끌려가지 않는다. */}
+            <NumberInput
               min={0.01}
               max={0.3}
               step={0.005}
+              decimals={3}
               value={layerHeightMm}
-              onChange={(e) => {
-                const v = Number(e.target.value);
-                if (!Number.isNaN(v) && v > 0) onLayerHeightChange(v);
-              }}
+              onChange={onLayerHeightChange}
+              ariaLabel="레이어 두께 (mm)"
               className="w-24 px-2 py-1 text-sm border border-gray-300 rounded"
             />
             <span className="text-xs text-gray-500">mm</span>
@@ -188,13 +190,15 @@ const SliceSidePanel: React.FC<Props> = ({
               onChange={(e) => onLayerIdxChange(Number(e.target.value))}
               className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
             />
-            <input
-              type="number"
+            {/* 레이어 인덱스는 정수. 표시 반올림 0자리 (B-14). */}
+            <NumberInput
               min={0}
               max={Math.max(0, layerCount - 1)}
               step={1}
+              decimals={0}
               value={safeLayerIdx}
-              onChange={(e) => onLayerIdxChange(Number(e.target.value))}
+              onChange={onLayerIdxChange}
+              ariaLabel="현재 레이어 번호"
               className="w-20 px-2 py-1 text-sm border border-gray-300 rounded"
             />
           </div>

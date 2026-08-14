@@ -17,6 +17,8 @@ import {
   DEFAULT_LIGHT_OFF_DELAY_SEC,
   type PrinterProfileV2,
 } from "../types/printer";
+// 로컬 NumberInput 래퍼와 이름이 겹치지 않게 별칭으로 받는다 (B-14).
+import CommitNumberInput from "./common/NumberInput";
 
 interface Props {
   open: boolean;
@@ -450,6 +452,17 @@ function FormRow({
   );
 }
 
+/**
+ * 프로파일 필드용 숫자칸. 공통 `NumberInput` 에 이 다이얼로그의 폭·스타일만
+ * 입힌 얇은 래퍼다 (B-14).
+ *
+ * 기존 구현은 타자 한 글자마다 draft 에 반영해, "300" 을 치려고 "3" 을 누른
+ * 순간 해상도가 3px 로 바뀌는 식이었다. 이제 Enter/blur 에서만 커밋한다.
+ *
+ * min/max 는 **일부러 걸지 않는다**. 이 다이얼로그는 저장 시점에
+ * `sanitizeDraft`(Math.max/round)로 한 번에 정리하는 방식이고, 편집 중에 범위를
+ * 걸면 종전에 없던 제약이 생긴다. 표시 반올림 자릿수만 step 에 맞춰 정한다.
+ */
 function NumberInput({
   value,
   onChange,
@@ -462,15 +475,13 @@ function NumberInput({
   step?: number;
 }) {
   return (
-    <input
-      type="number"
+    <CommitNumberInput
       value={value}
-      step={step}
+      onChange={onChange}
       disabled={disabled}
-      onChange={(e) => {
-        const v = Number(e.target.value);
-        if (!Number.isNaN(v)) onChange(v);
-      }}
+      step={step}
+      // step 1(픽셀·레이어 수)은 정수, step 0.1/0.01(µm·mm·초)은 소수 3자리까지.
+      decimals={step >= 1 ? 0 : 3}
       className="w-28 px-2 py-1 text-sm border border-gray-300 rounded disabled:bg-gray-50"
     />
   );
