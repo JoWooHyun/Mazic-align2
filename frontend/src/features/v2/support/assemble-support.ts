@@ -31,6 +31,8 @@ import {
   resolveRedesignBaseY,
   type VerticalSupportSpec,
 } from "./assemble-core";
+import { assembleRoutedSupport, type RoutedSupportSpec } from "./assemble-route";
+import type { Vec3 } from "./assemble-strut";
 import { getSupportParts } from "./parts-cache";
 
 /**
@@ -86,27 +88,45 @@ export function createRedesignSupportMesh(
   const tipDiameterMm =
     point.tipRadius != null ? point.tipRadius * 2 : params.tipDiameterMm;
 
-  const spec: VerticalSupportSpec = {
-    surfaceY,
-    baseY,
-    tipDiameterMm,
-    headBackDiameterMm: params.headBackDiameterMm,
-    headLengthMm: params.headLengthMm,
-    contactPenetrationMm: params.contactPenetrationMm,
-    trunkDiameterMm: params.trunkDiameterMm,
-    baseDiameterMm: params.baseDiameterMm,
-    baseTransitionMm: params.baseTransitionMm,
-  };
+  // ── S-4b-2c: 폴백 경로(bent/anchor/joinPillar) 분기 ─────────────────────
+  //   routeKind 미설정/'vertical' 은 **아래 기존 경로 그대로** — 옛 데이터와
+  //   1단(수직) 점은 S-4b-1 과 완전히 같은 형상이 나온다(무회귀).
+  const routed = buildRoutedSpec(point, params, tipDiameterMm, toWorld, baseY);
 
-  const geo = assembleVerticalSupport(parts, spec);
+  // 조립 좌표 → world. 기존(수직) 경로는 로컬 XZ 원점 기준이라 contact XZ 로
+  //   평행이동이 필요하고, 폴백 경로(assemble-route)는 **이미 world** 라 0 이다.
+  let geo;
+  let shiftX = 0;
+  let shiftZ = 0;
+  if (routed) {
+    geo = assembleRoutedSupport(parts, routed);
+  } else {
+    const spec: VerticalSupportSpec = {
+      surfaceY,
+      baseY,
+      tipDiameterMm,
+      headBackDiameterMm: params.headBackDiameterMm,
+      headLengthMm: params.headLengthMm,
+      contactPenetrationMm: params.contactPenetrationMm,
+      trunkDiameterMm: params.trunkDiameterMm,
+      baseDiameterMm: params.baseDiameterMm,
+      baseTransitionMm: params.baseTransitionMm,
+    };
+    geo = assembleVerticalSupport(parts, spec);
+    shiftX = cx;
+    shiftZ = cz;
+  }
 
-  // 조립 positions 는 로컬 XZ 원점 기준(축=Y) → world contact XZ 로 평행이동해
-  //   월드 형상 완성. 이어서 stlMesh 가 있으면 inv(world) 로 로컬화(parent 규약).
+  // 월드 형상 완성 후 stlMesh 가 있으면 inv(world) 로 로컬화(parent 규약).
   const invWorld = stlMesh ? Matrix.Invert(stlMesh.getWorldMatrix()) : null;
   const positions = new Float32Array(geo.positions.length);
   const tmp = new Vector3();
   for (let i = 0; i < geo.positions.length; i += 3) {
-    tmp.set(geo.positions[i] + cx, geo.positions[i + 1], geo.positions[i + 2] + cz);
+    tmp.set(
+      geo.positions[i] + shiftX,
+      geo.positions[i + 1],
+      geo.positions[i + 2] + shiftZ,
+    );
     const out = invWorld
       ? Vector3.TransformCoordinates(tmp, invWorld)
       : tmp;
@@ -138,4 +158,72 @@ export function createRedesignSupportMesh(
   //   형상으로 복원. STL 회전과 무관하게 월드 수직 유지.)
   if (stlMesh) mesh.parent = stlMesh;
   return mesh;
+}
+
+/**
+ * 저장된 라우팅 정보(S-4b-2c) → `assembleRoutedSupport` 스펙 (world 좌표).
+ *   routeKind 가 없거나 'vertical' 이면 **null** — 호출 측이 기존 수직 경로를
+ *   그대로 탄다(무회귀 보장 지점).
+ *
+ * ## ⚠️ baseAnchor 함정 (반드시 지킬 것)
+ * joinPillar·anchor 의 base 는 **플레이트가 아니다**(각각 기둥 옆면·모델 표면).
+ * 이 점들을 `baseAnchor:'plate'` 로 저장하면 `resolveRedesignBaseY` 가 base 의
+ * world Y 를 0 으로 **강제**해 다리가 바닥까지 늘어나고 형상이 무너진다. 생성
+ * 측(`redesign-detect-actions`)이 'model' 로 찍어 보내는 게 규약이며, 여기서는
+ * 그 규약대로 **저장된 base world 좌표를 그대로** 쓴다.
+ * bent 만은 발이 플레이트에 서므로 'plate'(= 인자로 받은 고정된 baseY)를 쓴다.
+ */
+function buildRoutedSpec(
+  point: SupportPointV2,
+  params: SupportParams,
+  tipDiameterMm: number,
+  toWorld: (p: [number, number, number]) => Vector3,
+  plateBaseY: number,
+): RoutedSupportSpec | null {
+  const kind = point.routeKind;
+  if (!kind || kind === "vertical") return null;
+
+  const wContact = toWorld(point.contact);
+  const contactWorld: Vec3 = [wContact.x, wContact.y, wContact.z];
+  const dims = {
+    contactWorld,
+    tipDiameterMm,
+    headBackDiameterMm: params.headBackDiameterMm,
+    headLengthMm: params.headLengthMm,
+    contactPenetrationMm: params.contactPenetrationMm,
+    trunkDiameterMm: params.trunkDiameterMm,
+    baseDiameterMm: params.baseDiameterMm,
+    baseTransitionMm: params.baseTransitionMm,
+  };
+  const wBase = toWorld(point.base);
+
+  if (kind === "bent") {
+    // 발은 플레이트 고정(B-18) — 모델을 수직 이동해도 마지막 수직 구간만 늘어난다.
+    const waypoints: Vec3[] = (point.routeWaypoints ?? []).map((p) => {
+      const w = toWorld(p);
+      return [w.x, w.y, w.z];
+    });
+    return {
+      ...dims,
+      route: {
+        kind: "bent",
+        worldWaypoints: waypoints,
+        baseXZ: [wBase.x, wBase.z],
+        baseY: plateBaseY,
+      },
+    };
+  }
+
+  if (kind === "anchor") {
+    return {
+      ...dims,
+      route: { kind: "anchor", anchorWorld: [wBase.x, wBase.y, wBase.z] },
+    };
+  }
+
+  // joinPillar — base 가 곧 합류점.
+  return {
+    ...dims,
+    route: { kind: "joinPillar", junctionWorld: [wBase.x, wBase.y, wBase.z] },
+  };
 }

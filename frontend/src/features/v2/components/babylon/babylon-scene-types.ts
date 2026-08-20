@@ -6,6 +6,7 @@ import type { SliceMask } from "../../utils/slice-rasterize";
 import type { FdmSettings } from "../../utils/gcode/types";
 import type { FindMarginStats } from "../../utils/dental/margin-detect";
 import type { SupportParams, SupportPointV2 } from "../../support/types";
+import type { RouteReport } from "../../support/route-plan";
 import type { RedesignDetectStats } from "./redesign-detect-actions";
 import type { EditMode } from "../EditModeControls";
 import type { ViewPreset } from "../../utils/camera-views";
@@ -375,14 +376,18 @@ export interface BabylonSceneHandle {
   /** 서포트 재설계(S-4) 오버레이(아일랜드/오버행 색 + 점 구)를 모두 지운다. */
   clearRedesignDetect: () => void;
   /**
-   * 서포트 재설계(S-4b) 점을 저장 가능한 최종 형태로 확정한다.
-   *   각 점을 활성 STL 표면에 레이캐스트로 Y 스냅하고, base 를 플레이트(Y=0)로
-   *   재계산한 뒤, world→stl-local 변환해 coordSpace='stl-local' 로 반환한다.
-   *   반환 점을 저장하면 useSupportMeshSync 가 화살촉+수직 기둥을 세운다.
+   * 서포트 재설계(S-4b-2c) 점을 **라우팅**해 저장 가능한 최종 형태로 확정한다.
+   *   각 점을 활성 STL 표면에 Y 스냅한 뒤, 빔 충돌 검사로 3단 폴백을 태운다
+   *   (기둥 합류 → 수직 → 경사 → 모델 앵커). 결과를 world→stl-local 변환해
+   *   coordSpace='stl-local' 로 반환하고, 닿을 곳이 없는 점은 **저장 목록에서
+   *   빼고 report 에 카운트**한다(조용히 버리지 않는다 — 연구 7절-6).
+   *   반환 점을 저장하면 useSupportMeshSync 가 경로별 형상을 세운다.
+   *   report 는 활성 STL 이 없어 라우팅을 못 돌린 경우 null.
    */
-  snapAndFinalizeRedesignPoints: (
+  routeAndFinalizeRedesignPoints: (
     points: SupportPointV2[],
-  ) => SupportPointV2[];
+    params: SupportParams,
+  ) => { points: SupportPointV2[]; report: RouteReport | null };
 }
 
 /** 아일랜드 검출 요약 통계 (패널 표시용). 원본 onIslandDetectionComplete 페이로드 축약. */

@@ -12,6 +12,7 @@ import {
   type AbstractMesh,
   MeshBuilder,
   Ray,
+  type Scene,
   StandardMaterial,
   Vector3,
 } from "@babylonjs/core";
@@ -24,7 +25,13 @@ import {
   DEFAULT_PLACE_POINTS_PARAMS,
   type LayerGraphResult,
 } from "../../support";
-import type { SupportPointV2 } from "../../support/types";
+import type { SupportParams, SupportPointV2 } from "../../support/types";
+import { makeStlBeamProbe } from "../../support/collision-probe";
+import {
+  planClusterRoutes,
+  type RoutePoint,
+  type RouteReport,
+} from "../../support/route-plan";
 import type { SceneCtx } from "./scene-refs";
 import { getActiveStl } from "./scene-actions";
 
@@ -201,59 +208,153 @@ function renderSupportPointSpheres(
 const SNAP_RAY_MAX_MM = 2.0;
 
 /**
- * 검출 점을 저장 가능한 최종 형태로 확정한다 (설계 4-1 접점 준비 / S-4b-1 저장).
- *   각 점마다:
- *     1) 표면 스냅: 활성 STL 메시에 contact 바로 아래(−SNAP_RAY_MAX_MM/2)에서
- *        +Y 로 레이캐스트(상한 SNAP_RAY_MAX_MM)해 실제 표면 Y 로 contact.y 를
- *        보정. 실패(미교차) 시 원래 contact 유지.
- *     2) base 확정: [contact.x, 0, contact.z] (플레이트 Y=0). S-4a 임시 base 재계산.
- *        B-18: 접지 의도를 baseAnchor='plate' 로 함께 기록한다 (모델이 움직인
- *        뒤엔 저장 좌표만으로 구분할 수 없으므로 생성 시점에 찍는다).
- *     3) 좌표 공간: world contact/base 를 STL local 로 변환해 저장하고
- *        coordSpace='stl-local' 로 둔다(types.ts 규약 = 신규 점 정본). STL
- *        transform 시 mesh.parent=stlMesh 로 자동 동기(race 없음).
- *   활성 STL 이 없으면 world 좌표 그대로(coordSpace 미지정) 반환한다.
+ * 표면 스냅만 수행한다 — contact 를 실제 STL 표면 Y 로 끌어올린다 (설계 4-1 접점 준비).
+ *   contact 바로 아래(−SNAP_RAY_MAX_MM/2)에서 +Y 로 레이캐스트(상한
+ *   SNAP_RAY_MAX_MM)해 표면 Y 를 얻고, 실패(미교차) 시 원래 값을 유지한다.
  *
- *   ※ S-4b-1 한계(TODO): 수직 스냅만. 경사면 법선 방향 스냅·3단 폴백은 S-4b-2.
+ *   S-4b-2c 에서 종전 `snapAndFinalizePoints` 의 1) 단계를 **world 좌표를 유지한
+ *   채** 떼어낸 것이다. 라우팅(3단 폴백)은 world 좌표에서 돌아야 하므로 stl-local
+ *   변환은 맨 마지막(`routeAndFinalizePoints` 3단계)으로 미룬다.
+ *
+ * @returns 각 점의 스냅된 world contact ([x, y, z]) — 입력과 같은 순서·길이.
  */
-export function snapAndFinalizePoints(
-  ctx: SceneCtx,
-  points: SupportPointV2[],
-): SupportPointV2[] {
-  const scene = ctx.sceneRef.current;
-  const active = getActiveStl(ctx);
-  if (!scene || !active) return points;
-  const { mesh } = active;
-  mesh.computeWorldMatrix(true);
+function snapContactsToSurface(
+  scene: Scene,
+  mesh: AbstractMesh,
+  points: readonly SupportPointV2[],
+): [number, number, number][] {
   const predicate = (m: AbstractMesh) => m === mesh;
-
   const up = new Vector3(0, 1, 0);
   return points.map((p) => {
-    // 1) 표면 스냅 — contact 바로 아래에서 위로 레이.
     const [cx, cy, cz] = p.contact;
     const origin = new Vector3(cx, cy - SNAP_RAY_MAX_MM * 0.5, cz);
     const ray = new Ray(origin, up, SNAP_RAY_MAX_MM);
     const hit = scene.pickWithRay(ray, predicate);
-    const snappedY =
-      hit?.hit && hit.pickedPoint ? hit.pickedPoint.y : cy;
-
-    // 2) base = 플레이트(Y=0) 바로 아래 (수직 기둥).
-    const worldContact: [number, number, number] = [cx, snappedY, cz];
-    const worldBase: [number, number, number] = [cx, 0, cz];
-
-    // 3) world → stl-local 저장 (신규 점 정본, coord-space.ts 유틸 재사용).
-    const localContact = worldToStlLocal(worldContact, mesh);
-    const localBase = worldToStlLocal(worldBase, mesh);
-    return {
-      ...p,
-      contact: localContact,
-      base: localBase,
-      coordSpace: "stl-local" as const,
-      // B-18: 이 경로의 base 는 정의상 플레이트(Y=0) 접지다. 접지 의도는 점을
-      //   만드는 지금만 알 수 있으므로(모델이 움직인 뒤엔 저장 좌표만 봐서는
-      //   구분 불가) 여기서 명시해 둔다. S-4b-2 의 3단 폴백은 자기 결과에
-      //   'model' 을 실어 보내면 된다.
-      baseAnchor: "plate" as const,
-    };
+    const snappedY = hit?.hit && hit.pickedPoint ? hit.pickedPoint.y : cy;
+    return [cx, snappedY, cz];
   });
+}
+
+/**
+ * 검출 점을 **라우팅**해 저장 가능한 최종 형태로 확정한다 (S-4b-2c).
+ *
+ * 종전 `snapAndFinalizePoints`(S-4b-1, 전원 수직 기둥)를 대체한다. 흐름:
+ *   1) **표면 스냅** — 위 `snapContactsToSurface` (world 유지).
+ *   2) **라우팅** — 활성 STL 로 빔 probe 를 만들어 `planClusterRoutes` 실행.
+ *      중복 제거 → 기둥 공유 클러스터 → 합류 다리 검사 → 3단 폴백(수직/경사/앵커).
+ *   3) **저장 형태 변환** — 경로별로 base·routeKind·routeWaypoints 를 채우고
+ *      world → stl-local 로 옮겨 `coordSpace:'stl-local'` 로 확정.
+ *   실패(failed) 점은 저장 목록에서 빠지고 report 에 카운트만 남는다
+ *   (연구 7절-6 "조용히 버리지 말 것" — 호출 측이 사용자에게 통지한다).
+ *
+ * 활성 STL 이 없으면 라우팅할 대상이 없으므로 입력을 그대로 돌려준다.
+ *
+ * @param params 서포트 파라미터 — 반경(trunkDiameterMm/2)과 화살촉 높이를 준다.
+ */
+export function routeAndFinalizePoints(
+  ctx: SceneCtx,
+  points: SupportPointV2[],
+  params: SupportParams,
+): { points: SupportPointV2[]; report: RouteReport | null } {
+  const scene = ctx.sceneRef.current;
+  const active = getActiveStl(ctx);
+  if (!scene || !active) return { points, report: null };
+  const { mesh } = active;
+  mesh.computeWorldMatrix(true);
+
+  // ── 1) 표면 스냅 (world 유지) ───────────────────────────────────────────
+  const snapped = snapContactsToSurface(scene, mesh, points);
+
+  // ── 2) 라우팅 ──────────────────────────────────────────────────────────
+  //   빔 시작점은 화살촉 아래 — 앞구슬이 침투해 있는 표면 자신을 맞지 않게
+  //   (route-plan headClearanceMm 주석 참고).
+  const probe = makeStlBeamProbe(scene, mesh);
+  const routeInput: (RoutePoint & { origin: SupportPointV2 })[] = points.map(
+    (p, i) => ({
+      contact: snapped[i],
+      tipRadius: p.tipRadius,
+      kind: p.kind,
+      origin: p,
+    }),
+  );
+  const { routes, deduped, report } = planClusterRoutes(routeInput, probe, {
+    strutRadiusMm: params.trunkDiameterMm / 2,
+    headClearanceMm: params.headLengthMm + params.contactPenetrationMm,
+  });
+
+  // ── 3) 저장 형태 변환 ───────────────────────────────────────────────────
+  //   routes[i] ↔ deduped[i] 는 1:1 (route-plan 의 순서 계약).
+  const toLocal = (w: [number, number, number]) => worldToStlLocal(w, mesh);
+  const finalized: SupportPointV2[] = [];
+  for (let i = 0; i < deduped.length; i++) {
+    const src = deduped[i] as RoutePoint & { origin: SupportPointV2 };
+    const route = routes[i];
+    const p = src.origin;
+    const [cx, cy, cz] = src.contact;
+    const localContact = toLocal([cx, cy, cz]);
+
+    switch (route.kind) {
+      case "vertical": {
+        // ★ S-4b-1 과 **완전히 같은 저장 형태** — routeKind 조차 찍지 않는다.
+        //   찍으면 buildSupportKey 문자열이 달라져 무회귀가 깨진다(수용 6).
+        finalized.push({
+          ...p,
+          contact: localContact,
+          base: toLocal([cx, 0, cz]),
+          coordSpace: "stl-local",
+          baseAnchor: "plate",
+        });
+        break;
+      }
+      case "bent": {
+        // 발은 플레이트(Y=0) — 착지 XZ 위에 선다.
+        const [lx, lz] = route.landingXZ;
+        finalized.push({
+          ...p,
+          contact: localContact,
+          base: toLocal([lx, 0, lz]),
+          coordSpace: "stl-local",
+          baseAnchor: "plate",
+          routeKind: "bent",
+          routeWaypoints: route.waypoints.map((w) => toLocal(w)),
+        });
+        break;
+      }
+      case "joinPillar": {
+        // base = 기둥 합류점. ★ baseAnchor 는 반드시 'model' —
+        //   'plate' 면 resolveRedesignBaseY 가 Y 를 0 으로 강제해 다리가 바닥까지
+        //   늘어나며 형상이 무너진다(assemble-support buildRoutedSpec 주석).
+        const pillarSrc = deduped[route.pillarPointIndex] as RoutePoint & {
+          origin: SupportPointV2;
+        };
+        finalized.push({
+          ...p,
+          contact: localContact,
+          base: toLocal(route.junction),
+          coordSpace: "stl-local",
+          baseAnchor: "model",
+          routeKind: "joinPillar",
+          joinPillarPointId: pillarSrc.origin.id,
+        });
+        break;
+      }
+      case "anchor": {
+        // base = 모델 표면 앵커 지점. 위와 같은 이유로 'model'.
+        finalized.push({
+          ...p,
+          contact: localContact,
+          base: toLocal(route.anchorPoint),
+          coordSpace: "stl-local",
+          baseAnchor: "model",
+          routeKind: "anchor",
+        });
+        break;
+      }
+      case "failed":
+        // 저장하지 않는다. report.failed 가 이미 세었다.
+        break;
+    }
+  }
+
+  return { points: finalized, report };
 }
