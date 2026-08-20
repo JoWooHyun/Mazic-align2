@@ -170,3 +170,20 @@ export interface SupportPointV2 {
    */
   baseAnchor?: "plate" | "model";
 }
+
+/**
+ * 서포트 재설계(S-4b-2b) 점 전처리 결과 타입 재노출.
+ *
+ * 정의 본체는 `detect/preprocess-points.ts` 에 있다 — 전처리는 **생성 시점의
+ * 인메모리 변환**이라 저장 스키마(위 `SupportPointV2`)를 건드리지 않으며, 그래서
+ * 검출(detect) 모듈 쪽에 산다. 여기서는 서포트 모듈 소비자가 한 곳에서 타입을
+ * 집어갈 수 있도록 이름만 다시 내보낸다(값 재수출 아님 — 타입 전용).
+ *
+ * ⚠️ `SharedPillarCluster` 는 **후보**다. 충돌 검사는 S-4b-2c 가 한다.
+ */
+export type {
+  ClusterPillarsOptions,
+  DedupedPoint,
+  PreprocessPoint,
+  SharedPillarCluster,
+} from "./detect/preprocess-points";
