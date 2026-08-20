@@ -9,7 +9,7 @@ export const HIGHLIGHT_COLOR = new Color3(1.0, 0.78, 0.18); // 따뜻한 노랑
 
 /**
  * 피벗 프록시 자세 (B-12).
- *   · "identity" — world 축 정렬. 회전 기즈모용.
+ *   · "identity" — world 축 정렬. 이동(B-17)·회전 기즈모용.
  *   · "mesh"     — 모델 회전을 복사(로컬 축). 스케일 기즈모용.
  */
 export type PivotProxyOrientation = "identity" | "mesh";
@@ -17,10 +17,15 @@ export type PivotProxyOrientation = "identity" | "mesh";
 /**
  * 피벗 프록시를 mesh 의 **현재 world bbox 중심**에 놓는다 (B-9).
  *
- * 회전/스케일 기즈모는 이 프록시에 attach 되므로, 링이 항상 실루엣 중심에 보이고
- * 드래그가 그 점을 축으로 돈다.
+ * 이동/회전/스케일 기즈모가 모두 이 프록시에 attach 되므로, 핸들이 항상 실루엣
+ * 중심에 보이고 드래그가 그 점을 기준으로 동작한다.
  *
  * 자세(orientation)는 기즈모 종류에 따라 다르다 (B-12 재작업):
+ *
+ * · **이동 = "identity"**. 화살표가 world 축에 고정돼야 한다 — 회전과 같은 이유이고
+ *   `updateGizmoRotationToMatchAttachedMesh = false` 와 짝이다 (B-12·B-17).
+ *   프록시가 unit scale·identity 자세라 자식 mesh 가 받는 것은 **순수 world 병진**
+ *   뿐이고, 그래서 커밋되는 tx/ty/tz 가 드래그 이동량과 정확히 일치한다.
  *
  * · **회전 = "identity"**. 링이 world 축에 고정돼야 한다(CHITUBOX 실물 대조).
  *   사실 `RotationGizmo` 는 `updateGizmoRotationToMatchAttachedMesh = false` 만으로
@@ -133,7 +138,7 @@ export function syncGizmo(ctx: SceneCtx): void {
   //   · Bridge 변곡점/끝점 sphere 선택됨 → PositionGizmo 가 그 sphere
   //     X/Y/Z 축으로 깊이 방향 정확 드래그 가능.
   //   · 그 외 + 단점 서포트 기둥 선택 → 기둥에 attach.
-  // ⚠️ rg/sg 는 attachedNode(피벗 프록시, B-9)도 함께 풀어야 한다. Babylon 에서
+  // ⚠️ attachedNode(피벗 프록시, B-9/B-17)도 함께 풀어야 한다. Babylon 에서
   //   attachedMesh=null 은 attachedNode 를 지우지 않아, select+rotate 에서
   //   다른 모드로 전환하면 링이 프록시에 붙은 채 남는다.
   const detachRotScale = () => {
@@ -142,10 +147,19 @@ export function syncGizmo(ctx: SceneCtx): void {
     rg.attachedNode = null;
     sg.attachedNode = null;
   };
+  // 이동 기즈모도 프록시를 타므로(B-17) 같은 정리가 필요하다. 서포트/브릿지
+  //   경로는 sphere·기둥 mesh 에 직접 attach 하므로 attachedMesh 대입만으로는
+  //   이전 프록시 attach 가 남을 수 있다.
+  const detachMove = () => {
+    pg.attachedMesh = null;
+    pg.attachedNode = null;
+  };
 
   if (ctx.editModeRef.current === "support") {
     const handleMesh = ctx.selectedBridgeSphereRef.current;
     if (handleMesh) {
+      // 프록시 attach 를 먼저 끊고 sphere 에 직접 붙인다 (B-17).
+      detachMove();
       pg.attachedMesh = handleMesh;
       detachRotScale();
       return;
@@ -154,6 +168,7 @@ export function syncGizmo(ctx: SceneCtx): void {
     const sMesh = sid
       ? ctx.supportMeshMapRef.current.get(sid) ?? null
       : null;
+    detachMove();
     pg.attachedMesh = sMesh;
     detachRotScale();
     return;
@@ -164,7 +179,7 @@ export function syncGizmo(ctx: SceneCtx): void {
   //   모델 이동이 동시에 일어나던 문제 차단. effect 5 가 editMode 변경
   //   마다 syncGizmo 를 재호출하므로 select 복귀 시 자동 재attach.
   if (ctx.editModeRef.current !== "select") {
-    pg.attachedMesh = null;
+    detachMove();
     detachRotScale();
     return;
   }
@@ -175,21 +190,35 @@ export function syncGizmo(ctx: SceneCtx): void {
   const mesh = single ? ctx.meshMapRef.current.get(single) ?? null : null;
   const mode = ctx.gizmoModeRef.current;
 
-  // 이동 기즈모는 기존대로 mesh 에 직접 attach (경로 무변경).
-  pg.attachedMesh = mode === "translate" ? mesh : null;
-
-  // 회전/스케일은 피벗 프록시에 attach 해 bbox 중심을 축으로 돌린다 (B-9).
+  // 이동/회전/스케일 **모두** 피벗 프록시에 attach 해 bbox 중심을 기준점으로
+  //   삼는다 (B-9 → 이동 확대가 B-17).
+  //
+  //   이동을 프록시로 옮긴 이유: mesh 직접 attach 는 Babylon 기본 anchorPoint
+  //   (= Origin) 규칙 때문에 화살표가 **mesh 원점**에 붙는데, stl-loader 의
+  //   alignMeshToPlate 가 원점을 "XZ 중심 / Y 바닥" 에 베이크해 원점 ≠ bbox 중심
+  //   이다. 회전 피벗은 bbox 중심(B-9)이라, 모델을 돌리면 원점이 중심 둘레를
+  //   **공전**해 화살표가 돌아다녔다(리드 보고). anchorPoint 는 Origin/Pivot 두
+  //   값뿐이라 bbox 중심을 지정할 수 없어, 회전/스케일과 같은 프록시로 통일한다.
+  //
   //   attachedMesh/attachedNode 는 같은 슬롯을 공유하므로, 프록시를 쓰지 않는
   //   경우 둘 다 null 로 정리해 이전 attach 가 남지 않게 한다.
   const proxy = ctx.pivotProxyRef.current;
   const usePivot = mesh !== null && proxy !== null;
+  detachMove();
   detachRotScale();
-  if (usePivot && (mode === "rotate" || mode === "scale")) {
-    // 자세는 기즈모별로 다르다 (B-12) — 회전은 world 축 identity,
+  if (usePivot) {
+    // 자세는 기즈모별로 다르다 (B-12) — 이동/회전은 world 축 identity,
     //   스케일은 모델 로컬 축(전단 방지). placePivotProxy 주석 참고.
-    placePivotProxy(ctx, mesh, mode === "scale" ? "mesh" : "identity");
-    if (mode === "rotate") rg.attachedNode = proxy;
-    else sg.attachedNode = proxy;
+    if (mode === "translate") {
+      placePivotProxy(ctx, mesh, "identity");
+      pg.attachedNode = proxy;
+    } else if (mode === "rotate") {
+      placePivotProxy(ctx, mesh, "identity");
+      rg.attachedNode = proxy;
+    } else if (mode === "scale") {
+      placePivotProxy(ctx, mesh, "mesh");
+      sg.attachedNode = proxy;
+    }
   }
 }
 
