@@ -12,6 +12,9 @@
 //
 //   ※ S-4b-1 한계(TODO): 3단 폴백·충돌 회피 없음. 기둥이 모델을 관통해도
 //     이번엔 허용(S-4b-2 몫). base 는 항상 contact 바로 아래 플레이트(수직).
+//   ※ B-18: 기둥 발은 저장된 base 가 아니라 **플레이트(world Y=0)** 에 고정한다
+//     (resolveRedesignBaseY). 모델을 수직 이동하면 발은 바닥에 남고 기둥 길이만
+//     변한다 — 리드 확정 "서포터랑 STL 은 아예 다른 객체".
 
 import {
   Matrix,
@@ -25,6 +28,7 @@ import {
 import type { SupportParams, SupportPointV2 } from "./types";
 import {
   assembleVerticalSupport,
+  resolveRedesignBaseY,
   type VerticalSupportSpec,
 } from "./assemble-core";
 import { getSupportParts } from "./parts-cache";
@@ -71,7 +75,12 @@ export function createRedesignSupportMesh(
   const cx = wContact.x;
   const cz = wContact.z;
   const surfaceY = wContact.y;
-  const baseY = wBase.y;
+  // ★ B-18: 발은 저장된 base 를 따라가는 게 아니라 **플레이트(world Y=0)에
+  //   고정**된다. base 는 stl-local 이라 모델을 올리면 같이 떠오르는데, 리드
+  //   실물 대조 결과 서포트는 "플레이트에 서 있는 독립 구조물" 이라 발은 바닥에
+  //   붙은 채 기둥 길이만 늘어야 한다. 판정은 순수 함수에 위임 — S-4b-2 의 3단
+  //   폴백이 `baseAnchor:'model'` 을 실어 보내면 저장값이 그대로 존중된다.
+  const baseY = resolveRedesignBaseY(wBase.y, point.baseAnchor);
 
   // 앞구슬 지름 = 2×point.tipRadius (없으면 params.tipDiameterMm) — 수용 4.
   const tipDiameterMm =

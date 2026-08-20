@@ -2,9 +2,16 @@
 //   transformKeepsRedesignValid 는 "이 변형이 재설계 서포트를 유효하게 두는가"를
 //   판정하는 순수 함수다. 재설계 서포트는 stl-local 이라 모델 변형을 그대로 따라
 //   가므로, 모델을 기울이면 기둥이 기울어 출력 불가 → 리드 확정 정책은 삭제+안내.
-//   예외는 두 가지 — 둘 다 "기둥 수직성 + 바닥 접지가 보존된다" 는 같은 논리다:
-//     1) 순수 XZ 평행이동
+//   예외는 세 가지다:
+//     1) 순수 XZ 평행이동 — 기둥 수직성·바닥 접지 보존
 //     2) 수직축(내부 Babylon Y) 회전 — 제자리에서 팽이처럼 돌 뿐 (B-15)
+//     3) 수직 이동(ty) — 발이 플레이트에 고정돼 기둥 길이만 변한다 (B-18)
+//
+//   ⚠️ B-18: 리드가 타 슬라이서 실물과 대조해 확정 — "서포터랑 stl 이랑 아예 다른
+//   객체 취급". 서포트는 플레이트에 서 있는 독립 구조물이고 모델이 그 위에 얹혀
+//   있다. 판정에서 ty 항을 뺀 것과 **짝을 이루는** 변경이 assemble-core 의
+//   resolveRedesignBaseY(기둥 발을 world Y=0 에 고정)이며, 그쪽은
+//   verify-assemble-core.mjs 가 기둥 길이 수치로 검증한다. 둘은 함께 봐야 한다.
 //
 //   ⚠️ B-15c: 판정이 **Euler 성분 비교 → 기하학적 불변량(로컬 up 의 world Y 성분)**
 //   으로 바뀌었다. B-15(ry 항 제거)만으로는 실물에서 여전히 삭제됐는데, 진범이 ry 가
@@ -121,11 +128,12 @@ function caseVerticalRotationMixedInvalidates() {
     }) === false,
     "ry + rz 동반 → 무효화",
   );
+  // B-18 이후: ry + ty 는 둘 다 유효 예외라 동반해도 유지된다(정책 변경).
   assert(
     transformKeepsRedesignValid(BASE, {
       ...BASE, ry: BASE.ry + 90, ty: BASE.ty + 3,
-    }) === false,
-    "ry + ty 동반 → 무효화(바닥 접지 깨짐)",
+    }) === true,
+    "ry + ty 동반 → 유지 (B-18: 수직 이동도 예외로 편입)",
   );
   assert(
     transformKeepsRedesignValid(BASE, {
@@ -153,23 +161,127 @@ function caseScaleInvalidates() {
   );
 }
 
-function caseTyInvalidates() {
-  console.log("\n(d) ty(수직 이동) → 무효화:");
-  assert(
-    transformKeepsRedesignValid(BASE, { ...BASE, ty: BASE.ty + 3 }) === false,
-    "ty 상승 → 무효화(바닥 접지 깨짐)",
-  );
-  assert(
-    transformKeepsRedesignValid(BASE, { ...BASE, ty: BASE.ty - 3 }) === false,
-    "ty 하강 → 무효화",
-  );
-  // XZ 이동과 같이 와도 ty 가 섞이면 무효.
+// ── (d) B-18: 수직 이동은 유지 ───────────────────────────────────────────
+//   리드가 타 슬라이서 실물 화면과 대조해 확정: "수직이동은 서포터 달린 상태로
+//   올라갔다 내려오더라. 서포터랑 stl 이랑 아예 다른 객체 취급이야."
+//   서포트는 플레이트에 서 있는 독립 구조물이라 모델이 오르내리면 기둥 길이만
+//   변하면 된다 → 삭제할 이유가 없다.
+function caseTyKeeps() {
+  console.log("\n(d) ty(수직 이동) 단독 → 유지 (B-18):");
+  for (const dy of [5, -3.2, 50, 0.5, -0.001]) {
+    assert(
+      transformKeepsRedesignValid(BASE, { ...BASE, ty: BASE.ty + dy }) === true,
+      `ty ${dy > 0 ? "+" : ""}${dy}mm 단독 이동 → 유지(기둥 길이로 흡수)`,
+    );
+  }
+  // 예외 1(XZ)·2(수직축 회전)·3(ty)은 서로 섞여도 전부 유지 — 셋 다 유효하므로.
   assert(
     transformKeepsRedesignValid(BASE, {
-      ...BASE, tx: BASE.tx + 5, ty: BASE.ty + 0.5, tz: BASE.tz + 5,
-    }) === false,
-    "XZ 이동 + ty 동반 → 무효화",
+      ...BASE, tx: BASE.tx + 25, ty: BASE.ty + 12, tz: BASE.tz - 12,
+    }) === true,
+    "tx+ty+tz 동반 이동 → 유지",
   );
+  assert(
+    transformKeepsRedesignValid(BASE, {
+      ...BASE, tx: BASE.tx + 5, ty: BASE.ty - 7.5, tz: BASE.tz + 5,
+      ry: BASE.ry + 90,
+    }) === true,
+    "tx+ty+tz + 수직축 회전 동반 → 유지(예외 1·2·3 조합)",
+  );
+}
+
+// ── (d-2) B-18: ty 에 다른 축이 섞이면 여전히 무효 (과잉수정 방지) ─────────
+function caseTyMixedInvalidates() {
+  console.log("\n(d-2) ty + 기울임/스케일 동반 → 무효화 (B-18):");
+  for (const tilt of [0.1, 5, 45]) {
+    assert(
+      transformKeepsRedesignValid(BASE, {
+        ...BASE, ty: BASE.ty + 10, rx: BASE.rx + tilt,
+      }) === false,
+      `ty +10 + rx ${tilt}° 기울임 → 무효(기둥이 기울면 길이로 못 고침)`,
+    );
+    assert(
+      transformKeepsRedesignValid(BASE, {
+        ...BASE, ty: BASE.ty + 10, rz: BASE.rz + tilt,
+      }) === false,
+      `ty +10 + rz ${tilt}° 기울임 → 무효`,
+    );
+  }
+  for (const [label, patch] of [
+    ["sx", { sx: BASE.sx * 1.5 }],
+    ["sy", { sy: BASE.sy * 1.1 }],
+    ["sz", { sz: BASE.sz * 0.5 }],
+    ["균일 스케일", { sx: BASE.sx * 2, sy: BASE.sy * 2, sz: BASE.sz * 2 }],
+  ]) {
+    assert(
+      transformKeepsRedesignValid(BASE, {
+        ...BASE, ty: BASE.ty + 10, ...patch,
+      }) === false,
+      `ty +10 + ${label} → 무효(스케일은 접점 XZ 까지 흩어져 길이로 못 고침)`,
+    );
+  }
+}
+
+// ── (d-3) B-18 [대조군] 수정 전 판정이 "수직 이동 시 삭제" 를 재현하는지 ────
+/**
+ * B-18 **수정 전** 구현 — 기울기 불변량 + 스케일 + **ty 성분 비교**.
+ *   B-15c 시점(PR #46) 의 판정 그대로다. 리드가 실물에서 본 "수직으로 올렸더니
+ *   서포트가 통째로 사라진다" 증상이 여기서 재현돼야, 이 스크립트가 실제로
+ *   버그를 잡는다는 것이 증명된다 (프로젝트 규약, B-1 확립).
+ */
+function keepsValidBeforeB18(start, end) {
+  const changed = (a, b) => Math.abs(a - b) > 1e-6;
+  const D = Math.PI / 180;
+  const tiltDeg = (t) =>
+    (Math.acos(
+      Math.max(-1, Math.min(1, Math.cos(t.rx * D) * Math.cos(t.rz * D))),
+    ) *
+      180) /
+    Math.PI;
+  return !(
+    Math.abs(tiltDeg(start) - tiltDeg(end)) > 0.01 ||
+    changed(start.sx, end.sx) ||
+    changed(start.sy, end.sy) ||
+    changed(start.sz, end.sz) ||
+    changed(start.ty, end.ty) // ← B-18 이 제거한 항
+  );
+}
+
+function caseBeforeB18Control() {
+  console.log("\n(d-3) [대조군] 수정 전 판정 = 수직 이동 시 삭제 (B-18):");
+  for (const dy of [5, -3.2, 50]) {
+    // [대조군] 수정 전에는 ty 단독 이동이 false(=삭제) 였다 → 리드가 본 증상.
+    assert(
+      keepsValidBeforeB18(BASE, { ...BASE, ty: BASE.ty + dy }) === false,
+      `수정 전: ty ${dy > 0 ? "+" : ""}${dy}mm 를 무효로 판정(= 서포트가 사라짐) — 버그 재현`,
+    );
+    // [신규] 현재 구현은 같은 입력에서 반대로 나온다 = 스크립트가 차이를 잡는다.
+    assert(
+      transformKeepsRedesignValid(BASE, { ...BASE, ty: BASE.ty + dy }) === true,
+      `현재 구현: 같은 입력을 유지로 판정 — 대조군과 결과가 갈림`,
+    );
+  }
+  assert(
+    keepsValidBeforeB18(BASE, {
+      ...BASE, tx: BASE.tx + 25, ty: BASE.ty + 12, tz: BASE.tz - 12,
+    }) === false,
+    "수정 전: tx+ty+tz 동반도 무효로 판정",
+  );
+  // ty 외 축은 수정 전후 판정이 같아야 한다 (과잉수정 방지).
+  for (const [label, end] of [
+    ["rx 기울임", { ...BASE, rx: BASE.rx + 30 }],
+    ["rz 기울임", { ...BASE, rz: BASE.rz + 30 }],
+    ["수직축 회전", { ...BASE, ry: BASE.ry + 90 }],
+    ["sy", { ...BASE, sy: BASE.sy * 1.5 }],
+    ["XZ 이동", { ...BASE, tx: BASE.tx + 30, tz: BASE.tz + 30 }],
+    ["ty + rx", { ...BASE, ty: BASE.ty + 10, rx: BASE.rx + 30 }],
+    ["ty + sy", { ...BASE, ty: BASE.ty + 10, sy: BASE.sy * 1.5 }],
+  ]) {
+    assert(
+      keepsValidBeforeB18(BASE, end) === transformKeepsRedesignValid(BASE, end),
+      `${label} 은 수정 전후 판정이 동일(ty 외 축은 건드리지 않았음)`,
+    );
+  }
 }
 
 function caseFloatNoiseKeeps() {
@@ -199,10 +311,10 @@ function caseFloatNoiseKeeps() {
     transformKeepsRedesignValid(BASE, { ...BASE, rx: BASE.rx + 0.1 }) === false,
     "0.1° rx 기울임은 허용치를 넘어 무효화(경계 유효성 확인)",
   );
-  // ty 는 mm 성분 비교라 옛 경계가 그대로 유효하다.
+  // B-18: ty 는 더 이상 판정 대상이 아니다 — 크기와 무관하게 유지된다.
   assert(
-    transformKeepsRedesignValid(BASE, { ...BASE, ty: BASE.ty + 1e-4 }) === false,
-    "1e-4 mm ty 이동은 허용치를 넘어 무효화(성분 비교 경계 확인)",
+    transformKeepsRedesignValid(BASE, { ...BASE, ty: BASE.ty + 1e-4 }) === true,
+    "1e-4 mm ty 이동 → 유지 (B-18: ty 는 판정에서 제외)",
   );
 }
 
@@ -272,7 +384,8 @@ function caseBeforeFixControl() {
   for (const [label, end] of [
     ["rx", { ...BASE, rx: BASE.rx + 30 }],
     ["rz", { ...BASE, rz: BASE.rz + 30 }],
-    ["ty", { ...BASE, ty: BASE.ty + 2 }],
+    // ["ty", ...] 는 뺀다 — B-18 이 ty 항을 제거해 수정 전(B-15)과 의도적으로
+    //   갈라졌다. 그 차이는 (d-3) 대조군에서 따로 검증한다.
     ["sy", { ...BASE, sy: BASE.sy * 1.5 }],
     ["XZ 이동", { ...BASE, tx: BASE.tx + 30, tz: BASE.tz + 30 }],
   ]) {
@@ -462,14 +575,15 @@ function casePolicyUnchanged() {
       `${label} 변경 → 무효(접점 위치·높이가 달라짐)`,
     );
   }
-  // ty 는 현행대로 무효 유지 (별건 B-18 리드 결정 대기 — 건드리지 않음).
+  // B-18: ty 는 유지로 정책이 바뀌었다 — 기울어진 자세에서도 동일하게 유지.
+  //   (기울기는 start/end 가 같으면 불변량도 같으므로 tilted 여도 상관없다.)
   assert(
-    transformKeepsRedesignValid(tilted, { ...tilted, ty: tilted.ty + 3 }) === false,
-    "ty 상승 → 무효(정책 무변경, B-18 별건)",
+    transformKeepsRedesignValid(tilted, { ...tilted, ty: tilted.ty + 3 }) === true,
+    "ty 상승 → 유지 (B-18)",
   );
   assert(
-    transformKeepsRedesignValid(tilted, { ...tilted, ty: tilted.ty - 0.5 }) === false,
-    "ty 하강 → 무효(정책 무변경)",
+    transformKeepsRedesignValid(tilted, { ...tilted, ty: tilted.ty - 0.5 }) === true,
+    "ty 하강 → 유지 (B-18)",
   );
   // tx/tz 는 여전히 유효.
   assert(
@@ -487,7 +601,9 @@ function main() {
   caseVerticalRotationKeeps();
   caseVerticalRotationMixedInvalidates();
   caseScaleInvalidates();
-  caseTyInvalidates();
+  caseTyKeeps();
+  caseTyMixedInvalidates();
+  caseBeforeB18Control();
   caseFloatNoiseKeeps();
   caseIdentityBase();
   caseBeforeFixControl();
