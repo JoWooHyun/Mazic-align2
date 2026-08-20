@@ -13,6 +13,64 @@
 //   로컬 XZ 원점(0, y, 0) 기준 수직으로 쌓는다. Babylon 래퍼가 이 로컬 형상을
 //   contact/base 방향으로 정렬·이동한다.
 
+/**
+ * 빌드플레이트 Y (world). 씬의 플레이트는 항상 여기 있다.
+ */
+export const PLATE_Y = 0;
+
+/**
+ * 저장된 base 의 world Y 가 "플레이트 접지를 의도한 값" 인지 볼 때 쓰는 허용치(mm).
+ *   점을 만들 때 base 는 정확히 `[cx, 0, cz]` 로 찍히지만(redesign-detect-actions
+ *   `snapAndFinalizePoints`), world→stl-local→world 왕복에 Babylon 의 float32
+ *   행렬 반올림이 껴서 0 이 아니라 1e-5 급으로 돌아온다. 레이어 두께(50µm)의
+ *   1/50 인 1e-3mm 면 왕복 노이즈보다 훨씬 위이면서, 실제 앵커 높이(최소 수 mm)
+ *   와는 자릿수로 떨어져 있어 양쪽에 여유가 있다.
+ */
+const PLATE_CONTACT_EPS_MM = 1e-3;
+
+/**
+ * 재설계 서포트 기둥 발의 **world Y** 를 정한다 (B-18). **순수 함수**.
+ *
+ * ## 리드 확정 정책 (타 슬라이서 실물 대조)
+ * "수직이동은 서포터 달린 상태로 올라갔다 내려오더라. 서포터랑 STL 이랑 아예 다른
+ * 객체 취급이야." — 실물 화면에서 모델은 공중에 떠 있고(Z=6.71) 서포트는 **바닥에서
+ * 모델까지** 늘어나 있었다. 즉 서포트는 모델에 종속된 게 아니라 **플레이트에 서 있는
+ * 독립 구조물**이고 모델이 그 위에 얹혀 있다. 모델이 오르내리면 발은 바닥에 붙은 채
+ * **기둥 길이만 변한다**.
+ *
+ * ## 왜 무조건 0 을 박지 않는가
+ * S-4b-2 의 3단 폴백(경사 다리·근처 기둥 합류·모델 표면 앵커)이 들어오면 base 가
+ * 플레이트가 **아닌** 곳에 앉는 점이 생긴다. 그때 0 하드코딩은 그 점들의 발을 바닥까지
+ * 끌어내려 폴백을 통째로 망가뜨린다. 그래서 판정을 두 단계로 둔다:
+ *   1) `baseAnchor` 가 명시돼 있으면 **그 말을 믿는다** — 'model' 이면 저장값 그대로.
+ *      S-4b-2 는 폴백 결과에 `baseAnchor:'model'` 만 실어 보내면 되고 이 함수는
+ *      건드릴 필요가 없다.
+ *   2) 명시가 없으면(기존·옛 데이터) 저장된 base 의 world Y 가 플레이트 근처인지로
+ *      **접지 의도를 추정**한다. S-4b-1 은 base 를 항상 `[cx, 0, cz]` 로 찍으므로
+ *      (`snapAndFinalizePoints`) 모델이 아직 안 움직인 데이터는 여기서 걸린다.
+ *
+ * ⚠️ 2) 의 추정은 **모델이 이미 수직 이동된 뒤 저장된 옛 데이터**는 놓칠 수 있다
+ * (발이 떠 있는 상태가 "의도된 앵커" 로 보인다). 이는 B-18 이전 데이터에만
+ * 해당하고, 그 데이터는 어차피 옛 정책상 수직 이동 시 삭제됐어야 할 점들이다.
+ * 신규 점은 1) 로 확정되므로 시간이 지나면 추정 경로는 비어 간다.
+ *
+ * @param storedBaseWorldY 저장된 base 를 world 로 되돌린 Y.
+ * @param baseAnchor       점의 base 앵커 종류 (없으면 추정).
+ * @returns 조립에 쓸 baseY (world).
+ */
+export function resolveRedesignBaseY(
+  storedBaseWorldY: number,
+  baseAnchor?: "plate" | "model",
+): number {
+  // 1) 명시된 앵커가 우선. 'model' 이면 저장값 그대로 — 폴백 경로 보호.
+  if (baseAnchor === "model") return storedBaseWorldY;
+  if (baseAnchor === "plate") return PLATE_Y;
+  // 2) 미지정(옛 데이터) — 플레이트 근처면 접지 의도로 보고 고정.
+  return Math.abs(storedBaseWorldY - PLATE_Y) <= PLATE_CONTACT_EPS_MM
+    ? PLATE_Y
+    : storedBaseWorldY;
+}
+
 /** 병합 지오메트리 (positions: xyz flat, indices: 삼각형 3개씩). */
 export interface SupportPartsGeometry {
   positions: Float32Array;

@@ -4,11 +4,20 @@
 //
 //   실행: npx tsx scripts/verify-assemble-core.mjs
 //   통과 로그는 커밋 메시지에 기록.
+//
+//   ★ B-18 추가: "모델을 수직 이동하면 기둥 발은 플레이트(world Y=0)에 남고 기둥
+//     길이만 그만큼 늘어난다" 를 **수치로** 검증한다(맨 아래 (B-18) 절). 수정 전
+//     구현(baseY = 저장된 base 의 world Y)을 대조군으로 함께 돌려, 그때는 발이
+//     ty 만큼 떠오르는 것을 재현한다 — 스크립트가 실제로 버그를 잡는다는 증명
+//     (프로젝트 규약, B-1 확립).
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assembleVerticalSupport } from "../src/features/v2/support/assemble-core.ts";
+import {
+  assembleVerticalSupport,
+  resolveRedesignBaseY,
+} from "../src/features/v2/support/assemble-core.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PARTS = join(__dirname, "..", "src", "features", "v2", "support", "parts");
@@ -271,6 +280,155 @@ function main() {
   // 앞구슬 꼭대기 world Y = contact world Y + 침투.
   approx(rgb.max[1], wContact[1] + spec.contactPenetrationMm, 5e-2,
     "회전 STL: 앞구슬 꼭대기 = contact world Y + 침투");
+
+  // ── (B-18) 수직 이동: 발은 플레이트에 남고 기둥 길이만 ty 만큼 늘어난다 ────
+  //   리드 확정 정책(타 슬라이서 실물 대조): "수직이동은 서포터 달린 상태로
+  //   올라갔다 내려오더라. 서포터랑 stl 이랑 아예 다른 객체 취급이야."
+  //   → 서포트는 플레이트에 서 있는 독립 구조물. 모델이 오르내리면 발은 바닥에
+  //     붙은 채 기둥 길이만 변한다.
+  //
+  //   실제 데이터 흐름 재현:
+  //     · 점 생성 시 world contact=(cx, surfaceY0, cz), world base=(cx, 0, cz).
+  //       이 값이 stl-local 로 저장된다(coordSpace='stl-local', baseAnchor='plate').
+  //     · 모델을 ty 만큼 수직 이동 → STL world matrix 가 translate(0,ty,0).
+  //     · 래퍼(assemble-support)가 저장 local 좌표를 world 로 되돌리면 contact 도
+  //       base 도 **둘 다 ty 만큼 올라온다**. 여기서 base 를 그대로 쓰면(수정 전)
+  //       발이 떠오르고, resolveRedesignBaseY 로 플레이트에 고정하면(수정 후)
+  //       발은 0 에 남고 기둥만 늘어난다.
+  console.log("\n(B-18) 수직 이동 — 발 고정 + 기둥 길이 = ty 만큼 증가:");
+  const B18_CX = 3.0;
+  const B18_CZ = -2.5;
+  const B18_SURFACE0 = 8.0; // 이동 전 접점 world Y.
+  const b18spec = { ...spec, tipDiameterMm: 0.4 };
+
+  /**
+   * 모델을 ty 만큼 올렸을 때의 최종 world 지오메트리를 만든다.
+   *   fixFoot=true  → 수정 후(resolveRedesignBaseY 로 플레이트 고정).
+   *   fixFoot=false → **대조군**: 수정 전(baseY = 저장 base 의 world Y).
+   * STL world matrix 는 순수 수직 평행이동이라 local↔world 왕복이 ±ty 다.
+   */
+  function buildAtTy(ty, fixFoot) {
+    // 저장된 local 좌표 (생성 시점 world 에서 inv(world0)=항등 → 그대로).
+    const localContact = [B18_CX, B18_SURFACE0, B18_CZ];
+    const localBase = [B18_CX, 0, B18_CZ];
+    // 모델을 ty 올린 뒤 래퍼가 보는 world 값.
+    const wContactY = localContact[1] + ty;
+    const wBaseY = localBase[1] + ty; // ★ base 도 같이 떠오른다.
+    const baseY = fixFoot
+      ? resolveRedesignBaseY(wBaseY, "plate")
+      : wBaseY; // 대조군 = 옛 `const baseY = wBase.y;`
+    const g = assembleVerticalSupport(parts, {
+      ...b18spec,
+      surfaceY: wContactY,
+      baseY,
+    });
+    // 조립은 로컬 XZ 원점 기준 → contact 의 world XZ 로 평행이동(래퍼와 동일).
+    const pos = new Float32Array(g.positions.length);
+    for (let i = 0; i < g.positions.length; i += 3) {
+      pos[i] = g.positions[i] + B18_CX;
+      pos[i + 1] = g.positions[i + 1];
+      pos[i + 2] = g.positions[i + 2] + B18_CZ;
+    }
+    return { positions: pos, indices: g.indices, baseY, surfaceY: wContactY };
+  }
+
+  // 기준(ty=0) — 이동 전 기둥 높이를 잰다.
+  const g0 = buildAtTy(0, true);
+  const bb0 = bbox(g0);
+  const h0 = bb0.max[1] - bb0.min[1];
+  console.log(
+    `  기준 ty=0: 발 Y=${bb0.min[1].toFixed(4)}, 꼭대기 Y=${bb0.max[1].toFixed(4)}, 전체 높이=${h0.toFixed(4)}mm`,
+  );
+  approx(bb0.min[1], 0, 1e-3, "ty=0: 발이 플레이트(world Y=0)");
+
+  for (const ty of [5, 20, 50, -3.2]) {
+    const g = buildAtTy(ty, true);
+    const bb = bbox(g);
+    const h = bb.max[1] - bb.min[1];
+    console.log(
+      `  ty=${ty}: 발 Y=${bb.min[1].toFixed(4)}, 꼭대기 Y=${bb.max[1].toFixed(4)}, 전체 높이=${h.toFixed(4)}mm (Δ높이=${(h - h0).toFixed(4)})`,
+    );
+    // 1) 발이 여전히 플레이트에 있다.
+    approx(bb.min[1], 0, 1e-3, `ty=${ty}: 발이 여전히 world Y=0 (플레이트 고정)`);
+    // 2) 기둥(=전체) 높이가 정확히 ty 만큼 늘어난다.
+    approx(h - h0, ty, 1e-3, `ty=${ty}: 전체 높이가 정확히 ty 만큼 증가`);
+    // 3) 접점(화살촉 끝)이 모델 표면에 그대로 붙어 있다
+    //    = 꼭대기가 (이동한 표면 Y + 침투) 에 온다.
+    approx(
+      bb.max[1],
+      B18_SURFACE0 + ty + spec.contactPenetrationMm,
+      1e-2,
+      `ty=${ty}: 화살촉 끝 = 이동한 표면 Y + 침투(${spec.contactPenetrationMm}) — 접점 유지`,
+    );
+    // 4) 기둥이 여전히 world 수직 (하부·상부 단면 XZ 중심 일치).
+    const cLo = sectionCenterXZAtY(g, ty > 0 ? 1.0 : 0.5);
+    const cHi = sectionCenterXZAtY(g, B18_SURFACE0 + ty - 2.0);
+    assert(cLo && cHi, `ty=${ty}: 하부·상부 단면 존재`);
+    if (cLo && cHi) {
+      approx(cLo[0], cHi[0], 5e-2, `ty=${ty}: 기둥 축 world X 일정(수직 유지)`);
+      approx(cLo[1], cHi[1], 5e-2, `ty=${ty}: 기둥 축 world Z 일정(수직 유지)`);
+    }
+  }
+
+  // ── [대조군] 수정 전(baseY = wBase.y): 발이 ty 만큼 떠오른다 ───────────────
+  console.log("\n(B-18 대조군) 수정 전 구현이면 발이 ty 만큼 떠오른다:");
+  for (const ty of [5, 20, 50]) {
+    const gOld = buildAtTy(ty, false);
+    const bbOld = bbox(gOld);
+    const hOld = bbOld.max[1] - bbOld.min[1];
+    console.log(
+      `  [대조군] ty=${ty}: 발 Y=${bbOld.min[1].toFixed(4)} (기대 ${ty}), 전체 높이=${hOld.toFixed(4)}mm (Δ높이=${(hOld - h0).toFixed(4)})`,
+    );
+    // 발이 플레이트가 아니라 정확히 ty 만큼 떠 있다 = 리드가 본 버그.
+    approx(
+      bbOld.min[1],
+      ty,
+      1e-3,
+      `[대조군] ty=${ty}: 발이 world Y=${ty} 로 떠오름(플레이트 이탈) — 버그 재현`,
+    );
+    // 기둥 길이는 그대로 = 모델을 통째로 들어올린 꼴.
+    approx(
+      hOld - h0,
+      0,
+      1e-3,
+      `[대조군] ty=${ty}: 기둥 길이가 안 늘어남(통째로 따라 올라감)`,
+    );
+    // 수정 후와 결과가 실제로 갈리는지 = 스크립트가 차이를 잡는다는 증명.
+    const gNew = buildAtTy(ty, true);
+    const bbNew = bbox(gNew);
+    assert(
+      Math.abs(bbNew.min[1] - bbOld.min[1]) > ty - 1e-3,
+      `ty=${ty}: 수정 전(${bbOld.min[1].toFixed(3)}) vs 수정 후(${bbNew.min[1].toFixed(3)}) 발 Y 가 ${ty}mm 갈림`,
+    );
+  }
+
+  // ── resolveRedesignBaseY 단위 검증 — S-4b-2 3단 폴백 안전성 ────────────────
+  console.log("\n(B-18) resolveRedesignBaseY — 폴백 안전성:");
+  assert(
+    resolveRedesignBaseY(12.5, "plate") === 0,
+    "baseAnchor='plate' → 떠 있는 base 도 플레이트(0)로 고정",
+  );
+  // ★ 핵심: 'model' 앵커는 손대지 않는다 = S-4b-2 폴백(경사 다리·근처 기둥 합류·
+  //   모델 표면 앵커)이 들어와도 발이 바닥으로 끌려 내려가지 않는다.
+  for (const y of [12.5, 3.0, -1.0, 0.0]) {
+    assert(
+      resolveRedesignBaseY(y, "model") === y,
+      `baseAnchor='model' → base world Y=${y} 를 그대로 존중(S-4b-2 폴백 보호)`,
+    );
+  }
+  // 미지정(옛 데이터) 추정: 플레이트 근처면 고정, 아니면 그대로.
+  assert(
+    resolveRedesignBaseY(0, undefined) === 0,
+    "미지정 + base Y=0 → 접지 의도로 보고 고정",
+  );
+  assert(
+    resolveRedesignBaseY(1e-5, undefined) === 0,
+    "미지정 + base Y=1e-5(float32 왕복 노이즈) → 접지로 판정",
+  );
+  assert(
+    resolveRedesignBaseY(7.5, undefined) === 7.5,
+    "미지정 + base Y=7.5(명백히 뜬 값) → 추정 안 함, 그대로 존중",
+  );
 
   console.log(failed === 0 ? "\n검증 통과 (전 항목 ok)." : `\n검증 실패 ${failed}건.`);
   process.exit(failed === 0 ? 0 : 1);

@@ -7,6 +7,7 @@ import { Matrix, StandardMaterial, Vector3 } from "@babylonjs/core";
 import { createSupportMesh } from "../../../utils/support-render";
 import { createRedesignSupportMesh } from "../../../support/assemble-support";
 import type { SupportParams, SupportPointV2 } from "../../../support/types";
+import type { STLFileV2 } from "../../../types/stl";
 import type { SceneCtx } from "../scene-refs";
 import { buildSupportKey } from "../support-keys";
 import { clipBridgeWithManifold } from "../bridge-clip";
@@ -22,7 +23,21 @@ export function useSupportMeshSync(
   supportParams: SupportParams,
   /** 부품 STL 로드 완료 여부. false 면 재설계 점은 skip 후 로드되면 재실행. */
   partsReady: boolean,
+  /** STL 목록. B-18 수직 이동 감지용 (아래 verticalSignal 주석 참고). */
+  files: STLFileV2[],
 ): void {
+  // B-18: 모델을 수직 이동하면 재설계 기둥의 **길이가 달라져** 재조립이 필요한데,
+  //   이 effect 의 종전 deps([supports, supportParams, partsReady])에는 모델
+  //   transform 이 없어 아예 재실행되지 않았다(수직 이동은 supports 를 건드리지
+  //   않으므로). 그래서 **각 STL 의 세로 위치만** 뽑아 문자열 신호로 만들어 dep 에
+  //   넣는다. 배열이 아니라 문자열이라 값이 같으면 참조도 같아 재실행이 없다.
+  //   ⚠️ ty 만 담는다 — tx/tz·회전·스케일까지 넣으면 수평 드래그 매 프레임마다
+  //   전체 서포트가 재조립돼 freeze 원인이 된다(이 훅의 핵심 불변식: rebuild=freeze).
+  //   수평 이동·수직축 회전은 parent auto-follow 로 이미 올바르게 따라가므로
+  //   재조립할 이유가 없다.
+  const verticalSignal = files
+    .map((f) => `${f.id}:${(f.transform?.ty ?? 0).toFixed(3)}`)
+    .join("|");
   // 3.5) 서포트 점 동기화 — diff-based.
   //   · 각 support 의 rebuild key = STL local 좌표 + params (STL transform
   //     은 world 만 바꾸고 local 은 안 바꿈 → key 동일 → rebuild skip).
@@ -80,11 +95,32 @@ export function useSupportMeshSync(
           ? p.curveControlPoints
           : p.curveControlPoints.map(toLocal)
         : null;
-      const key = buildSupportKey(p, supportParams, lc, lb, lcps);
+      const redesign = isRedesignPoint(p);
+      // B-18: 재설계 기둥은 발이 플레이트(world Y=0)에 고정돼 모델이 오르내리면
+      //   **기둥 길이 자체가 변한다** — parent auto-follow 로는 안 되는 형상 변화라
+      //   반드시 재조립해야 한다. local 좌표만 담긴 key 는 수직 이동에 불변이므로
+      //   접점의 world Y 를 섞어 "길이가 달라졌으면 재조립" 이 되게 한다.
+      //   (다른 경로는 인자를 안 넘겨 종전 key 유지 — 무회귀.)
+      //   ※ stl-local 점만 대상 — world 저장 점은 p.contact 가 이미 world 라
+      //     world matrix 를 또 곱하면 안 된다(그 경로는 종전대로 key 불변).
+      const surfaceWorldY =
+        redesign && stlMesh && isLocal
+          ? Vector3.TransformCoordinates(
+              new Vector3(p.contact[0], p.contact[1], p.contact[2]),
+              stlMesh.getWorldMatrix(),
+            ).y
+          : undefined;
+      const key = buildSupportKey(
+        p,
+        supportParams,
+        lc,
+        lb,
+        lcps,
+        surfaceWorldY,
+      );
 
       // 재설계(island/slope) 점인데 부품 미로드면 이번엔 skip (기존 mesh 는
       //   그대로 둔다). partsReady 가 true 로 바뀌면 effect 재실행되어 세운다.
-      const redesign = isRedesignPoint(p);
       if (redesign && !partsReady) continue;
 
       const existing = map.get(p.id);
@@ -150,5 +186,5 @@ export function useSupportMeshSync(
       map.set(p.id, finalMesh);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supports, supportParams, partsReady]);
+  }, [supports, supportParams, partsReady, verticalSignal]);
 }

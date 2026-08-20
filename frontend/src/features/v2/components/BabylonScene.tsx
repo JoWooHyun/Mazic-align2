@@ -67,7 +67,15 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     //   #1/#1.5 → #2/#3 → #3.5 → #4/#5 → #5.5 → #5.6/#5.7 → #6 → #6.5 로 고정한다.
     useSceneBootstrap(ctx, plateWidthMm, plateDepthMm); // #1 씬 부트스트랩 + #1.5 plate
     useFileMeshSync(ctx, files, overhangAngleDeg); // #2 files→mesh + #3 overhang 색
-    useSupportMeshSync(ctx, supports, supportParams, supportPartsReady); // #3.5 서포트 mesh diff 동기화
+    // files 는 B-18 수직 이동 감지용(재설계 기둥 길이 재조립). 훅 내부에서 ty 만
+    //   신호로 뽑으므로 수평 이동·회전으로는 재조립이 일어나지 않는다.
+    useSupportMeshSync(
+      ctx,
+      supports,
+      supportParams,
+      supportPartsReady,
+      files,
+    ); // #3.5 서포트 mesh diff 동기화
     useSelectionSync(
       ctx,
       selectedIds,

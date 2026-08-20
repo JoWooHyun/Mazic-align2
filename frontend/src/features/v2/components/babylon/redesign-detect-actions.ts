@@ -207,6 +207,8 @@ const SNAP_RAY_MAX_MM = 2.0;
  *        +Y 로 레이캐스트(상한 SNAP_RAY_MAX_MM)해 실제 표면 Y 로 contact.y 를
  *        보정. 실패(미교차) 시 원래 contact 유지.
  *     2) base 확정: [contact.x, 0, contact.z] (플레이트 Y=0). S-4a 임시 base 재계산.
+ *        B-18: 접지 의도를 baseAnchor='plate' 로 함께 기록한다 (모델이 움직인
+ *        뒤엔 저장 좌표만으로 구분할 수 없으므로 생성 시점에 찍는다).
  *     3) 좌표 공간: world contact/base 를 STL local 로 변환해 저장하고
  *        coordSpace='stl-local' 로 둔다(types.ts 규약 = 신규 점 정본). STL
  *        transform 시 mesh.parent=stlMesh 로 자동 동기(race 없음).
@@ -247,6 +249,11 @@ export function snapAndFinalizePoints(
       contact: localContact,
       base: localBase,
       coordSpace: "stl-local" as const,
+      // B-18: 이 경로의 base 는 정의상 플레이트(Y=0) 접지다. 접지 의도는 점을
+      //   만드는 지금만 알 수 있으므로(모델이 움직인 뒤엔 저장 좌표만 봐서는
+      //   구분 불가) 여기서 명시해 둔다. S-4b-2 의 3단 폴백은 자기 결과에
+      //   'model' 을 실어 보내면 된다.
+      baseAnchor: "plate" as const,
     };
   });
 }
