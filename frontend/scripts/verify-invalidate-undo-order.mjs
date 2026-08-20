@@ -158,7 +158,9 @@ function commitTransform(store, current, stlId, start, end, mode) {
 }
 
 const ROT = { tx: 0, ty: 0, tz: 0, rx: 0, ry: 0, rz: 0, sx: 1, sy: 1, sz: 1 };
-const ROTATED = { ...ROT, ry: 90 };
+// 무효화를 일으키는 회전은 **기둥을 기울이는 축**이어야 한다 (B-15).
+//   수직축(ry)은 제자리 회전이라 이제 서포트를 유지하므로 여기 쓰면 안 된다.
+const ROTATED = { ...ROT, rx: 90 };
 
 // ── (a) 커밋 직후 즉시 undo — 현재 구현 ───────────────────────────────────
 async function caseImmediateUndoFixed() {
