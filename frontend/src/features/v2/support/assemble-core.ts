@@ -7,6 +7,12 @@
 //
 //   설계서 `docs/설계_서포트재설계_20260720.md` 4-1(접점/핀헤드)·4-2(기둥) 정본.
 //
+//   ※ **임의 방향 막대**(경사 다리·기둥 연결·표면 앵커) 프리미티브는 자매 모듈
+//     `assemble-strut.ts` 에 있다 (S-4b-2a). 이 파일은 수직 전용 조립만 담당한다
+//     — 프루사가 Pillar(수직 전용)와 Bridge(경사)를 나눠 두는 구분과 같다
+//     (`docs/연구_프루사서포트_정독_20260811.md` 6장). 두 파일은 위 행렬 유틸과
+//     `SupportPartsSet` 을 공유한다.
+//
 //   좌표계: 부품과 동일한 로컬 좌표. **Z-up (부품 STL 규격)** 이 아니라 여기서는
 //   조립 축을 **Y** 로 둔다 — 조립 결과가 씬(Y-up)에 바로 얹히도록, 부품의 Z축을
 //   조립 시 Y축으로 회전시켜 배치한다(각 assemble 함수가 X축 +90° 회전 포함).
@@ -110,9 +116,12 @@ export interface VerticalSupportSpec {
 }
 
 // ── 4×4 어파인 행렬 유틸 (row-major, column-vector 곱: v' = M·v) ──────────
-type Mat4 = number[]; // 길이 16.
+//   S-4b-2a: 자매 모듈 assemble-strut.ts(임의 방향 막대)가 그대로 재사용하도록
+//   export 로 연다. 행렬 규약(row-major·열벡터)이 두 파일에서 갈리면 조립 결과가
+//   조용히 어긋나므로 정의는 여기 하나만 둔다.
+export type Mat4 = number[]; // 길이 16.
 
-function matMul(a: Mat4, b: Mat4): Mat4 {
+export function matMul(a: Mat4, b: Mat4): Mat4 {
   const out = new Array(16).fill(0) as Mat4;
   for (let r = 0; r < 4; r++) {
     for (let c = 0; c < 4; c++) {
@@ -125,23 +134,23 @@ function matMul(a: Mat4, b: Mat4): Mat4 {
 }
 
 /** 비균일 스케일. **음수 스케일 금지**(winding 뒤집힘) — 뒤집기는 회전으로. */
-function matScale(sx: number, sy: number, sz: number): Mat4 {
+export function matScale(sx: number, sy: number, sz: number): Mat4 {
   return [sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, sz, 0, 0, 0, 0, 1];
 }
 
-function matTranslate(tx: number, ty: number, tz: number): Mat4 {
+export function matTranslate(tx: number, ty: number, tz: number): Mat4 {
   return [1, 0, 0, tx, 0, 1, 0, ty, 0, 0, 1, tz, 0, 0, 0, 1];
 }
 
 /** X축 회전 (rad). */
-function matRotX(a: number): Mat4 {
+export function matRotX(a: number): Mat4 {
   const c = Math.cos(a), s = Math.sin(a);
   return [1, 0, 0, 0, 0, c, -s, 0, 0, s, c, 0, 0, 0, 0, 1];
 }
 
 /** 부품 Z-up → 조립 Y-up: Z축을 +Y 로 세우는 회전 = X축 -90°.
  *   (Z=1 인 꼭짓점이 Y=+1 로 감. cone/cylinder 의 "위"가 +Y 가 되게.) */
-function matZupToYup(): Mat4 {
+export function matZupToYup(): Mat4 {
   return matRotX(-Math.PI / 2);
 }
 
@@ -149,7 +158,7 @@ function matZupToYup(): Mat4 {
  * 부품 지오메트리에 어파인 변환 M 을 적용해 acc(누적 배열)에 이어붙인다.
  *   indices 는 현재 정점 오프셋만큼 밀어 재부여한다. (부품 indices 는 0..N 순번.)
  */
-function appendTransformed(
+export function appendTransformed(
   part: SupportPartsGeometry,
   m: Mat4,
   accPos: number[],
