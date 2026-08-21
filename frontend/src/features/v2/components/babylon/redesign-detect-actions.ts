@@ -59,7 +59,7 @@ export function disposeRedesignVisualization(ctx: SceneCtx): void {
 export function runRedesignDetect(
   ctx: SceneCtx,
   projectId: string,
-  opts: { layerHeightMm: number; liftMm: number },
+  opts: { layerHeightMm: number; liftMm: number; overhangAngleDeg?: number },
 ):
   | { ok: true; points: SupportPointV2[]; stats: RedesignDetectStats }
   | { ok: false; reason: string } {
@@ -76,10 +76,15 @@ export function runRedesignDetect(
   }
 
   // ── 1단계: 층 그래프 검출 ─────────────────────────────────────────────
+  //   overhangAngleDeg: ★ C-3(검출각 단일화) — 호출 측(useDentalWorkflow)이 뷰어
+  //   하이라이트와 **같은 값**을 넘긴다. 미지정이면 종전 기본값이라 하위 호환.
   const detect = detectLayerGraph(triangles, active.id, {
     ...DEFAULT_LAYER_GRAPH_PARAMS,
     layerHeightMm: opts.layerHeightMm,
     liftMm: opts.liftMm, // plateGap-lift 연동 (수용 C).
+    ...(opts.overhangAngleDeg != null
+      ? { overhangAngleDeg: opts.overhangAngleDeg }
+      : {}),
   });
 
   // ── 2단계: 점 생성 ────────────────────────────────────────────────────

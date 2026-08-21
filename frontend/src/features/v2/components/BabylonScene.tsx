@@ -16,6 +16,7 @@ import { useSlicePreview } from "./babylon/hooks/useSlicePreview";
 import { useBridgeVisualization } from "./babylon/hooks/useBridgeVisualization";
 import { useEditModeSync } from "./babylon/hooks/useEditModeSync";
 import { useDentalBrush } from "./babylon/hooks/useDentalBrush";
+import { useBuildVolumeCheck } from "./babylon/hooks/useBuildVolumeCheck";
 import { buildCameraHandle } from "./babylon/handle/camera-handle";
 import { buildTransformHandle } from "./babylon/handle/transform-handle";
 import { buildSupportGenHandle } from "./babylon/handle/support-gen-handle";
@@ -33,6 +34,7 @@ export type {
   BabylonSceneHandle,
   GizmoMode,
   IslandStats,
+  BuildVolumeIssue,
 } from "./babylon/babylon-scene-types";
 
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
@@ -46,6 +48,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       supportParams,
       plateWidthMm,
       plateDepthMm,
+      plateHeightMm = 0,
+      onBuildVolumeIssues,
       editMode,
       selectedSupportId,
       pendingBridgePoint,
@@ -98,6 +102,16 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     ); // #5.6 pending marker + #5.7 Bridge 시각화
     useEditModeSync(ctx, editMode, files, supports); // #6 editMode 동기화
     useDentalBrush(ctx, editMode); // #6.5 dental-brush 페인팅
+    // #7 출력영역 초과 경고 (C-2). 씬 상태를 읽기만 하고 아무도 이 훅에
+    //   의존하지 않으므로, 불변식 1(훅 순서)을 흔들지 않도록 맨 끝에 둔다.
+    useBuildVolumeCheck(
+      ctx,
+      files,
+      plateWidthMm,
+      plateDepthMm,
+      plateHeightMm,
+      onBuildVolumeIssues,
+    );
 
     // 외부 ref API — 그룹별 빌더가 반환한 메서드 객체를 조립한다. 각 빌더는 ctx(ref)
     //   와 stable 함수만 참조하므로 deps [] 로 정체성을 고정한다 (원본과 동일).
