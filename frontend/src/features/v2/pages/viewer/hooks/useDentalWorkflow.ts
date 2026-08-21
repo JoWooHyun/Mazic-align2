@@ -204,11 +204,12 @@ export function useDentalWorkflow({
     setRedesignStatus(null);
   }, [sceneHandleRef]);
 
-  // ----- 서포트 생성(재설계) — 점 생성 + 표면 스냅 + IndexedDB 저장 (S-4b-1) -----
+  // ----- 서포트 생성(재설계) — 점 생성 + 표면 스냅 + 라우팅 + IndexedDB 저장 (S-4b-2c) -----
   //   디버그 "재설계 검출·점생성"(handleRunRedesignDetect)과 달리, 여기서는 생성된
-  //   점을 표면 스냅·base 재계산(snapAndFinalizeRedesignPoints)한 뒤 저장한다.
-  //   저장되면 useSupportMeshSync 가 화살촉+수직 기둥을 자동으로 세운다(설계 8장
-  //   3단계 일부). 저장·undo 배선은 handleAutoSupportIslands 패턴을 그대로 따른다.
+  //   점을 표면 스냅한 뒤 **빔 충돌 검사로 3단 폴백 라우팅**
+  //   (routeAndFinalizeRedesignPoints)하고 저장한다. 저장되면 useSupportMeshSync 가
+  //   경로별 형상(수직 기둥 / 경사 다리 / 기둥 합류 / 모델 앵커)을 자동으로 세운다.
+  //   저장·undo 배선은 handleAutoSupportIslands 패턴을 그대로 따른다.
   const handleGenerateRedesignSupports = useCallback(async () => {
     if (!projectId || redesignBusy) return;
     setRedesignBusy(true);
@@ -223,10 +224,16 @@ export function useDentalWorkflow({
         setRedesignStatus({ ok: false, message: res.reason });
         return;
       }
-      // 표면 스냅 + base(Y=0) 재계산 + world→stl-local 변환.
-      const finalized =
-        sceneHandleRef.current?.snapAndFinalizeRedesignPoints(res.points) ??
-        res.points;
+      // 표면 스냅 + 3단 폴백 라우팅 + world→stl-local 변환 (S-4b-2c).
+      const routed = sceneHandleRef.current?.routeAndFinalizeRedesignPoints(
+        res.points,
+        supportParams,
+      );
+      const finalized = routed?.points ?? res.points;
+      const report = routed?.report ?? null;
+      if (report) {
+        console.log("[재설계 라우팅]", report);
+      }
       if (finalized.length === 0) {
         setRedesignStatus({ ok: true, message: "생성할 서포트 점이 없습니다." });
         return;
@@ -238,11 +245,30 @@ export function useDentalWorkflow({
       //   유지하고, 디버그 버튼 경로(handleRunRedesignDetect)는 점 눈확인이
       //   목적이므로 오버레이를 그대로 둔다.
       sceneHandleRef.current?.clearRedesignDetect();
+      // 라우팅 요약 — 실패 점이 있으면 저장은 성공(ok:true)이되 경고 문구를 붙인다.
+      //   실패를 조용히 삼키면 "서포트가 안 붙은 자리"를 사용자가 모른 채 출력한다
+      //   (연구 7절-6). 아일랜드 실패는 출력 자체가 무너지므로 따로 센다.
+      let routeSummary = "";
+      if (report) {
+        routeSummary =
+          ` · 점 ${report.input}(중복 제거 후 ${report.afterDedupe})` +
+          ` → 기둥 ${report.clusters} · 합류 ${report.joined} · 수직 ${report.vertical}` +
+          ` · 경사 ${report.bent} · 앵커 ${report.anchored} · 실패 ${report.failed}`;
+        if (report.failed > 0) {
+          routeSummary +=
+            ` · ⚠️ 실패 ${report.failed}개(아일랜드 ${report.failedIslandCount}개)` +
+            " — 서포트가 못 닿은 점";
+        }
+        if (report.degenerateStruts > 0) {
+          routeSummary += ` · 퇴화 거절 ${report.degenerateStruts}개`;
+        }
+      }
       setRedesignStatus({
         ok: true,
         message:
           `서포트 점 ${finalized.length}개 저장 · 뷰어에 기둥 생성 ` +
-          `(아일랜드 ${res.stats.islandCount} · 오버행 ${res.stats.overhangCount})`,
+          `(아일랜드 ${res.stats.islandCount} · 오버행 ${res.stats.overhangCount})` +
+          routeSummary,
       });
       const ids = finalized.map((p) => p.id);
       useUndoStore.getState().push({
@@ -268,7 +294,9 @@ export function useDentalWorkflow({
     projectId,
     redesignBusy,
     layerHeightMm,
-    supportParams.liftMm,
+    // S-4b-2c: 라우팅이 반경(trunkDiameterMm)·화살촉 높이까지 보므로 params
+    //   객체 전체를 의존성으로 둔다(종전엔 liftMm 만 썼다).
+    supportParams,
     addSupports,
     refreshSupports,
     sceneHandleRef,

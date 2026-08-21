@@ -46,6 +46,21 @@ export function buildSupportKey(
   const c = localContact.map(f).join(",");
   const b = localBase.map(f).join(",");
   const cps = localCps ? localCps.map((p) => p.map(f).join(",")).join(";") : "";
+  // S-4b-2c: 폴백 경로(bent/anchor/joinPillar)는 형상이 통째로 달라지므로 경로
+  //   종류와 꺾임점을 key 에 섞는다.
+  //   ★ 미지정(기존 데이터·1단 수직) 점에서는 **아무 항목도 붙이지 않는다** —
+  //     빈 문자열을 넣기만 해도 구분자 '|' 가 늘어 key 가 달라지므로, 배열
+  //     자체를 조건부로 이어 붙여 종전 key 문자열과 **바이트 단위로 동일**하게
+  //     유지한다(무회귀 — 수용 6, verify-route-plan §키 무회귀가 확인).
+  const routeParts: (string | number)[] = point.routeKind
+    ? [
+        point.routeKind,
+        // cps 와 같은 포맷(소수 3자리, 축은 콤마·점은 세미콜론).
+        point.routeWaypoints
+          ? point.routeWaypoints.map((p) => p.map(f).join(",")).join(";")
+          : "",
+      ]
+    : [];
   return [
     point.source,
     // 재설계(island/slope) 점은 화살촉 조립 경로라 kind·tipRadius·새 파라미터가
@@ -67,5 +82,6 @@ export function buildSupportKey(
     params.contactPenetrationMm,
     // B-18: 재설계 점만 world Y 를 섞는다. undefined 면 "" 라 종전 key 와 동일.
     redesignSurfaceWorldY != null ? redesignSurfaceWorldY.toFixed(3) : "",
+    ...routeParts,
   ].join("|");
 }

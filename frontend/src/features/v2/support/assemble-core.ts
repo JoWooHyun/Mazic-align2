@@ -179,6 +179,82 @@ export function appendTransformed(
 }
 
 /**
+ * **화살촉 접점(앞구슬+원뿔+뒷구슬) 조립** — 설계 4-1.
+ *
+ * S-4b-2c 에서 `assembleVerticalSupport` 안에 있던 블록을 **로직 무변경으로**
+ * export 함수로 승격한 것이다(2a 가 행렬 유틸을 승격한 것과 같은 방식). 3단 폴백의
+ * 경사·앵커·합류 경로(`assemble-route.ts`)도 접점은 똑같이 수직 화살촉이라, 같은
+ * 코드를 복제하는 대신 하나를 공유한다 — 복제하면 접점 규약(침투 깊이·구슬 배치)이
+ * 두 곳에서 갈릴 수 있다.
+ *
+ * 좌표는 **로컬 XZ 원점 기준 수직**(축 = Y). 호출 측이 XZ 로 평행이동한다.
+ *
+ * @param headLengthMm 화살촉 길이(축소 보정이 끝난 값 — 보정은 호출 측 책임).
+ * @returns 뒷구슬 중심 Y(= 기둥이 시작되는 자리). 호출 측이 이어서 쓴다.
+ */
+export function appendArrowHead(
+  parts: SupportPartsSet,
+  spec: Pick<
+    VerticalSupportSpec,
+    "surfaceY" | "tipDiameterMm" | "headBackDiameterMm" | "contactPenetrationMm"
+  >,
+  headLengthMm: number,
+  accPos: number[],
+  accIdx: number[],
+): number {
+  const tipR = spec.tipDiameterMm * 0.5;
+  // 앞구슬 중심 Y (설계 4-1: 꼭대기가 침투 깊이만큼 파고듦).
+  const frontCenterY = spec.surfaceY + spec.contactPenetrationMm - tipR;
+  // 뒷구슬 중심 Y = 앞구슬 중심에서 화살촉 길이만큼 아래.
+  const backCenterY = frontCenterY - headLengthMm;
+
+  // ── 앞구슬: sphere ⌀tip, 중심 frontCenterY ──────────────────────────────
+  appendTransformed(
+    parts.sphere,
+    matMul(
+      matTranslate(0, frontCenterY, 0),
+      matScale(spec.tipDiameterMm, spec.tipDiameterMm, spec.tipDiameterMm),
+    ),
+    accPos,
+    accIdx,
+  );
+
+  // ── 화살촉 원뿔: 밑면 ⌀headBack·높이 headLen, 꼭짓점=앞구슬 중심(위로 좁아짐) ─
+  //   cone 로컬: 밑면 Z=0, 꼭짓점 Z=1. Z-up→Y-up 후 밑면은 Y=0·꼭짓점 Y=1.
+  //   → 스케일 (headBack, headLen, headBack) 후 밑면 = backCenterY 로 이동하면
+  //     꼭짓점이 backCenterY+headLen = frontCenterY 에 온다. (좁아짐 = 위.)
+  appendTransformed(
+    parts.cone,
+    matMul(
+      matTranslate(0, backCenterY, 0),
+      matMul(
+        matScale(spec.headBackDiameterMm, headLengthMm, spec.headBackDiameterMm),
+        matZupToYup(),
+      ),
+    ),
+    accPos,
+    accIdx,
+  );
+
+  // ── 뒷구슬: sphere ⌀headBack, 중심 backCenterY ─────────────────────────
+  appendTransformed(
+    parts.sphere,
+    matMul(
+      matTranslate(0, backCenterY, 0),
+      matScale(
+        spec.headBackDiameterMm,
+        spec.headBackDiameterMm,
+        spec.headBackDiameterMm,
+      ),
+    ),
+    accPos,
+    accIdx,
+  );
+
+  return backCenterY;
+}
+
+/**
  * 화살촉 수직 서포트 조립 (설계 4-1/4-2). 로컬 XZ 원점 기준 수직(축 = Y).
  *
  * 위(모델 표면)→아래(바닥) 순서, y 좌표는 로컬:
@@ -204,7 +280,6 @@ export function assembleVerticalSupport(
   const accPos: number[] = [];
   const accIdx: number[] = [];
 
-  const tipR = spec.tipDiameterMm * 0.5;
   const trunkD = spec.trunkDiameterMm;
   const baseD = spec.baseDiameterMm;
 
@@ -220,53 +295,10 @@ export function assembleVerticalSupport(
     baseTrans *= scale;
   }
 
-  // 앞구슬 중심 Y (설계 4-1: 꼭대기가 침투 깊이만큼 파고듦).
-  const frontCenterY = spec.surfaceY + spec.contactPenetrationMm - tipR;
-  // 뒷구슬 중심 Y = 앞구슬 중심에서 화살촉 길이만큼 아래.
-  const backCenterY = frontCenterY - headLen;
-
-  // ── 앞구슬: sphere ⌀tip, 중심 frontCenterY ──────────────────────────────
-  appendTransformed(
-    parts.sphere,
-    matMul(
-      matTranslate(0, frontCenterY, 0),
-      matScale(spec.tipDiameterMm, spec.tipDiameterMm, spec.tipDiameterMm),
-    ),
-    accPos,
-    accIdx,
-  );
-
-  // ── 화살촉 원뿔: 밑면 ⌀headBack·높이 headLen, 꼭짓점=앞구슬 중심(위로 좁아짐) ─
-  //   cone 로컬: 밑면 Z=0, 꼭짓점 Z=1. Z-up→Y-up 후 밑면은 Y=0·꼭짓점 Y=1.
-  //   → 스케일 (headBack, headLen, headBack) 후 밑면 = backCenterY 로 이동하면
-  //     꼭짓점이 backCenterY+headLen = frontCenterY 에 온다. (좁아짐 = 위.)
-  appendTransformed(
-    parts.cone,
-    matMul(
-      matTranslate(0, backCenterY, 0),
-      matMul(
-        matScale(spec.headBackDiameterMm, headLen, spec.headBackDiameterMm),
-        matZupToYup(),
-      ),
-    ),
-    accPos,
-    accIdx,
-  );
-
-  // ── 뒷구슬: sphere ⌀headBack, 중심 backCenterY ─────────────────────────
-  appendTransformed(
-    parts.sphere,
-    matMul(
-      matTranslate(0, backCenterY, 0),
-      matScale(
-        spec.headBackDiameterMm,
-        spec.headBackDiameterMm,
-        spec.headBackDiameterMm,
-      ),
-    ),
-    accPos,
-    accIdx,
-  );
+  // ── 화살촉(앞구슬+원뿔+뒷구슬) ─────────────────────────────────────────
+  //   S-4b-2c 에서 위 `appendArrowHead` 로 승격 — **로직 무변경**(같은 순서·같은
+  //   행렬). 반환값이 종전의 backCenterY 다.
+  const backCenterY = appendArrowHead(parts, spec, headLen, accPos, accIdx);
 
   // ── 기둥: cylinder ⌀trunk, 뒷구슬 중심(backCenterY) → baseY(플레이트) ─────
   //   cylinder 로컬 Z 0→1 → Y-up 후 Y 0→1. 높이 = backCenterY − baseY.
