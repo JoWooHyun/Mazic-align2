@@ -11,6 +11,9 @@ import type { RedesignDetectStats } from "./redesign-detect-actions";
 import type { EditMode } from "../EditModeControls";
 import type { ViewPreset } from "../../utils/camera-views";
 import type { STLFileV2 } from "../../types/stl";
+import type { BuildVolumeIssue } from "./hooks/useBuildVolumeCheck";
+
+export type { BuildVolumeIssue };
 
 export type GizmoMode = "none" | "translate" | "rotate" | "scale";
 
@@ -39,6 +42,18 @@ export interface BabylonSceneProps {
   plateWidthMm: number;
   /** 빌드플레이트 세로 (mm). */
   plateDepthMm: number;
+  /**
+   * 출력 최대 높이 (mm). 프로파일 `buildVolumeMm[2]`.
+   *   C-2(출력영역 초과 경고)의 높이 상한 판정에만 쓴다. 미지정/0 이하이면
+   *   높이 검사를 건너뛴다(가로·세로 검사는 그대로 동작).
+   *   ⚠️ 격자·카메라 등 기존 용도에는 쓰지 않는다 — 신규 프롭이라 옵셔널.
+   */
+  plateHeightMm?: number;
+  /**
+   * 출력영역을 벗어난 모델이 생기거나 사라질 때 호출된다 (C-2).
+   *   빈 배열 = 전부 정상. 페이지가 이 값으로 경고 배너를 띄운다.
+   */
+  onBuildVolumeIssues?: (issues: BuildVolumeIssue[]) => void;
   /** 'select' / 'support' — 모드별 픽·드래그·Gizmo 동작. */
   editMode: EditMode;
   /** 'support' 모드에서 모델 표면 픽 시 → 그 위치에 서포트 추가.
@@ -369,7 +384,20 @@ export interface BabylonSceneHandle {
    */
   runRedesignDetect: (
     projectId: string,
-    opts: { layerHeightMm: number; liftMm: number },
+    opts: {
+      layerHeightMm: number;
+      liftMm: number;
+      /**
+       * 오버행 **검출각** (deg). 미지정 시 `DEFAULT_LAYER_GRAPH_PARAMS` 기본값.
+       *
+       * ★ C-3(검출각 단일화): 이 값은 뷰어의 빨간 오버행 하이라이트가 쓰는 값과
+       *   **반드시 같아야 한다**. 다르면 "화면에 빨갛게 보이는 면"과 "실제로 점이
+       *   찍히는 면"이 어긋나 사용자가 도구를 신뢰할 수 없다.
+       *   근거: `docs/판정_CHITUBOX분석_20260821.md` C-3
+       *   (`docs/view94.md` 14장 · `docs/supp94_v2.md` 16장이 공통으로 지목한 원칙).
+       */
+      overhangAngleDeg?: number;
+    },
   ) =>
     | { ok: true; points: SupportPointV2[]; stats: RedesignDetectStats }
     | { ok: false; reason: string };

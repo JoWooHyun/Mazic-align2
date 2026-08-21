@@ -66,6 +66,21 @@ export function useSceneBootstrap(
     camera.minZ = 0.1;
     camera.panningSensibility = 50;
     camera.inertia = 0.7;
+    // ★ 커서 기준 줌 (C-1) — 휠을 굴리면 **마우스가 가리키는 지점**이 화면에
+    //   그대로 머문다. 끄면(Babylon 기본 false) 카메라 target 방향으로만
+    //   radius 가 변해, 화면 가장자리의 관심 지점이 줌인할수록 밖으로 밀려난다.
+    //
+    //   ⚠️ 신규 기능이 아니라 **v1 회귀 복구**다. 구 v1 `utils/babylon.utils.ts`
+    //   가 이미 `zoomToMouseLocation = true` 를 켜 두었는데 v2 이관 때 누락됐다.
+    //
+    //   근거: `docs/판정_CHITUBOX분석_20260821.md` C-1
+    //   (분석 문서 `docs/view94.md` 7.3/7.4 가 "Viewer 사용성이 매우 좋으므로
+    //    적극 채용 권장"으로 지목한 항목 — Acceptance Test "확대 후 그 점이
+    //    화면에서 크게 벗어나지 않음").
+    //
+    //   B-19(줌 확대 한계 걸림)의 유력한 원인이기도 하다: 중앙 기준 줌은 모델
+    //   가장자리를 당길 때 관심 지점에 닿기 전에 lowerRadiusLimit 에 먼저 걸린다.
+    camera.zoomToMouseLocation = true;
 
     // ChiTuBox 풍: 위는 강하게, 옆/아래는 약하게 → 윗면 밝고 옆면
     // 어두운 명확한 그림자 대비. 라이트 4 개 다 hemispheric 으로

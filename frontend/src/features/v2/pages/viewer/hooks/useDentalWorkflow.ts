@@ -184,6 +184,8 @@ export function useDentalWorkflow({
       const res = sceneHandleRef.current?.runRedesignDetect(projectId ?? "", {
         layerHeightMm,
         liftMm: supportParams.liftMm,
+        // ★ C-3: 뷰어 빨간 하이라이트와 같은 각도로 검출한다.
+        overhangAngleDeg: supportParams.overhangAngleDeg,
       });
       if (!res) return;
       if (res.ok) {
@@ -197,7 +199,14 @@ export function useDentalWorkflow({
         setRedesignStatus({ ok: false, message: res.reason });
       }
     });
-  }, [redesignBusy, projectId, layerHeightMm, supportParams.liftMm, sceneHandleRef]);
+  }, [
+    redesignBusy,
+    projectId,
+    layerHeightMm,
+    supportParams.liftMm,
+    supportParams.overhangAngleDeg, // C-3: 검출각이 바뀌면 재검출해야 한다.
+    sceneHandleRef,
+  ]);
 
   const handleClearRedesignDetect = useCallback(() => {
     sceneHandleRef.current?.clearRedesignDetect();
@@ -218,6 +227,8 @@ export function useDentalWorkflow({
       const res = sceneHandleRef.current?.runRedesignDetect(projectId, {
         layerHeightMm,
         liftMm: supportParams.liftMm,
+        // ★ C-3: 뷰어 빨간 하이라이트와 같은 각도로 검출한다.
+        overhangAngleDeg: supportParams.overhangAngleDeg,
       });
       if (!res) return;
       if (!res.ok) {

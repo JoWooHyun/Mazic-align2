@@ -1,11 +1,20 @@
-// 뷰포트 우측 하단 stack — 오버행/세이프 색 범례 + 축·플레이트 정보.
-// (ViewerV2Page 의 우하단 stack 마크업 그대로 추출.)
+// 뷰포트 우측 하단 stack — 오버행/세이프 색 범례 + 축·플레이트 정보 + 서포트 통계.
+// (ViewerV2Page 의 우하단 stack 마크업 그대로 추출. 서포트 통계는 C-4 로 추가.)
+import {
+  pillarSavingRatio,
+  type SupportSummary,
+} from "../../../support/support-stats";
 
 interface ViewportInfoPanelsProps {
   filesLength: number;
   overhangAngleDeg: number;
   plateWidthMm: number;
   plateDepthMm: number;
+  /**
+   * 현재 서포트 구성 요약 (C-4). null/전체 0 이면 패널을 숨긴다.
+   *   근거: `docs/판정_CHITUBOX분석_20260821.md` C-4 (`docs/supp94_v2.md` 46장).
+   */
+  supportSummary?: SupportSummary | null;
 }
 
 export default function ViewportInfoPanels({
@@ -13,6 +22,7 @@ export default function ViewportInfoPanels({
   overhangAngleDeg,
   plateWidthMm,
   plateDepthMm,
+  supportSummary = null,
 }: ViewportInfoPanelsProps) {
   return (
     <div className="absolute bottom-3 right-3 flex flex-col items-end gap-2">
@@ -64,6 +74,39 @@ export default function ViewportInfoPanels({
           격자 10 mm
         </div>
       </div>
+
+      {/*
+        서포트 통계 (C-4) — CHITUBOX 의 total / Up Touch / Main Support 3 카운터
+        대응. 생성 직후 상태 문구와 달리 **항상** 현재 씬 기준으로 보인다.
+        점이 0 이면 숨겨서 빈 화면을 어지럽히지 않는다.
+      */}
+      {supportSummary && supportSummary.total > 0 && (
+        <div className="bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-0.5 pointer-events-none">
+          <div className="font-medium text-gray-800">서포트</div>
+          <div className="flex gap-3">
+            <span>전체 {supportSummary.total}</span>
+            <span>접점 {supportSummary.contact}</span>
+            <span>기둥 {supportSummary.mainPillar}</span>
+          </div>
+          {(supportSummary.island > 0 || supportSummary.slope > 0) && (
+            <div className="text-gray-500">
+              아일랜드 {supportSummary.island} · 경사 {supportSummary.slope}
+            </div>
+          )}
+          {supportSummary.joined > 0 && (
+            <div className="text-gray-500">
+              합류 {supportSummary.joined} (기둥 절감{" "}
+              {(pillarSavingRatio(supportSummary) * 100).toFixed(0)}%)
+            </div>
+          )}
+          {(supportSummary.bent > 0 || supportSummary.anchored > 0) && (
+            <div className="text-gray-500">
+              경사우회 {supportSummary.bent} · 모델앵커{" "}
+              {supportSummary.anchored}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

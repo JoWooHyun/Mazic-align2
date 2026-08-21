@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
@@ -6,9 +6,11 @@ import { useStlFilesV2 } from "../hooks/useStlFilesV2";
 import { useSupportsV2 } from "../hooks/useSupportsV2";
 import { useShortcutsListener, useShortcutHandler } from "../hooks/useShortcuts";
 import { useSupportParamsStore } from "../support";
+import { summarizeSupports } from "../support/support-stats";
 import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
+  type BuildVolumeIssue,
 } from "../components/BabylonScene";
 import { type EditMode } from "../components/EditModeControls";
 import SliceSidePanel from "../components/SliceSidePanel";
@@ -129,6 +131,18 @@ const ViewerV2Page: React.FC = () => {
     printerProfile,
     sceneHandleRef,
   });
+
+  // 출력영역 초과 경고 (C-2). 자동 소멸시키지 않는다 — 조건이 해소될 때까지
+  //   계속 보여야 하는 **상태**이지 일회성 알림이 아니다(모델을 안으로 옮기면
+  //   훅이 빈 배열을 올려보내 저절로 사라진다).
+  const [volumeIssues, setVolumeIssues] = useState<BuildVolumeIssue[]>([]);
+
+  // 서포트 구성 요약 (C-4). 저장된 점 목록에서 매번 파생 — 별도 상태를 두지
+  //   않으므로 추가/삭제/undo 어느 경로로 바뀌든 자동으로 최신이다.
+  const supportSummary = useMemo(
+    () => summarizeSupports(supports),
+    [supports],
+  );
 
   // 재설계 서포트 무효화 안내 (B-1). 5초 뒤 자동 소멸.
   const [redesignInvalidNotice, setRedesignInvalidNotice] = useState<
@@ -469,6 +483,8 @@ const ViewerV2Page: React.FC = () => {
             supportParams={supportParams}
             plateWidthMm={printerProfile.buildVolumeMm[0]}
             plateDepthMm={printerProfile.buildVolumeMm[1]}
+            plateHeightMm={printerProfile.buildVolumeMm[2]}
+            onBuildVolumeIssues={setVolumeIssues}
             editMode={editMode}
             onAddSupportAt={support.handleAddSupportAt}
             onPickSupport={setSelectedSupportId}
@@ -558,6 +574,35 @@ const ViewerV2Page: React.FC = () => {
             </div>
           )}
 
+          {/*
+            출력영역 초과 경고 (C-2, `docs/판정_CHITUBOX분석_20260821.md`).
+            자동 소멸 없음 — 모델을 영역 안으로 되돌리면 훅이 빈 배열을 올려
+            저절로 사라진다. 뷰포트에는 해당 모델을 감싸는 빨간 와이어박스가
+            함께 표시된다(useBuildVolumeCheck).
+          */}
+          {volumeIssues.length > 0 && (
+            <div className="absolute inset-x-0 top-4 flex justify-center pointer-events-none px-4">
+              <div className="bg-red-50/95 backdrop-blur border border-red-300 rounded-md shadow px-4 py-2 text-sm text-red-900 select-none max-w-xl">
+                <div className="font-medium">
+                  ⚠ 출력영역을 벗어난 모델 {volumeIssues.length}개 — 이대로
+                  출력하면 잘려 나갑니다.
+                </div>
+                <ul className="mt-1 space-y-0.5">
+                  {volumeIssues.slice(0, 3).map((it) => (
+                    <li key={it.stlId} className="text-xs">
+                      · {it.fileName} — {it.message}
+                    </li>
+                  ))}
+                  {volumeIssues.length > 3 && (
+                    <li className="text-xs">
+                      · 외 {volumeIssues.length - 3}개
+                    </li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          )}
+
           {/* 드래그앤드롭 오버레이 — pointer-events-none 로 drop 이벤트가
               main 컨테이너에 그대로 도달하게 한다. */}
           {isDragOver && (
@@ -573,6 +618,7 @@ const ViewerV2Page: React.FC = () => {
             overhangAngleDeg={overhangAngleDeg}
             plateWidthMm={printerProfile.buildVolumeMm[0]}
             plateDepthMm={printerProfile.buildVolumeMm[1]}
+            supportSummary={supportSummary}
           />
         </main>
 
