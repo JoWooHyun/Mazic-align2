@@ -61,6 +61,9 @@ export const SUPPORT_PARAM_LIMITS: Record<
  * 층 그래프 검출 기본값 (설계 3-1/3-1b).
  *   · overhangAngleDeg 30° = 설계 검출각(3-1b, CHITUBOX 기본)과 정합.
  *     (기존 SupportParams.overhangAngleDeg 45° 는 격자/구조 경로용 — 별개.)
+ *     S-4b-2e 부터 **실제 판정에 적용**된다: 지지 반경 r = layerHeightMm/tanθ
+ *     로 아래층을 팽창시켜, r 안에 드는 가파른 자기지지면은 오버행에서 뺀다
+ *     (30°/0.05mm → r≈0.0866mm). 값을 키우면 더 많이, 줄이면 더 적게 잡힌다.
  *   · plateGapMm + liftMm 연동은 검출 호출 시 실제 liftMm 를 채워 넘긴다
  *     (진단서 "리프트로 뜬 모델 바닥 전체 아일랜드 오검출" 방지 — 수용 C).
  */

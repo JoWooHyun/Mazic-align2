@@ -70,6 +70,43 @@ export function polygonBBox(
 }
 
 /**
+ * 점 (x, z) 에서 폴리곤 외곽 선분들까지의 최소 거리 (mm).
+ *   **내부/외부 무관 — 경계선까지의 거리**만 잰다(부호 없음). 내부 점이면
+ *   "가장 가까운 변까지의 거리", 외부 점이면 "가장 가까운 변까지 나간 거리".
+ *
+ *   layer-graph 의 오버행 검출각 판정(층 팽창, r = lh/tanθ)에서 "아래층 폴리곤
+ *   경계에서 r 이내인가"를 재는 데 쓴다. 순수·결정적.
+ *
+ *   구현은 표준 점-선분 거리: 각 변에 점을 투영하고 파라미터 t 를 [0,1] 로
+ *   클램프해 선분 위 최근접점을 구한 뒤 거리를 잰다.
+ */
+export function distanceToPolygonEdges(
+  x: number,
+  z: number,
+  poly: Point2[],
+): number {
+  const n = poly.length;
+  if (n === 0) return Infinity;
+  if (n === 1) return Math.hypot(x - poly[0][0], z - poly[0][1]);
+
+  let best = Infinity;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const [x0, z0] = poly[j];
+    const [x1, z1] = poly[i];
+    const dx = x1 - x0;
+    const dz = z1 - z0;
+    const len2 = dx * dx + dz * dz;
+    // 퇴화 변(길이 0) → 끝점까지의 거리로 처리.
+    let t = len2 > 1e-18 ? ((x - x0) * dx + (z - z0) * dz) / len2 : 0;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    const d = Math.hypot(x - (x0 + t * dx), z - (z0 + t * dz));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/**
  * 점 (px, pz) 가 폴리곤 내부인지 판정 (ray casting even-odd 규칙).
  *   경계 위 점의 처리는 근사(샘플링 용도라 엄밀 경계 판정 불필요).
  */
