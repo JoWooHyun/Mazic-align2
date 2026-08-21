@@ -1,19 +1,34 @@
-// 서포트 재설계(S-4b-2c) **빔 충돌 검사 구현** — Babylon 레이캐스트 기반 BeamProbe.
+// 서포트 재설계(S-4b-2c) **빔 충돌 검사 구현** — 자체 삼각형 인덱스 기반 BeamProbe.
 //   설계 `docs/설계_서포트재설계_20260720.md` 4-5(충돌 회피),
-//   연구 `docs/연구_프루사서포트_정독_20260811.md` 3절(beam_mesh_hit) / 7절 항목 3.
+//   연구 `docs/연구_프루사서포트_정독_20260811.md` 3절(beam_mesh_hit) / 7절 항목 3,
+//   재작업 근거 `docs/피드백_2c실물테스트_20260821.md` T-1·T-2.
 //   ⚠️ 프루사는 AGPL — 개념만 채택(클린룸).
 //
-//   ## 이 파일의 위치
-//   판정 로직(`route-plan.ts`)은 Babylon 무의존 순수 모듈이고, 실제 메시와 부딪히는
-//   부분만 여기 격리한다. 그래서 이 파일은 **Babylon 을 쓰는 유일한 서포트 기하 파일**
-//   이며, 검증 스크립트는 이 자리에 합성 probe 를 끼워 순수 로직을 전수 검증한다.
+//   ## ★ 왜 Babylon 레이캐스트를 버렸나 (S-4b-2c-f 재작업)
+//   2c 는 `Ray.intersectsMesh` 를 썼다. 세 가지 이유로 자체
+//   `triangle-index.ts`(균일 격자 + 3D-DDA)로 갈아탔다:
+//
+//   1. **성능 = 실물 팅김(T-2).** `intersectsMesh` 는 가속 구조 없이 메시의 전
+//      삼각형을 훑는다. bent 점 하나가 최대 ~2,700발을 쏘고 실패 점은 전수 탐색이라,
+//      삼각형 수십만짜리 모델에서 각도에 따라 수백억 번의 삼각형 테스트가 되어
+//      생성 버튼에 탭이 죽었다(리드 실물 확인).
+//   2. **isPickable 함정이 원천 무관해졌다.** 2c 가 `scene.pickWithRay` 대신
+//      `intersectsMesh` 를 고른 이유가 `_internalPick` 의 isPickable 게이트였는데,
+//      이제 Babylon 을 아예 안 거치므로 그 함정 자체가 사라졌다.
+//   3. **뒷면 판정을 신뢰할 수 있다.** 입력이 `extractWorldTriangles`(B-7 감김
+//      정규화 관문) 출력이라 기하 법선이 바깥임을 전제할 수 있고, 인덱스가 det
+//      부호로 앞/뒷면을 직접 돌려준다. pick 의 법선 보간·양면 판정에 기대지 않는다.
+//
+//   부수 효과가 하나 더 있다 — 이 파일이 **순수 모듈이 되어** 프로브의 실동작을
+//   헤드리스로 전수 검증할 수 있다(`scripts/verify-collision-probe.mjs`).
+//   2c 검수에서 사각지대로 남았던 부분이다.
 //
 //   ## 근사 방식 (설계 4-5 "굵은 막대를 몇 가닥 광선으로")
 //   막대의 부피 충돌을 정확히 풀지 않는다. 중심 광선 1개 + 둘레 링 광선 N개를
 //   반경+안전거리만큼 벌려 쏘고 **최소 히트 거리**를 채택한다. 광선이 성기면 좁은
 //   돌기 사이를 스쳐 지나갈 수 있지만, 안전거리(0.5mm)가 그 오차를 흡수한다.
 
-import { Ray, Vector3, type AbstractMesh, type Scene } from "@babylonjs/core";
+import { buildTriangleIndex, type TriangleIndex } from "./triangle-index";
 import type { BeamProbe, Vec3 } from "./route-plan";
 
 /**
@@ -32,6 +47,20 @@ const RING_RAY_COUNT = 8;
 const DEFAULT_SAFETY_DIST_MM = 0.5;
 
 /**
+ * "시작점이 모델 내부" 로 볼 관통 거리 상한의 **기본값** (mm) — T-1 수정.
+ *
+ * ## 왜 0.4 인가 (2c 의 1.0 에서 축소)
+ * 이 허용치의 설계 의도는 **화살촉 침투(contactPenetrationMm = 0.2mm)** 처럼
+ * 접점이 표면에 의도적으로 얕게 박힌 경우만 용서하는 것이다. 그 2배인 0.4mm 를
+ * 여유로 잡는다 — 스냅 오차·부동소수 잡음까지 덮으면서, 그보다 깊은 겹침은
+ * 걸러낸다.
+ * 2c 의 1.0mm 는 이 의도보다 5배 관대해서, 경사면·벽면 접점의 기둥이 표면에
+ * ~1mm 파묻혀도 "청명" 판정을 받았다. 리드 실물 확인 결과 그만큼 파묻힌 기둥은
+ * 표면 흠집으로 나타난다(`docs/피드백_2c실물테스트_20260821.md` T-1, 사진).
+ */
+const DEFAULT_INSIDE_TOLERANCE_MM = 0.4;
+
+/**
  * 내부 히트에서 재발사할 때 진입점을 넘겨 밀어내는 여유 (mm).
  *   0 이면 같은 삼각형을 다시 맞아 무한 루프가 된다.
  */
@@ -45,49 +74,40 @@ const REEMIT_EPS_MM = 0.01;
  */
 const MAX_REEMIT = 4;
 
-/** `makeStlBeamProbe` 옵션. */
-export interface StlBeamProbeOptions {
+/** `makeTriangleBeamProbe` 옵션. */
+export interface TriangleBeamProbeOptions {
   /** 링 광선 개수. 기본 8. */
   ringRayCount?: number;
   /** 안전거리 (mm). 기본 0.5. */
   safetyDistMm?: number;
+  /**
+   * 시작점이 "모델 내부" 로 판정되는 관통 거리 상한 (mm). 기본 0.4.
+   *   위 `DEFAULT_INSIDE_TOLERANCE_MM` 주석의 근거 참고. 검증 스크립트가 구 동작
+   *   (1.0)을 재현해 대조하는 데도 쓴다.
+   */
+  insideToleranceMm?: number;
+  /** 격자 셀 크기 (mm). 미지정이면 인덱스가 bbox·삼각형 수에서 유도한다. */
+  cellSizeMm?: number;
 }
 
 /**
- * 활성 STL 메시 하나를 대상으로 하는 `BeamProbe` 를 만든다.
+ * world 삼각형 배열 하나를 대상으로 하는 `BeamProbe` 를 만든다.
  *
  * 대상이 STL **1개**인 이유: 프루사도 자기 메시만 검사한다(연구 3절). 다른
  * 오브젝트나 다른 서포트와의 충돌은 이 단계의 관심사가 아니다.
  *
- * ## ★ 왜 `scene.pickWithRay` 가 아니라 `ray.intersectsMesh` 인가 (실 API 확인)
- * Babylon 소스를 직접 확인한 결과:
- *   · `Scene.prototype._internalPick`(Culling/ray.js)은 `!mesh.isEnabled() ||
- *     !mesh.isVisible || !mesh.isPickable` 인 메시를 **건너뛴다**. STL 메시의
- *     `isPickable` 은 편집 모드에 따라 바뀌므로, pickWithRay 를 쓰면 모드에 따라
- *     충돌 검사가 조용히 "전부 청명"이 되는 사고가 난다.
- *   · `Ray.intersectsMesh` → `mesh.intersects` 는 그 게이트를 거치지 않는다.
- * 그래서 `intersectsMesh` 를 직접 쓴다.
- *
- * ## ★ 뒷면(내부) 히트 검출 — 확인 결과 별도 조치 불필요
- * `Ray.intersectsTriangle`(Culling/ray.js)의 Möller–Trumbore 구현은 판별식 det 의
- * **부호를 보지 않는다**(det === 0 만 배제). 즉 **양면 검출**이라 뒤집힌 면·내부에서
- * 나가는 면도 그대로 히트로 잡힌다. `sideOrientation` 이나 `fastCheck` 를 만질
- * 필요가 없다. (fastCheck 는 "가장 가까운 히트" 대신 "첫 히트"를 쓰는 옵션이라
- * 여기서는 기본값 = 가장 가까운 히트를 그대로 쓴다.)
- * 내부 판정은 히트 면 법선과 광선 방향의 **내적 부호**로 한다 — 양수면 광선이
- * 면의 뒤에서 앞으로 나가는 것, 곧 그 구간이 모델 내부였다는 뜻이다.
+ * @param triangles 호출 측이 `extractWorldTriangles(mesh)` 로 뽑아 넘긴 world
+ *                  삼각형 배열(삼각형당 9 float). 그 함수가 감김을 정규화하므로
+ *                  뒷면 판정을 신뢰할 수 있다(파일 머리 주석 3).
  */
-export function makeStlBeamProbe(
-  scene: Scene,
-  stlMesh: AbstractMesh,
-  opts: StlBeamProbeOptions = {},
+export function makeTriangleBeamProbe(
+  triangles: Float32Array,
+  opts: TriangleBeamProbeOptions = {},
 ): BeamProbe {
   const ringCount = Math.max(opts.ringRayCount ?? RING_RAY_COUNT, 0);
   const safety = Math.max(opts.safetyDistMm ?? DEFAULT_SAFETY_DIST_MM, 0);
-  stlMesh.computeWorldMatrix(true);
-  // scene 은 현재 직접 쓰지 않지만(intersectsMesh 가 메시만 본다), 호출 규약상
-  //   씬 수명과 묶어 두는 편이 오용을 줄인다. 참조만 유지.
-  void scene;
+  const insideTol = Math.max(opts.insideToleranceMm ?? DEFAULT_INSIDE_TOLERANCE_MM, 0);
+  const index = buildTriangleIndex(triangles, opts.cellSizeMm);
 
   return {
     hitDistance(from: Vec3, dir: Vec3, radiusMm: number, maxDistMm: number): number | null {
@@ -114,7 +134,7 @@ export function makeStlBeamProbe(
           oz = u[2] * cu + v[2] * cv;
         }
         const origin: Vec3 = [from[0] + ox, from[1] + oy, from[2] + oz];
-        const hit = castOne(stlMesh, origin, d, maxDistMm);
+        const hit = castOne(index, origin, d, maxDistMm, insideTol);
         if (hit !== null) {
           // 링 광선은 시작점이 옆으로 밀려 있지만, 막대 축 기준 진행 거리로 보면
           //   같은 파라미터 t 라 그대로 비교해도 된다(오프셋이 축에 수직이므로).
@@ -130,63 +150,46 @@ export function makeStlBeamProbe(
 /**
  * 광선 1가닥 — 내부 시작 재발사 포함 (연구 3절).
  *
+ * @param insideTol 시작점이 내부로 판정되는 관통 거리 상한 (mm).
  * @returns 첫 **유효** 히트까지의 거리, 청명이면 null. 시작점이 모델 내부로
  *          판정되면 0(즉시 막힘).
  */
 function castOne(
-  mesh: AbstractMesh,
+  index: TriangleIndex,
   origin: Vec3,
   dir: Vec3,
   maxDist: number,
+  insideTol: number,
 ): number | null {
   let traveled = 0;
-  const o = new Vector3(origin[0], origin[1], origin[2]);
-  const dv = new Vector3(dir[0], dir[1], dir[2]);
+  const o: Vec3 = [origin[0], origin[1], origin[2]];
 
   for (let attempt = 0; attempt <= MAX_REEMIT; attempt++) {
     const remain = maxDist - traveled;
     if (remain <= 0) return null;
 
-    const ray = new Ray(o.clone(), dv, remain);
-    const pick = ray.intersectsMesh(mesh);
-    if (!pick.hit || pick.pickedPoint == null) return null;
+    const hit = index.raycast(o, dir, remain);
+    if (hit === null) return null;
 
-    const dist = pick.distance;
-    const normal = pick.getNormal(true, false);
-    // 법선을 못 얻으면 판정 불가 → 보수적으로 막힘으로 본다.
-    if (!normal) return traveled + dist;
-
-    const facing = normal.x * dir[0] + normal.y * dir[1] + normal.z * dir[2];
-    if (facing <= 0) {
+    if (!hit.backface) {
       // 앞면 히트 = 정상적으로 바깥에서 모델에 부딪혔다.
-      return traveled + dist;
+      return traveled + hit.distance;
     }
 
     // 뒷면 히트 = 이 구간은 **모델 내부**를 지나왔다는 뜻(연구 3절 is_inside).
-    //   관통 거리가 막대 굵기보다 크면 시작점 자체가 내부 깊숙이 있다고 보고
-    //   즉시 실패(거리 0). 짧으면 화살촉 침투(0.2mm) 같은 얕은 겹침이라
-    //   빠져나온 지점에서 다시 쏜다.
-    if (traveled + dist > INSIDE_TOLERANCE_MM) return 0;
+    //   시작점부터 이 exit 까지의 거리가 허용치를 넘으면 시작점 자체가 내부
+    //   깊숙이 있다고 보고 즉시 실패(거리 0). 짧으면 화살촉 침투(0.2mm) 같은
+    //   얕은 겹침이라 빠져나온 지점에서 다시 쏜다.
+    if (traveled + hit.distance > insideTol) return 0;
 
-    traveled += dist + REEMIT_EPS_MM;
-    o.set(
-      origin[0] + dir[0] * traveled,
-      origin[1] + dir[1] * traveled,
-      origin[2] + dir[2] * traveled,
-    );
+    traveled += hit.distance + REEMIT_EPS_MM;
+    o[0] = origin[0] + dir[0] * traveled;
+    o[1] = origin[1] + dir[1] * traveled;
+    o[2] = origin[2] + dir[2] * traveled;
   }
   // 재발사 상한 초과 — 병적인 메시. 보수적으로 막힘.
   return 0;
 }
-
-/**
- * "시작점이 모델 내부" 로 볼 관통 거리 상한 (mm).
- *   연구 3절은 2r+sd(막대 굵기+안전거리)를 쓴다. 우리는 막대 반경이 호출마다
- *   달라 광선 단위로는 알기 어렵고, 실제로 걸러야 할 얕은 겹침은 화살촉 침투
- *   깊이(0.2mm)급이다. 그보다 넉넉한 1mm 를 상한으로 둔다 — 이보다 깊이 파묻힌
- *   시작점은 어떤 굵기의 기둥을 세워도 모델 안에서 출발하는 셈이라 막는 게 맞다.
- */
-const INSIDE_TOLERANCE_MM = 1.0;
 
 /** 벡터 정규화. 길이 0 이면 null. */
 function normalize(v: Vec3): Vec3 | null {

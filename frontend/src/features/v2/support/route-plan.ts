@@ -16,10 +16,11 @@
 //   타입을 둘 중 하나에 두면 고리가 생긴다.
 //
 //   ## 충돌 검사는 콜백(BeamProbe)으로 주입한다
-//   판정 로직은 전부 순수 기하라 헤드리스로 전수 검증할 수 있어야 하는데, 실제
-//   충돌은 Babylon 레이캐스트라 Node 에서 못 돈다. 그래서 "빔을 쏜다"는 능력만
-//   인터페이스로 잘라냈다. 구현체는 `collision-probe.ts`(Babylon), 검증 스크립트
-//   (`scripts/verify-route-plan.mjs`)는 해석적 장애물로 만든 합성 probe 를 끼운다.
+//   판정 로직은 전부 순수 기하라 헤드리스로 전수 검증할 수 있어야 한다. "빔을
+//   쏜다"는 능력만 인터페이스로 잘라내, 구현체 교체가 판정 로직에 안 번지게 한다
+//   — 실제로 S-4b-2c-f 에서 구현체가 Babylon 레이캐스트 → 순수 삼각형 인덱스
+//   (`collision-probe.ts` + `triangle-index.ts`)로 바뀌었지만 이 파일은 무변경이었다.
+//   검증(`scripts/verify-route-plan.mjs`)은 해석적 장애물로 만든 합성 probe 를 끼운다.
 
 export {
   DEFAULT_ANCHOR_MAX_LENGTH_MM,
