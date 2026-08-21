@@ -76,6 +76,13 @@ export interface ClusterPillarsOptions {
    * 바닥 접점(높이 0) 점이 자기 발밑에 붙는 퇴화 케이스를 막는 용도.
    */
   minBridgeLandingHeightMm?: number;
+  /**
+   * 기둥 1개가 받을 수 있는 최대 다리(멤버) 수 — 프루사 max_bridges_on_pillar
+   * (연구 5절). 상한 없으면 탐욕 시드가 메가 클러스터를 만든다(실물 실측:
+   * 기둥 3개에 다리 978개 — 물리적으로 비정상 하중). 초과 후보는 다음 라운드로
+   * 되돌려 클러스터가 자연 분할된다. 기본 8.
+   */
+  maxMembersPerPillar?: number;
 }
 
 /** `dedupeSupportPoints` 기본 최소 거리 (mm) — 프루사 전처리 ①과 같은 0.1mm. */
@@ -86,6 +93,13 @@ export const DEFAULT_STRUCTURAL_ANGLE_DEG = 45;
 
 /** 경사 다리 최대 길이 기본값 (mm) — 설계 4-4. */
 export const DEFAULT_MAX_BRIDGE_LENGTH_MM = 15;
+
+/**
+ * 기둥당 최대 다리 수 기본값 — 프루사 max_bridges_on_pillar(연구 5절) 대응.
+ *   프루사도 유한한 소수(기본 3)를 쓴다. 우리는 검출 밀도가 더 높아 8 로 둔다 —
+ *   기둥 하나가 감당할 하중을 제한하면서도 기둥 수가 과하게 늘지 않는 절충점.
+ */
+export const DEFAULT_MAX_MEMBERS_PER_PILLAR = 8;
 
 /** 부동소수 비교 여유 (mm). 0.1mm 경계에서 float 오차로 판정이 뒤집히지 않게. */
 const EPS = 1e-9;
@@ -264,6 +278,9 @@ export function canBridgeReach(
  *    시드에서만 닿으면 중심 교체 후 못 닿는 멤버가 생긴다.
  * 3. 후보 무리에서 **중심을 고른다**(아래 기준). 중심이 정해지면 그 중심에 실제로
  *    닿지 못하는 후보는 **떨어뜨려 다음 라운드로 되돌린다**(도달 불가 멤버 0 보장).
+ * 3b. **기둥당 다리 상한**(`maxMembersPerPillar`, 기본 8) 을 적용한다 — 가까운
+ *    순으로 N개만 남기고 나머지는 다음 라운드로 되돌린다. 상한이 없으면 탐욕
+ *    시드가 메가 클러스터를 만든다(실물: 기둥 3개에 다리 978개, T-3).
  * 4. 남은 점이 없을 때까지 반복. 멤버가 없는 클러스터는 곧 "혼자 선 기둥"이다.
  *
  * ## 중심 선정 기준 (근거)
@@ -319,12 +336,24 @@ export function clusterForSharedPillars(
 
     // (3) 중심 선정 + 중심에 못 닿는 후보 탈락.
     const pillar = pickPillarIndex(points, candidates);
-    const members: number[] = [];
+    const reachable: number[] = [];
     for (const i of candidates) {
       if (i === pillar) continue;
       const d = horizDist(points[i].contact, points[pillar].contact);
-      if (canBridgeReach(d, points[i].contact[1], opts)) members.push(i);
+      if (canBridgeReach(d, points[i].contact[1], opts)) reachable.push(i);
       // 못 닿으면 taken 을 세우지 않아 다음 라운드에서 자기 클러스터를 갖는다.
+    }
+
+    // (3b) 기둥당 다리 상한 — 중심에서 **수평거리 가까운 순**으로 최대 N개만
+    //   채택한다(짧은 다리가 구조적으로 유리하고, 먼 멤버는 다른 시드 주변에서
+    //   더 짧은 다리를 얻을 가능성이 크다). 남은 후보는 taken 을 안 세워
+    //   다음 라운드로 돌아가고, 거기서 자기 클러스터를 이룬다 = 자연 분할.
+    const maxMembers = Math.max(opts.maxMembersPerPillar ?? DEFAULT_MAX_MEMBERS_PER_PILLAR, 0);
+    let members = reachable;
+    if (reachable.length > maxMembers) {
+      members = [...reachable]
+        .sort((a, b) => compareByBridgeCost(points, a, b, pillar))
+        .slice(0, maxMembers);
     }
 
     taken[pillar] = true;
@@ -356,6 +385,24 @@ function compareBySeedPriority(
     if (a.contact[axis] !== b.contact[axis]) return a.contact[axis] - b.contact[axis];
   }
   return ia - ib;
+}
+
+/**
+ * 다리 채택 우선순위 — 중심 기둥까지 **수평거리 가까운 순** (기둥당 상한용).
+ *   동거리 tie-break 은 이 파일의 전순서 규약(높은 점 → 좌표·인덱스 사전식)을
+ *   그대로 재사용한다. 전순서라 상한을 걸어도 결과는 결정적이다.
+ */
+function compareByBridgeCost(
+  points: readonly PreprocessPoint[],
+  a: number,
+  b: number,
+  pillar: number,
+): number {
+  const pc = points[pillar].contact;
+  const da = horizDist(points[a].contact, pc);
+  const db = horizDist(points[b].contact, pc);
+  if (da !== db) return da - db;
+  return compareBySeedPriority(points[a], points[b], a, b);
 }
 
 /** 중심 선정 — 후보들까지의 수평거리 합 최소, 동점이면 높은 점 → 좌표·인덱스 순. */

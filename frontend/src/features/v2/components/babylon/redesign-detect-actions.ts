@@ -26,7 +26,7 @@ import {
   type LayerGraphResult,
 } from "../../support";
 import type { SupportParams, SupportPointV2 } from "../../support/types";
-import { makeStlBeamProbe } from "../../support/collision-probe";
+import { makeTriangleBeamProbe } from "../../support/collision-probe";
 import {
   planClusterRoutes,
   type RoutePoint,
@@ -268,7 +268,9 @@ export function routeAndFinalizePoints(
   // ── 2) 라우팅 ──────────────────────────────────────────────────────────
   //   빔 시작점은 화살촉 아래 — 앞구슬이 침투해 있는 표면 자신을 맞지 않게
   //   (route-plan headClearanceMm 주석 참고).
-  const probe = makeStlBeamProbe(scene, mesh);
+  //   ★ S-4b-2c-f: Babylon 레이캐스트 대신 world 삼각형 배열 + 자체 격자 인덱스.
+  //     여기서 mesh 당 **1회만** 추출한다(collision-probe 파일 머리 주석 T-2).
+  const probe = makeTriangleBeamProbe(extractWorldTriangles(mesh));
   const routeInput: (RoutePoint & { origin: SupportPointV2 })[] = points.map(
     (p, i) => ({
       contact: snapped[i],

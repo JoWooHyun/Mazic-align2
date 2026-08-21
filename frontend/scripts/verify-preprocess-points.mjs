@@ -12,6 +12,7 @@
 
 import {
   DEFAULT_MAX_BRIDGE_LENGTH_MM,
+  DEFAULT_MAX_MEMBERS_PER_PILLAR,
   DEFAULT_STRUCTURAL_ANGLE_DEG,
   canBridgeReach,
   clusterForSharedPillars,
@@ -299,6 +300,42 @@ function main() {
       real.length === 3,
       `낮은 점들(h=1mm)은 서로 못 닿아 각자 기둥 → 클러스터 ${real.length}개 (기대 3). 무리하게 안 묶는다`,
     );
+  }
+
+  // ── §6c. ★ T-3 — 기둥당 다리 상한 (S-4b-2c-f 추가) ───────────────────────
+  console.log(`\n(§6c) ★ 기둥당 다리 상한(기본 ${DEFAULT_MAX_MEMBERS_PER_PILLAR}) — 메가 클러스터 분할:`);
+  {
+    // 계획서 지정 케이스: 한 자리에 도달 가능한 점 10개(중심1+멤버9)
+    //   → 상한 8 이면 8개 + 1개로 갈라져야 한다.
+    const pts = [];
+    for (let i = 0; i < 10; i++) {
+      const a = (2 * Math.PI * i) / 10;
+      pts.push(p(Math.cos(a), 10, Math.sin(a), 0.2));
+    }
+
+    // 대조군 — 상한을 크게 주면 구 동작(전부 한 기둥)이 재현된다.
+    const unlimited = clusterForSharedPillars(pts, { maxMembersPerPillar: 1000 });
+    assert(
+      unlimited.length === 1 && unlimited[0].memberIndices.length === 9,
+      `★ 대조군: 상한 없으면 기둥 1개에 다리 9개 — 실물 T-3(기둥 3개에 978다리)의 축소 재현`,
+    );
+
+    // 기본 상한 적용.
+    const capped = clusterForSharedPillars(pts);
+    const sizes = capped.map((c) => c.memberIndices.length).sort((a, b) => b - a);
+    console.log(`       상한 없음 → 멤버 9개 / 기본 상한 → 클러스터 크기 [${sizes.join(", ")}]`);
+    assert(
+      capped.length === 2,
+      `멤버 9개 입력 → 클러스터 ${capped.length}개로 분할 (기대 2: 8개 + 1개)`,
+    );
+    assert(
+      sizes[0] === DEFAULT_MAX_MEMBERS_PER_PILLAR,
+      `첫 기둥이 정확히 상한 ${DEFAULT_MAX_MEMBERS_PER_PILLAR}개를 받음 (${sizes[0]})`,
+    );
+    // 초과분이 유실되지 않고 다음 라운드로 되돌아갔는가.
+    const seen = new Set();
+    for (const c of capped) for (const i of [c.pillarIndex, ...c.memberIndices]) seen.add(i);
+    assert(seen.size === pts.length, `전 ${pts.length}점이 배정됨 (초과 후보가 유실되지 않음)`);
   }
 
   // ── §7. 클러스터링 결정성 ────────────────────────────────────────────────
