@@ -17,8 +17,8 @@
 //   외곽선 박스 메시**로 그린다 — 오버행 색을 보존하면서 "이 모델이 범위를 벗어남"이
 //   한눈에 보인다.
 import { useEffect } from "react";
-import { Color3, MeshBuilder, Vector3 } from "@babylonjs/core";
-import type { LinesMesh } from "@babylonjs/core";
+import { Color3, MeshBuilder, VertexBuffer, Vector3 } from "@babylonjs/core";
+import type { LinesMesh, Mesh } from "@babylonjs/core";
 
 import type { SceneCtx } from "../scene-refs";
 import type { STLFileV2 } from "../../../types/stl";
@@ -35,6 +35,15 @@ export interface BuildVolumeIssue {
   fileName: string;
   message: string;
   violation: BuildVolumeViolation;
+  /**
+   * 플레이트 아래로 파고든 깊이 (mm, 양수). 안 파고들었으면 0.
+   *
+   * 회전하면 모델이 실제로 플레이트를 파고든다(우리는 CHITUBOX 처럼 회전 후
+   * 자동 안착을 하지 않는다 — B-12 에서 리드가 A안(현행 유지)으로 확정).
+   * 그래서 이 값을 함께 올려보내, 배너가 **"플레이트에 내리기" 원클릭 버튼**을
+   * 제공할 수 있게 한다. 사용자가 ty 를 손으로 계산할 필요가 없다.
+   */
+  sinkDepthMm: number;
 }
 
 /** 경고 외곽선 색 — 오버행 빨강(255,82,82)과 구분되도록 더 진한 주황빨강. */
@@ -67,16 +76,8 @@ export function useBuildVolumeCheck(
       if (!mesh) continue;
 
       mesh.computeWorldMatrix(true);
-      mesh.refreshBoundingInfo();
-      const bb = mesh.getBoundingInfo().boundingBox;
-      const aabb = {
-        minX: bb.minimumWorld.x,
-        minY: bb.minimumWorld.y,
-        minZ: bb.minimumWorld.z,
-        maxX: bb.maximumWorld.x,
-        maxY: bb.maximumWorld.y,
-        maxZ: bb.maximumWorld.z,
-      };
+      const aabb = worldVertexAabb(mesh);
+      if (!aabb) continue;
 
       const violation = checkBuildVolume(aabb, {
         widthMm: plateWidthMm,
@@ -92,6 +93,8 @@ export function useBuildVolumeCheck(
           fileName: f.fileName,
           message,
           violation,
+          // 파고든 깊이 = 최저점이 플레이트(Y=0) 아래로 내려간 만큼.
+          sinkDepthMm: aabb.minY < 0 ? -aabb.minY : 0,
         });
       }
 
@@ -108,6 +111,58 @@ export function useBuildVolumeCheck(
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files, plateWidthMm, plateDepthMm, plateHeightMm]);
+}
+
+/**
+ * 메쉬의 **실제 정점**을 world 로 옮겨 만든 타이트한 AABB (B-21).
+ *
+ * ## 왜 `boundingBox.minimumWorld` 를 안 쓰는가 — 회전 오탐의 진짜 원인
+ * Babylon 의 `BoundingBox._update` 는 **로컬 AABB 의 8 꼭짓점만** world 로 변환해
+ * 다시 축정렬 상자를 만든다(`boundingBox.js:127-132`). 그래서 모델을 회전시키면
+ * 상자가 실제 형상보다 **부풀어 오른다** — 20mm 판을 45° 돌리면 X 폭이 28.28mm
+ * 로 계산된다(√2 배). 실제 모델은 그대로인데 경계상자만 커지니, 플레이트 안에
+ * 잘 들어와 있는데도 "출력영역을 벗어남" 경고가 떴다(리드 실물 발견).
+ *
+ * 정점을 직접 훑으면 회전해도 항상 **형상에 딱 맞는** 상자가 나온다.
+ *
+ * ## 비용
+ * 정점 수에 선형이고, 이 훅은 files(= transform) 가 바뀔 때만 돈다. 10만 정점
+ * 기준 한 자릿수 ms 라 드래그 중에도 문제되지 않는다. 그래도 커지면 그때
+ * 캐시(CX-2 삼각형 캐싱 과제)와 함께 다루는 것이 맞다.
+ *
+ * 정점을 못 읽으면 null → 호출 측이 그 모델을 건너뛴다(경고 안 띄움).
+ */
+function worldVertexAabb(mesh: Mesh) {
+  const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+  if (!positions || positions.length < 3) return null;
+
+  const world = mesh.getWorldMatrix();
+  const p = new Vector3();
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+
+  for (let i = 0; i + 2 < positions.length; i += 3) {
+    Vector3.TransformCoordinatesFromFloatsToRef(
+      positions[i],
+      positions[i + 1],
+      positions[i + 2],
+      world,
+      p,
+    );
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.z < minZ) minZ = p.z;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+    if (p.z > maxZ) maxZ = p.z;
+  }
+
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
+  return { minX, minY, minZ, maxX, maxY, maxZ };
 }
 
 /**

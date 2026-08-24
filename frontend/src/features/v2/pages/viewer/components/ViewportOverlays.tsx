@@ -12,6 +12,10 @@ import type { ViewPreset } from "../../../utils/camera-views";
 import type { STLFileV2 } from "../../../types/stl";
 import type { SupportPointV2 } from "../../../support/types";
 import { IDENTITY_TRANSFORM } from "../../../types/transform";
+import {
+  DISPLAY_AXIS_LABELS,
+  toDisplayAxes,
+} from "../../../types/axis-display";
 import SupportEditToolbar from "./SupportEditToolbar";
 
 interface ViewportOverlaysProps {
@@ -87,23 +91,36 @@ export default function ViewportOverlays({
           const f = files.find((file) => file.id === id);
           if (!f) return null;
           const t = f.transform ?? IDENTITY_TRANSFORM;
+          // ★ B-20 — 축 변환을 적용한 뒤 표시한다.
+          //   종전에는 **내부 Y-up 값(tx/ty/tz)을 그대로** 찍으면서 라벨만
+          //   X/Y/Z(Z-up 규약)로 달아, 위로 움직이면 "Y" 가 변하고 파란 Z 는
+          //   엉뚱한 축을 가리켰다(리드 실물 발견). TransformPanel 은 이미
+          //   `toDisplayAxes` 를 거치므로 **두 패널의 같은 축 값이 서로 달랐다.**
+          //   축 색도 `DISPLAY_AXIS_LABELS` 순서(X 빨강·Y 초록·Z 파랑)에 맞춘다 —
+          //   이제 "위로 뻗는 축 = Z = 파랑"이 씬 축 라인·범례와 일치한다.
+          //
+          //   ⚠️ TransformPanel 의 bbox 기준점 환산(B-12, toDisplayPosition)은
+          //   적용하지 않는다. 그건 피벗을 실시간으로 읽어야 하는데 이 오버레이는
+          //   메쉬 핸들이 없고, 여기 표시는 **원점 기준 위치**라는 종전 의미를
+          //   유지한다(축만 바로잡는 최소 수정). 두 패널의 절대값이 다를 수 있는
+          //   것은 기준점 차이이며, 축 대응은 이제 일치한다.
+          const disp = toDisplayAxes([t.tx, t.ty, t.tz]);
+          const axisColor = [
+            "text-red-500",
+            "text-green-600",
+            "text-blue-500",
+          ];
           return (
             <div className="bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs font-mono text-gray-700 pointer-events-none">
               <div className="text-[10px] text-gray-500 mb-0.5 font-sans">
                 {f.fileName}
               </div>
-              <div>
-                <span className="text-red-500">X</span>{" "}
-                {t.tx.toFixed(2)} mm
-              </div>
-              <div>
-                <span className="text-green-600">Y</span>{" "}
-                {t.ty.toFixed(2)} mm
-              </div>
-              <div>
-                <span className="text-blue-500">Z</span>{" "}
-                {t.tz.toFixed(2)} mm
-              </div>
+              {DISPLAY_AXIS_LABELS.map((label, i) => (
+                <div key={label}>
+                  <span className={axisColor[i]}>{label}</span>{" "}
+                  {disp[i].toFixed(2)} mm
+                </div>
+              ))}
             </div>
           );
         })()}

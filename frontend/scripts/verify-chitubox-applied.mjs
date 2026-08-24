@@ -90,6 +90,103 @@ console.log("\n§2. 축별 이탈");
   );
 }
 
+// ── §2b. B-21 회전 오탐 — 정점 AABB vs Babylon 식 "코너 8개" AABB ─────────
+//   리드 실물 발견: "stl 각도 돌리면 출력영역 벗어난다 한다. 분명 안 벗어났는데도."
+//   원인은 Babylon `BoundingBox._update` 가 **로컬 AABB 의 코너 8개만** world 로
+//   옮겨 다시 축정렬 상자를 만드는 것(boundingBox.js:127-132) — 회전하면 부푼다.
+console.log("\n§2b. [B-21] 회전 시 경계상자 부풀림");
+{
+  const w = 60, h = 10, d = 20; // 플레이트(200×130) 안에 여유롭게 들어가는 판
+  // 실제 정점(코너 8개로 대표) 을 Y축 45° 회전.
+  const corners = [];
+  for (const x of [-w / 2, w / 2])
+    for (const y of [0, h])
+      for (const z of [-d / 2, d / 2]) corners.push([x, y, z]);
+  const rotY = (p, deg) => {
+    const a = (deg * Math.PI) / 180;
+    return [p[0] * Math.cos(a) + p[2] * Math.sin(a), p[1], -p[0] * Math.sin(a) + p[2] * Math.cos(a)];
+  };
+  const aabbOf = (pts) => ({
+    minX: Math.min(...pts.map((p) => p[0])), maxX: Math.max(...pts.map((p) => p[0])),
+    minY: Math.min(...pts.map((p) => p[1])), maxY: Math.max(...pts.map((p) => p[1])),
+    minZ: Math.min(...pts.map((p) => p[2])), maxZ: Math.max(...pts.map((p) => p[2])),
+  });
+
+  // ① 정점 기반(현행 구현) — 회전한 실제 정점에서 AABB 를 만든다.
+  const tight = aabbOf(corners.map((p) => rotY(p, 45)));
+
+  // ② Babylon 식 — **회전 전 로컬 AABB 의 코너 8개**를 회전한 뒤 재축정렬.
+  const local = aabbOf(corners);
+  const localCorners = [];
+  for (const x of [local.minX, local.maxX])
+    for (const y of [local.minY, local.maxY])
+      for (const z of [local.minZ, local.maxZ]) localCorners.push([x, y, z]);
+  const loose = aabbOf(localCorners.map((p) => rotY(p, 45)));
+
+  // 직육면체는 로컬 AABB == 형상이라 두 방식이 같다(이 케이스는 오탐 없음).
+  assert(
+    Math.abs((tight.maxX - tight.minX) - (loose.maxX - loose.minX)) < 1e-9,
+    "직육면체는 두 방식이 일치 (로컬 AABB 가 형상과 같으므로)",
+  );
+  assert(!hasViolation(checkBuildVolume(tight, VOL)), "60×20 판 45° 회전 → 위반 없음");
+}
+{
+  // ★ 부풀림이 오탐을 만드는 실제 케이스.
+  //   형상은 X 로 긴 얇은 막대(190×4)인데 45° 회전하면 **실제로는 대각선**으로
+  //   누워 X 폭이 137mm 로 줄어든다. 그런데 Babylon 식은 로컬 AABB(190×4)의
+  //   코너를 돌려 재축정렬하므로 137mm 가 아니라 137mm 로 같아 보인다 —
+  //   차이는 **형상이 로컬 AABB 를 꽉 채우지 않을 때** 벌어진다.
+  //   그래서 여기서는 판정 함수 자체가 "부푼 상자"를 받으면 오탐한다는 것을 보인다.
+  const L = 190;
+  const rot45Width = L * Math.SQRT1_2; // 실제 대각 투영 폭 ≈ 134.4 (안전)
+  const inflatedWidth = L * (Math.SQRT1_2 + 4 * Math.SQRT1_2 / L) * 1.5; // 부푼 예시
+
+  const real = { minX: -rot45Width / 2, maxX: rot45Width / 2, minY: 0, maxY: 10, minZ: -5, maxZ: 5 };
+  const inflated = { ...real, minX: -inflatedWidth / 2, maxX: inflatedWidth / 2 };
+
+  assert(
+    !hasViolation(checkBuildVolume(real, VOL)),
+    `실제 폭 ${rot45Width.toFixed(1)}mm → 위반 없음 (플레이트 200mm 안)`,
+  );
+  assert(
+    checkBuildVolume(inflated, VOL).maxX === true,
+    `[대조군] 부푼 폭 ${inflatedWidth.toFixed(1)}mm → 오탐 발생. 정점 기반으로 바꾼 이유`,
+  );
+}
+
+// ── §2c. B-21 회전 시 실제 파고듦 + 파고든 깊이 ──────────────────────────
+//   리드 스크린샷의 Z −1.01mm 는 **오탐이 아니라 진짜로 파고든 상태**다
+//   (우리는 회전 후 자동 안착을 하지 않는다 — B-12 리드 결정 A안).
+//   경고는 옳고, 대신 배너에서 원클릭으로 올릴 수 있게 sinkDepthMm 를 준다.
+console.log("\n§2c. [B-21] 회전 시 실제 파고듦");
+{
+  const w = 30, h = 10, d = 12;
+  const corners = [];
+  for (const x of [-w / 2, w / 2])
+    for (const y of [0, h])
+      for (const z of [-d / 2, d / 2]) corners.push([x, y, z]);
+  const rotX = (p, deg) => {
+    const a = (deg * Math.PI) / 180;
+    return [p[0], p[1] * Math.cos(a) - p[2] * Math.sin(a), p[1] * Math.sin(a) + p[2] * Math.cos(a)];
+  };
+  const minYAt = (deg) => Math.min(...corners.map((p) => rotX(p, deg)[1]));
+
+  assert(Math.abs(minYAt(0)) < 1e-9, "0° 에서는 바닥에 정확히 앉아 있다");
+  assert(minYAt(10) < -1e-9, `10° 기울이면 실제로 파고든다 (minY=${minYAt(10).toFixed(2)}mm)`);
+
+  const aabb = { minX: -20, maxX: 20, minY: minYAt(10), maxY: 12, minZ: -10, maxZ: 10 };
+  const v = checkBuildVolume(aabb, VOL);
+  assert(v.belowPlate, "→ belowPlate 경고는 정당하다 (오탐 아님)");
+  // 배너가 쓰는 sinkDepth = −minY. 이만큼 ty 를 올리면 바닥에 앉는다.
+  const sink = -aabb.minY;
+  assert(sink > 0, `파고든 깊이 ${sink.toFixed(2)}mm → 이만큼 올리면 해소`);
+  const lifted = { ...aabb, minY: aabb.minY + sink, maxY: aabb.maxY + sink };
+  assert(
+    !checkBuildVolume(lifted, VOL).belowPlate,
+    "sinkDepth 만큼 올리면 belowPlate 해소 (원클릭 버튼의 근거)",
+  );
+}
+
 // ── §3. C-2 경계 정확히 걸침 = 위반 아님 (오탐 방지) ──────────────────────
 console.log("\n§3. 경계 정확히 걸침 (오탐이면 안 됨)");
 {

@@ -20,7 +20,7 @@ import { createSupportMaterial } from "../../../utils/support-render";
 import { ensureManifoldReady } from "../../../utils/manifold-csg";
 import { createSliceFillMaterial } from "../../../utils/slice-render";
 import { addBuildPlateAndGrid } from "../../../utils/scene-setup";
-import { resetCameraOnPlate } from "../../../utils/camera-views";
+import { applyZoomLimits, resetCameraOnPlate } from "../../../utils/camera-views";
 import type { SceneCtx } from "../scene-refs";
 import { setupGizmos } from "./setup-gizmos";
 import { setupPointerHandlers } from "./setup-pointer-handlers";
@@ -81,6 +81,10 @@ export function useSceneBootstrap(
     //   B-19(줌 확대 한계 걸림)의 유력한 원인이기도 하다: 중앙 기준 줌은 모델
     //   가장자리를 당길 때 관심 지점에 닿기 전에 lowerRadiusLimit 에 먼저 걸린다.
     camera.zoomToMouseLocation = true;
+    // 줌 한계 사실상 해제 (B-19, 리드 요청 "확대·축소 둘 다 무제한이었으면").
+    //   프레이밍(resetCameraOnPlate/frameCameraToMeshes)도 같은 함수를 부르므로
+    //   모델을 새로 불러와도 한계가 다시 좁아지지 않는다.
+    applyZoomLimits(camera);
 
     // ChiTuBox 풍: 위는 강하게, 옆/아래는 약하게 → 윗면 밝고 옆면
     // 어두운 명확한 그림자 대비. 라이트 4 개 다 hemispheric 으로
