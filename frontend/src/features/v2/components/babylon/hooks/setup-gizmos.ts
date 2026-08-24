@@ -4,6 +4,7 @@
 //   ⚠️ onDragStart/onDragEnd 는 STL-drag 와 gizmo-drag 가 공유하는 gizmoDragStartRef
 //   union 을 그대로 쓰고, setParent(mesh) ↔ setParent(null) 짝을 유지한다.
 import {
+  Color3,
   PositionGizmo,
   Quaternion,
   RotationGizmo,
@@ -11,8 +12,12 @@ import {
   TransformNode,
   UtilityLayerRenderer,
 } from "@babylonjs/core";
+import type { StandardMaterial } from "@babylonjs/core";
 import { readMeshTransform } from "../../../utils/transform";
 import { placePivotProxy } from "../scene-actions";
+// R-1: 종전에는 import 없이 스코프 밖 `undoLift` 를 참조해 Bridge 끝점 gizmo
+//   드래그 커밋에서 런타임 ReferenceError 가 날 수 있었다. 공용 유틸로 해소.
+import { undoLift } from "../../../utils/bridge-lift";
 import type { SceneCtx } from "../scene-refs";
 
 export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void {
@@ -52,6 +57,22 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
   //   아무 효과가 없다. 스케일 축은 프록시 자세로만 정해진다(scene-actions.ts).
   positionGizmo.updateGizmoRotationToMatchAttachedMesh = false;
   rotationGizmo.updateGizmoRotationToMatchAttachedMesh = false;
+
+  // ★ B-23 — 기즈모 축 색을 **표시 규약(Z-up)** 에 맞춘다.
+  //   리드: "수치나 Z축은 맞는데 저 화살표 색이 안바뀌었네? 노란색이 Y축인데
+  //          사실은 Z축이잖아. 색깔만 바꾸면 될것같아."
+  //   Babylon 기본색은 **내부 축** 기준(X 빨강 / Y 초록 / Z 파랑)인데, 우리
+  //   내부는 Y-up 이라 **위로 뻗는 화살표가 초록**으로 나왔다. 씬 축 라인
+  //   (`scene-setup.ts`)·범례·Transform 패널은 이미 Z-up 이라 기즈모만 어긋났다.
+  //   → 씬 축 라인과 **똑같은 배정**으로 맞춘다:
+  //       내부 X(옆)   → 표시 X → 빨강
+  //       내부 Y(위)   → 표시 Z → **파랑**
+  //       내부 Z(안쪽) → 표시 Y → 초록
+  //   ⚠️ 색만 바꾼다. 드래그 축·방향·저장값은 일절 건드리지 않는다(리드 지시
+  //   "색깔만 바꾸면 될것같아") — 내부 축 의미가 바뀌면 출력물·서포트가 흔들린다.
+  applyDisplayAxisColors(positionGizmo);
+  applyDisplayAxisColors(rotationGizmo);
+  applyDisplayAxisColors(scaleGizmo);
 
   const onDragStart = () => {
     // 서포트/브릿지 경로는 sphere·기둥 mesh 에 **직접** attach 된 경우만이다.
@@ -244,4 +265,50 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
   ctx.positionGizmoRef.current = positionGizmo;
   ctx.rotationGizmoRef.current = rotationGizmo;
   ctx.scaleGizmoRef.current = scaleGizmo;
+}
+
+/**
+ * 기즈모 축 3개의 색을 **표시 규약(Z-up)** 에 맞춰 다시 칠한다 (B-23).
+ *
+ * 내부 Y(위) 축 기즈모를 파랑으로, 내부 Z(안쪽) 축 기즈모를 초록으로 바꾼다.
+ * 색상값은 `utils/scene-setup.ts` 의 축 라인과 동일하게 맞춰, 화면의 축 라인과
+ * 기즈모 화살표가 같은 축이면 같은 색이 되게 한다.
+ *
+ * `coloredMaterial`(평상시)·`hoverMaterial`(마우스 올림) 둘 다 칠한다 —
+ * 하나만 바꾸면 호버할 때 옛 색이 튀어나온다. `disableMaterial` 은 회색
+ * "비활성" 표시라 의미가 축과 무관하므로 건드리지 않는다.
+ *
+ * ⚠️ 색만 바꾼다. 드래그 축·방향·커밋되는 tx/ty/tz 의미는 그대로다.
+ */
+function applyDisplayAxisColors(gizmo: {
+  xGizmo: { coloredMaterial: StandardMaterial; hoverMaterial: StandardMaterial };
+  yGizmo: { coloredMaterial: StandardMaterial; hoverMaterial: StandardMaterial };
+  zGizmo: { coloredMaterial: StandardMaterial; hoverMaterial: StandardMaterial };
+}): void {
+  // scene-setup.ts 의 AXIS_RED / AXIS_GREEN / AXIS_BLUE 와 같은 값.
+  const RED = new Color3(1, 0.3, 0.3);
+  const GREEN = new Color3(0.3, 0.9, 0.4);
+  const BLUE = new Color3(0.35, 0.55, 1);
+  // 호버 색은 원색을 밝게 — Babylon 기본도 같은 방식이다.
+  const lighten = (c: Color3) =>
+    new Color3(
+      Math.min(1, c.r + 0.3),
+      Math.min(1, c.g + 0.3),
+      Math.min(1, c.b + 0.3),
+    );
+
+  const paint = (
+    axis: { coloredMaterial: StandardMaterial; hoverMaterial: StandardMaterial },
+    color: Color3,
+  ) => {
+    axis.coloredMaterial.diffuseColor = color;
+    axis.coloredMaterial.emissiveColor = color;
+    const hov = lighten(color);
+    axis.hoverMaterial.diffuseColor = hov;
+    axis.hoverMaterial.emissiveColor = hov;
+  };
+
+  paint(gizmo.xGizmo, RED); // 내부 X = 표시 X
+  paint(gizmo.yGizmo, BLUE); // 내부 Y(위) = 표시 Z
+  paint(gizmo.zGizmo, GREEN); // 내부 Z(안쪽) = 표시 Y
 }

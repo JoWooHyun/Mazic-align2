@@ -12,6 +12,7 @@ import type { SupportParams, SupportPointV2 } from "../../../support/types";
 import type { EditMode } from "../../EditModeControls";
 import type { STLFileV2 } from "../../../types/stl";
 import type { SceneCtx } from "../scene-refs";
+import { liftOut, undoLift } from "../../../utils/bridge-lift";
 
 export function useBridgeVisualization(
   ctx: SceneCtx,
@@ -76,18 +77,13 @@ export function useBridgeVisualization(
     const dBig = Math.max(supportParams.bridgeDiameterMm * 1.5, 1.2);
     const dSmall = Math.max(supportParams.bridgeDiameterMm * 1.0, 0.8);
 
-    // 저장된 contact/base 는 표면 안쪽 push 된 상태. sphere 는
-    // 그 반대로 normal × LIFT 만큼 밖으로 끌어내서 사용자가 표면
-    // 위에서 보고 클릭/드래그할 수 있게 한다. (메시 cap 은 안쪽
-    // 박힌 그대로 유지 → void 없는 부착.)
-    const LIFT = 0.8;
-    const liftOut = (
-      pos: [number, number, number],
-      n: [number, number, number] | undefined,
-    ): [number, number, number] => {
-      if (!n) return pos;
-      return [pos[0] + n[0] * LIFT, pos[1] + n[1] * LIFT, pos[2] + n[2] * LIFT];
-    };
+    // 저장된 contact/base 는 표면 안쪽 push 된 상태. sphere 는 그 반대로
+    // normal × LIFT 만큼 밖으로 끌어내서 사용자가 표면 위에서 보고
+    // 클릭/드래그할 수 있게 한다. (메시 cap 은 안쪽 박힌 그대로 유지 →
+    // void 없는 부착.)
+    //   ⚠️ R-1: liftOut/undoLift 는 `utils/bridge-lift.ts` 의 공용 구현을 쓴다.
+    //   종전에는 여기 effect 안의 지역 함수였고, setup-gizmos.ts 가 import 없이
+    //   같은 이름을 참조해 **런타임 ReferenceError 가 날 수 있는 잠복 버그**였다.
     // stl-local 좌표 모드의 support 면 sphere 를 STL mesh 의 child 로
      // 묶어 STL 회전/이동 시 자동 follow. sphere.position 은 이미 local
      // 좌표가 박혀있으므로 그대로 둔다 (parent 만 바꿈, 위치 보존 X).
@@ -95,13 +91,6 @@ export function useBridgeVisualization(
       if (sup.coordSpace !== "stl-local") return;
       const stlMesh = ctx.meshMapRef.current.get(sup.stlId);
       if (stlMesh) sphere.parent = stlMesh;
-    };
-    const undoLift = (
-      pos: { x: number; y: number; z: number },
-      n: [number, number, number] | undefined,
-    ): [number, number, number] => {
-      if (!n) return [pos.x, pos.y, pos.z];
-      return [pos.x - n[0] * LIFT, pos.y - n[1] * LIFT, pos.z - n[2] * LIFT];
     };
 
     // (1) Bridge 모드 → 안 선택된 Bridge 들의 A / B 시각화.

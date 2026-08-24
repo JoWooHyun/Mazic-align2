@@ -16,6 +16,8 @@ import {
 export interface SceneFurniture {
   plate: Mesh;
   plateOutline: LinesMesh;
+  /** 앞쪽 표시 사다리꼴 (B-26). 앞변 = 내부 z = −depthMm/2. */
+  frontMarker: LinesMesh;
   grid: LinesMesh;
   axes: LinesMesh;
   dispose: () => void;
@@ -71,6 +73,34 @@ export function addBuildPlateAndGrid(
   );
   plateOutline.color = new Color3(0.3, 0.36, 0.42);
   plateOutline.isPickable = false;
+
+  // 2b) **앞쪽 표시** (B-26) — 플레이트만 보면 앞뒤를 알 수 없다는 리드 지적.
+  //   CHITUBOX 는 앞변에 사다리꼴 탭을 달아 앞을 표시한다(리드 대조 캡처).
+  //   같은 개념을 선으로 구현한다: 앞변 중앙에서 **바깥으로 튀어나온 사다리꼴**.
+  //
+  //   어느 변이 "앞"인가: Front 프리셋(alpha=-π/2, beta=π/2)의 카메라는 내부
+  //   −Z 쪽에 선다. 따라서 사용자가 "앞"이라 부르는 변은 **내부 z = −depthMm/2**.
+  //   (표시 규약 B-13 에서 내부 −Z = 표시 +Y.)
+  //
+  //   외곽선과 같은 선 메시로 그려 머티리얼을 새로 만들지 않는다(누수 여지 0).
+  const tabDepth = Math.min(halfW, halfD) * 0.12; // 플레이트 크기에 비례
+  const tabHalfW = tabDepth * 1.1;
+  const frontZ = -halfD;
+  const frontMarker = MeshBuilder.CreateLines(
+    "v2_plate_front",
+    {
+      points: [
+        new Vector3(-tabHalfW, outlineY, frontZ),
+        new Vector3(-tabHalfW * 0.45, outlineY, frontZ - tabDepth),
+        new Vector3(tabHalfW * 0.45, outlineY, frontZ - tabDepth),
+        new Vector3(tabHalfW, outlineY, frontZ),
+      ],
+    },
+    scene,
+  );
+  // 외곽선보다 눈에 띄되 축 색(빨강/초록/파랑)과는 구분되는 청록.
+  frontMarker.color = new Color3(0.25, 0.65, 0.85);
+  frontMarker.isPickable = false;
 
   // 3) 그리드 라인 (10mm 간격)
   const gridLines: Vector3[][] = [];
@@ -134,11 +164,13 @@ export function addBuildPlateAndGrid(
   return {
     plate,
     plateOutline,
+    frontMarker,
     grid,
     axes,
     dispose() {
       plate.dispose();
       plateOutline.dispose();
+      frontMarker.dispose();
       grid.dispose();
       axes.dispose();
       plateMat.dispose();

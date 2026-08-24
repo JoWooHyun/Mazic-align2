@@ -11,6 +11,7 @@ import {
   Engine,
   HemisphericLight,
   HighlightLayer,
+  PointerEventTypes,
   Scene,
   StandardMaterial,
   UtilityLayerRenderer,
@@ -85,6 +86,35 @@ export function useSceneBootstrap(
     //   프레이밍(resetCameraOnPlate/frameCameraToMeshes)도 같은 함수를 부르므로
     //   모델을 새로 불러와도 한계가 다시 좁아지지 않는다.
     applyZoomLimits(camera);
+
+    // ★ B-28 — **줌아웃에서는 커서 기준을 끈다.**
+    //
+    //   리드: "줌아웃을 빠르게 했다가 줌인하면 안되는 현상이다. 줌아웃은 계속 되네"
+    //         "아무것도 안눌렀을때 휠로 줌인 줌아웃하면 괜찮아"
+    //
+    //   원인(Babylon 소스 확인 — arcRotateCameraMouseWheelInput.js `_zoomToMouse`):
+    //   커서 기준 줌은 휠을 굴릴 때마다 `camera.target` 을 커서 쪽으로 함께
+    //   끌고 간다. 줌인은 커서 지점으로 수렴하니 의도대로지만, **줌아웃은 부호가
+    //   반대라 target 이 커서 반대편으로 밀려난다.** 빠르게 여러 번 줌아웃하면
+    //   target 이 모델에서 크게 이탈하고(6회에 −48 수준), 그 뒤 줌인은 그 엉뚱한
+    //   지점으로 수렴해 "줌인이 안 먹는" 것처럼 보인다.
+    //   줌아웃 자체는 한계를 100,000 으로 열어 뒀으니 계속 되므로, 리드 관측
+    //   ("줌아웃은 계속 되네")과 정확히 맞는다.
+    //
+    //   해법: **줌인일 때만 커서 기준.** 줌아웃은 화면 중앙 기준으로 되돌린다.
+    //   - 줌인은 "보고 싶은 곳을 향해 파고드는" 동작이라 커서 기준이 이득이 크다.
+    //   - 줌아웃은 "전체를 보려는" 동작이라 중앙 기준이 오히려 자연스럽고,
+    //     target 이 절대 이탈하지 않아 줌인/줌아웃을 섞어도 안정적이다.
+    //   POINTERWHEEL 을 Babylon 입력보다 먼저 받아 플래그만 토글한다(입력 로직
+    //   자체는 Babylon 것을 그대로 쓴다 — 우리가 줌을 재구현하지 않는다).
+    scene.onPrePointerObservable.add((pi) => {
+      if (pi.type !== PointerEventTypes.POINTERWHEEL) return;
+      const ev = pi.event as { deltaY?: number; wheelDelta?: number };
+      // deltaY > 0 = 휠을 아래로 = 줌아웃(Babylon 기본 매핑과 동일).
+      const out =
+        ev.deltaY != null ? ev.deltaY > 0 : (ev.wheelDelta ?? 0) < 0;
+      camera.zoomToMouseLocation = !out;
+    });
 
     // ChiTuBox 풍: 위는 강하게, 옆/아래는 약하게 → 윗면 밝고 옆면
     // 어두운 명확한 그림자 대비. 라이트 4 개 다 hemispheric 으로
