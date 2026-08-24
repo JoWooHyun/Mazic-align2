@@ -281,31 +281,40 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
  * ⚠️ 색만 바꾼다. 드래그 축·방향·커밋되는 tx/ty/tz 의미는 그대로다.
  */
 function applyDisplayAxisColors(gizmo: {
-  xGizmo: { coloredMaterial: StandardMaterial; hoverMaterial: StandardMaterial };
-  yGizmo: { coloredMaterial: StandardMaterial; hoverMaterial: StandardMaterial };
-  zGizmo: { coloredMaterial: StandardMaterial; hoverMaterial: StandardMaterial };
+  xGizmo: { coloredMaterial: StandardMaterial };
+  yGizmo: { coloredMaterial: StandardMaterial };
+  zGizmo: { coloredMaterial: StandardMaterial };
 }): void {
-  // scene-setup.ts 의 AXIS_RED / AXIS_GREEN / AXIS_BLUE 와 같은 값.
+  // 축 원색 — 씬 축 라인(`scene-setup.ts`)의 AXIS_RED/GREEN/BLUE 와 같은 값.
   const RED = new Color3(1, 0.3, 0.3);
   const GREEN = new Color3(0.3, 0.9, 0.4);
   const BLUE = new Color3(0.35, 0.55, 1);
-  // 호버 색은 원색을 밝게 — Babylon 기본도 같은 방식이다.
-  const lighten = (c: Color3) =>
-    new Color3(
-      Math.min(1, c.r + 0.3),
-      Math.min(1, c.g + 0.3),
-      Math.min(1, c.b + 0.3),
-    );
 
+  /**
+   * ⚠️ **Babylon 이 기본 머티리얼을 만드는 방식을 그대로 따른다**
+   *   (`axisDragGizmo.js:97-99`):
+   *       diffuseColor  = color
+   *       specularColor = color − (0.1, 0.1, 0.1)
+   *   `emissiveColor` 는 **손대지 않는다**(기본 검정).
+   *
+   *   ## B-23 1차 시도가 실패한 이유 (리드 실물: "색이 없어졌어")
+   *   1차에서는 `emissiveColor` 까지 원색으로 칠했다. emissive 는 **조명과 무관하게
+   *   표면에 색을 그대로 더하는 항**이라, diffuse 와 같은 값을 넣으면 밝은 쪽으로
+   *   포화되어 음영이 사라지고 화살표가 흰색에 가깝게 떠 보인다. 입체감이 남으려면
+   *   diffuse 음영이 살아 있어야 한다.
+   *   → Babylon 기본 레시피(diffuse + specular)만 쓰고 emissive 는 건드리지 않는다.
+   *
+   *   호버 색(`hoverMaterial`)도 손대지 않는다 — Babylon 기본은 **모든 축 공통 노랑**
+   *   이고, 축 색이 아니라 "지금 이 축을 잡는다"는 신호라 축별로 바꿀 이유가 없다.
+   */
   const paint = (
-    axis: { coloredMaterial: StandardMaterial; hoverMaterial: StandardMaterial },
+    axis: { coloredMaterial: StandardMaterial },
     color: Color3,
   ) => {
     axis.coloredMaterial.diffuseColor = color;
-    axis.coloredMaterial.emissiveColor = color;
-    const hov = lighten(color);
-    axis.hoverMaterial.diffuseColor = hov;
-    axis.hoverMaterial.emissiveColor = hov;
+    axis.coloredMaterial.specularColor = color.subtract(
+      new Color3(0.1, 0.1, 0.1),
+    );
   };
 
   paint(gizmo.xGizmo, RED); // 내부 X = 표시 X

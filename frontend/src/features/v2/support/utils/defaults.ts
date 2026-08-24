@@ -84,7 +84,14 @@ export const DEFAULT_PLACE_POINTS_PARAMS: PlacePointsParams = {
   smallAreaMm2: 1.0, // 반경 ~0.5mm 급 아일랜드는 중심 1점 (수용 A).
   elongatedAspect: 3.0, // 긴변/짧은변 3 이상이면 가늘고 긴 것 → 양 끝 2점.
   fillSpacingMm: 3.0, // 큰 아일랜드 내부 격자 간격 (지지반경 곡선 1차 근사).
-  overhangSpacingMm: 3.0, // 오버행 점 간격 (지지반경 곡선 1차 근사).
+  overhangSpacingMm: 3.0, // 오버행 점 **수평(XZ)** 간격 (지지반경 곡선 1차 근사).
+  /**
+   * 오버행 점 **수직(높이)** 간격 (mm) — B-22.
+   *   검출이 층(0.05mm)마다 오버행을 내놓아 같은 자리에 점이 쌓이던 것을 끊는다.
+   *   수평(3.0)보다 크게 잡는 이유: 기둥은 세로로 길게 하나가 서면 그 구간을
+   *   함께 받치므로, 세로로는 더 성겨도 된다. 실물 확인 후 조정 대상.
+   */
+  verticalSpacingMm: 3.0,
 };
 
 /**
@@ -100,5 +107,6 @@ export const SUPPORT_DETECT_PARAM_LIMITS = {
   smallAreaMm2: { min: 0.1, max: 20, step: 0.1, unit: "mm²", label: "작은 아일랜드 경계" },
   elongatedAspect: { min: 1.5, max: 10, step: 0.5, unit: "", label: "가늘고 긴 종횡비" },
   fillSpacingMm: { min: 0.5, max: 15, step: 0.5, unit: "mm", label: "내부 격자 간격" },
-  overhangSpacingMm: { min: 0.5, max: 15, step: 0.5, unit: "mm", label: "오버행 점 간격" },
+  overhangSpacingMm: { min: 0.5, max: 15, step: 0.5, unit: "mm", label: "오버행 점 간격(수평)" },
+  verticalSpacingMm: { min: 0.5, max: 30, step: 0.5, unit: "mm", label: "오버행 점 간격(수직)" },
 } as const;
