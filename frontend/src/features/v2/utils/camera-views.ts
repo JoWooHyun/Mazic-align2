@@ -85,8 +85,7 @@ export function resetCameraOnPlate(
   const diag = Math.hypot(plateWidthMm, plateDepthMm);
   camera.target.copyFrom(Vector3.Zero());
   camera.radius = diag * 1.3;
-  camera.lowerRadiusLimit = diag * 0.2;
-  camera.upperRadiusLimit = diag * 6;
+  applyZoomLimits(camera);
   applyViewPreset(camera, "iso");
 }
 
@@ -126,7 +125,38 @@ export function frameCameraToMeshes(
 
   camera.target.copyFrom(center);
   camera.radius = Math.max(diag * 1.8, 1);
-  camera.lowerRadiusLimit = Math.max(diag * 0.3, 0.5);
-  camera.upperRadiusLimit = Math.max(diag * 6, 10);
+  applyZoomLimits(camera);
   applyViewPreset(camera, "iso");
+}
+
+/**
+ * 줌 한계 — 사실상 무제한 (B-19).
+ *
+ * ## 왜 바꿨나
+ * 종전에는 프레이밍할 때마다 `lowerRadiusLimit = diag×0.3` / `upperRadiusLimit
+ * = diag×6` 으로 **모델 크기에 비례한 좁은 범위**를 걸었다. 그래서 작은 치아
+ * 모델을 불러오면 조금만 당겨도 확대가 멈추고, 조금만 밀어도 축소가 멈췄다
+ * (리드 실물: "줌 확대가 일정 수준 이상 안 된다. 줌아웃도 그렇다").
+ * 리드 요청 = **둘 다 무제한**.
+ *
+ * ## 왜 완전한 0/Infinity 가 아닌가
+ * · 하한 `MIN_RADIUS`: ArcRotateCamera 는 radius 가 0 이 되면 target 과 카메라가
+ *   한 점에 겹쳐 **뷰 행렬이 특이해지고 화면이 뒤집히거나 NaN 이 된다.**
+ *   0.01mm 는 10μm 라 레진 해상도(층 0.05mm)보다 훨씬 작아 실사용상 무제한이다.
+ * · 상한 `MAX_RADIUS`: `camera.maxZ`(원거리 클리핑, 기본 10000) 를 넘겨 밀면
+ *   모델이 잘려 사라진다. 그래서 상한을 두되 **maxZ 를 함께 올려** 그 지점까지
+ *   실제로 보이게 만든다. 100,000mm = 100m 라 어떤 치과 모델·플레이트보다 크다.
+ *
+ * 프레이밍 함수들이 이 한 곳만 부르게 해서, 앞으로 한계가 다시 좁아지는
+ * 회귀를 막는다.
+ */
+const MIN_RADIUS_MM = 0.01;
+const MAX_RADIUS_MM = 100_000;
+
+export function applyZoomLimits(camera: ArcRotateCamera): void {
+  camera.lowerRadiusLimit = MIN_RADIUS_MM;
+  camera.upperRadiusLimit = MAX_RADIUS_MM;
+  // 멀리 밀었을 때 원거리 클리핑에 잘리지 않도록 far plane 도 함께 넓힌다.
+  //   near(minZ)는 useSceneBootstrap 의 0.1 을 유지 — 더 줄이면 z-fighting 이 생긴다.
+  if (camera.maxZ < MAX_RADIUS_MM * 2) camera.maxZ = MAX_RADIUS_MM * 2;
 }

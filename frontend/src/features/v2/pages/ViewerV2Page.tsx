@@ -144,6 +144,7 @@ const ViewerV2Page: React.FC = () => {
     [supports],
   );
 
+
   // 재설계 서포트 무효화 안내 (B-1). 5초 뒤 자동 소멸.
   const [redesignInvalidNotice, setRedesignInvalidNotice] = useState<
     string | null
@@ -180,6 +181,28 @@ const ViewerV2Page: React.FC = () => {
       addSupports,
       onRedesignInvalidated: handleRedesignInvalidated,
     });
+
+  /**
+   * 플레이트 아래로 파고든 모델들을 한 번에 위로 올린다 (B-21).
+   *
+   * 회전하면 모델이 실제로 플레이트를 파고드는데(우리는 회전 후 자동 안착을
+   * 하지 않는다 — B-12 리드 결정 A안), 사용자가 ty 를 손으로 계산해 되돌리는
+   * 것은 번거롭다. 경고 배너에서 원클릭으로 해소한다.
+   *
+   * 내부 Y 가 높이축이므로 `ty += 파고든 깊이`. 회전·스케일은 건드리지 않는다.
+   * `handleCommitTransform` 을 그대로 쓰므로 undo(Ctrl+Z)·서포트 추종이 함께 걸린다.
+   */
+  const handleDropToPlate = () => {
+    for (const issue of volumeIssues) {
+      if (issue.sinkDepthMm <= 0) continue;
+      const f = files.find((file) => file.id === issue.stlId);
+      if (!f) continue;
+      const oldT = f.transform ?? IDENTITY_TRANSFORM;
+      const newT = { ...oldT, ty: oldT.ty + issue.sinkDepthMm };
+      sceneHandleRef.current?.previewTransform(issue.stlId, newT);
+      handleCommitTransform(issue.stlId, oldT, newT);
+    }
+  };
 
   // 서포트/브릿지 편집 상태·핸들러 (followAttachedChildren 주입).
   const support = useSupportEditing({
@@ -581,8 +604,8 @@ const ViewerV2Page: React.FC = () => {
             함께 표시된다(useBuildVolumeCheck).
           */}
           {volumeIssues.length > 0 && (
-            <div className="absolute inset-x-0 top-4 flex justify-center pointer-events-none px-4">
-              <div className="bg-red-50/95 backdrop-blur border border-red-300 rounded-md shadow px-4 py-2 text-sm text-red-900 select-none max-w-xl">
+            <div className="absolute inset-x-0 top-4 flex justify-center px-4 pointer-events-none">
+              <div className="bg-red-50/95 backdrop-blur border border-red-300 rounded-md shadow px-4 py-2 text-sm text-red-900 select-none max-w-xl pointer-events-auto">
                 <div className="font-medium">
                   ⚠ 출력영역을 벗어난 모델 {volumeIssues.length}개 — 이대로
                   출력하면 잘려 나갑니다.
@@ -599,6 +622,19 @@ const ViewerV2Page: React.FC = () => {
                     </li>
                   )}
                 </ul>
+                {/*
+                  플레이트 아래로 파고든 경우만 원클릭 해소 버튼을 띄운다 (B-21).
+                  회전하면 실제로 파고들기 때문에(자동 안착 없음 — B-12 A안)
+                  가장 흔한 경고이고, 손으로 ty 를 계산하지 않게 해 준다.
+                */}
+                {volumeIssues.some((it) => it.sinkDepthMm > 0) && (
+                  <button
+                    onClick={handleDropToPlate}
+                    className="mt-2 px-2 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                  >
+                    플레이트 위로 올리기 (Ctrl+Z 로 되돌리기 가능)
+                  </button>
+                )}
               </div>
             </div>
           )}
