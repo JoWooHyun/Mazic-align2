@@ -579,14 +579,12 @@ const ViewerV2Page: React.FC = () => {
             onDeleteSelected={handleDeleteSelectedSupport}
           />
 
-          {files.length === 0 && !isDragOver && (
-            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-center pointer-events-none">
-              <div className="bg-white/90 backdrop-blur rounded-md shadow px-4 py-3 text-sm text-gray-600">
-                좌측 '+ 추가' · 상단 'STL 열기' · STL 을 여기로 드래그하여
-                가져오세요.
-              </div>
-            </div>
-          )}
+          {/*
+            B-27 — STL 이 없을 때 뜨던 안내 오버레이 제거 (리드 지시:
+            "stl파일 열릴때까지 알림창 뜨는거 없었으면 좋겠어. 굳이 알림창 뜰
+            이유가 없다. 삭제해"). 드래그 중 오버레이(isDragOver)는 드롭 위치를
+            알려주는 실질 피드백이라 유지한다.
+          */}
 
           {/* 재설계 서포트 무효화 안내 (B-1). 5초 후 자동 소멸. */}
           {redesignInvalidNotice && (

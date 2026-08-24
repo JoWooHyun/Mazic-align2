@@ -1,4 +1,10 @@
-import { Matrix, Mesh, Quaternion, Vector3 } from "@babylonjs/core";
+import {
+  Matrix,
+  Mesh,
+  Quaternion,
+  Vector3,
+  VertexBuffer,
+} from "@babylonjs/core";
 
 import type { TransformV2 } from "../types/transform";
 
@@ -289,30 +295,46 @@ export function computeAlignFloorTransform(
     meshWorldBBoxCenter(mesh),
   );
 
-  // 새 회전 적용한 가상 transform 으로 bounding box 의 minY 계산.
-  // mesh 의 vertex local AABB 를 새 rotation 으로 변환 후 minY.
-  mesh.refreshBoundingInfo();
-  const localBB = mesh.getBoundingInfo().boundingBox;
-  const localCorners = [
-    new Vector3(localBB.minimum.x, localBB.minimum.y, localBB.minimum.z),
-    new Vector3(localBB.maximum.x, localBB.minimum.y, localBB.minimum.z),
-    new Vector3(localBB.minimum.x, localBB.maximum.y, localBB.minimum.z),
-    new Vector3(localBB.minimum.x, localBB.minimum.y, localBB.maximum.z),
-    new Vector3(localBB.maximum.x, localBB.maximum.y, localBB.minimum.z),
-    new Vector3(localBB.maximum.x, localBB.minimum.y, localBB.maximum.z),
-    new Vector3(localBB.minimum.x, localBB.maximum.y, localBB.maximum.z),
-    new Vector3(localBB.maximum.x, localBB.maximum.y, localBB.maximum.z),
-  ];
+  // 새 회전을 적용했을 때의 **최저점**을 구한다 → ty = -minY 로 바닥에 앉힌다.
+  //
+  // ★ B-24 — 종전에는 **로컬 AABB 의 코너 8개**만 회전시켜 minY 를 구했다.
+  //   경계상자 코너는 실제 형상보다 바깥에 있으므로, 회전하면 **실제 최저점보다
+  //   낮은 값**이 나오고 그만큼 모델이 **공중에 뜬다**(리드 실물: "바닥에 붙이기
+  //   해도 띄워져있는데? 공중에 떠있어").
+  //     · 반지름 5 구를 20° 회전 → 코너 minY −6.41 vs 실제 −5.00 ⇒ 1.41mm 뜸
+  //     · 45° 회전 → −7.07 vs −5.00 ⇒ 2.07mm 뜸
+  //   치아처럼 곡면이고 AABB 를 꽉 채우지 않는 형상일수록 심하다. B-21 에서
+  //   출력영역 판정을 고친 것과 **정확히 같은 원인**(경계상자 ≠ 형상)이다.
+  //   → 실제 정점을 전부 훑어 진짜 최저점을 쓴다.
   const sx = mesh.scaling.x;
   const sy = mesh.scaling.y;
   const sz = mesh.scaling.z;
   const rotMat = Matrix.Identity();
   newQ.toRotationMatrix(rotMat);
+
   let minY = Infinity;
-  for (const c of localCorners) {
-    const scaled = new Vector3(c.x * sx, c.y * sy, c.z * sz);
-    const rotated = Vector3.TransformCoordinates(scaled, rotMat);
-    if (rotated.y < minY) minY = rotated.y;
+  const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+  if (positions && positions.length >= 3) {
+    const v = new Vector3();
+    for (let i = 0; i + 2 < positions.length; i += 3) {
+      v.set(positions[i] * sx, positions[i + 1] * sy, positions[i + 2] * sz);
+      const y = Vector3.TransformCoordinates(v, rotMat).y;
+      if (y < minY) minY = y;
+    }
+  }
+  if (!Number.isFinite(minY)) {
+    // 정점을 못 읽는 예외 상황 — 종전 방식(AABB 코너)으로 폴백한다.
+    mesh.refreshBoundingInfo();
+    const bb = mesh.getBoundingInfo().boundingBox;
+    for (const cx of [bb.minimum.x, bb.maximum.x])
+      for (const cy of [bb.minimum.y, bb.maximum.y])
+        for (const cz of [bb.minimum.z, bb.maximum.z]) {
+          const y = Vector3.TransformCoordinates(
+            new Vector3(cx * sx, cy * sy, cz * sz),
+            rotMat,
+          ).y;
+          if (y < minY) minY = y;
+        }
   }
 
   return {

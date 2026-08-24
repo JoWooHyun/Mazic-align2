@@ -17,6 +17,7 @@ import { useBridgeVisualization } from "./babylon/hooks/useBridgeVisualization";
 import { useEditModeSync } from "./babylon/hooks/useEditModeSync";
 import { useDentalBrush } from "./babylon/hooks/useDentalBrush";
 import { useBuildVolumeCheck } from "./babylon/hooks/useBuildVolumeCheck";
+import { useAlignFloorHover } from "./babylon/hooks/useAlignFloorHover";
 import { buildCameraHandle } from "./babylon/handle/camera-handle";
 import { buildTransformHandle } from "./babylon/handle/transform-handle";
 import { buildSupportGenHandle } from "./babylon/handle/support-gen-handle";
@@ -112,6 +113,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       plateHeightMm,
       onBuildVolumeIssues,
     );
+    // #8 바닥면 붙이기 호버 하이라이트 (B-25). #7 과 같은 이유로 맨 끝.
+    useAlignFloorHover(ctx, !!props.alignFloorMode);
 
     // 외부 ref API — 그룹별 빌더가 반환한 메서드 객체를 조립한다. 각 빌더는 ctx(ref)
     //   와 stable 함수만 참조하므로 deps [] 로 정체성을 고정한다 (원본과 동일).
