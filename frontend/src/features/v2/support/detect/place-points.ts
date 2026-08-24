@@ -10,7 +10,7 @@
 //   모든 수치는 PlacePointsParams 로 주입(하드코딩 상수 금지 — 리드 결정 3).
 
 import type { SupportPointV2 } from "../types";
-import type { IslandRegion, LayerGraphResult, OverhangRegion, Point2 } from "./types";
+import type { IslandRegion, LayerGraphResult, Point2 } from "./types";
 import { pointInPolygon } from "./polygon-2d";
 
 /** 점 생성 파라미터. 모든 값 사용자 조절 기본값에서 온다. */
@@ -38,8 +38,20 @@ export interface PlacePointsParams {
   /**
    * 오버행 점 간격 (mm). 설계 3-2 지지반경 곡선의 1차 단순화(고정 간격).
    *   TODO(설계 3-2): 지지반경 곡선 적용.
+   *   ※ B-22 부터 이 값은 **수평(XZ) 격자 간격**을 뜻한다.
    */
   overhangSpacingMm: number;
+  /**
+   * 오버행 점의 **수직(높이) 방향 간격** (mm) — B-22.
+   *
+   * 검출은 층(기본 0.05mm)마다 오버행 영역을 내놓기 때문에, 수평 격자만으로
+   * 중복을 걸러도 **같은 자리에 층마다 점이 쌓인다.** 이 값이 "세로로 이만큼
+   * 떨어져야 별개 점으로 본다"는 기준이 되어 그 누적을 끊는다.
+   *
+   * 미지정이면 `overhangSpacingMm` 과 같은 값을 쓴다(등방 격자).
+   * 값을 키우면 세로로 더 성기게, 줄이면 더 촘촘하게 찍힌다.
+   */
+  verticalSpacingMm?: number;
 }
 
 /**
@@ -62,9 +74,48 @@ export function placeSupportPoints(
     }
   }
 
+  // ★ B-22 — 오버행 점 중복 제거를 **전체 층에 걸쳐 한 번에** 한다.
+  //
+  //   ## 왜 (리드 실물: "서포트 아직도 너무많다")
+  //   종전에는 `overhangContacts` 안에서 층 하나마다 `seen` Set 을 새로 만들어
+  //   XZ 격자 중복만 걸렀다. 그런데 이 함수는 `OverhangRegion`(=층) **마다**
+  //   호출되므로, 같은 XZ 라도 **층이 다르면 별개 점으로 살아남았다.**
+  //   층높이 0.05mm → 12mm 모델이면 최대 240층이 같은 자리에 쌓인다
+  //   (세로로 긴 경사면일수록 폭발 — 리드가 본 1,000+ 가 이 형태).
+  //
+  //   ## 무엇을 바꿨나
+  //   `seen` 을 이 루프 **바깥**으로 올리고, 키에 **Y 도 함께** 양자화해 넣는다.
+  //   즉 XZ 격자가 아니라 **3D 격자** 중복 제거가 된다.
+  //     · 수직 방향 셀 크기 = `verticalSpacingMm`(기본 = overhangSpacingMm).
+  //     · 같은 기둥 자리에 세로로 촘촘히 쌓이던 점이 이 간격마다 1개로 줄어든다.
+  //
+  //   ## 왜 XZ 만이 아니라 Y 도 남기나 (전부 뭉개면 안 되는 이유)
+  //   XZ 만으로 뭉개면 **높이가 다른 별개의 오버행**(예: 위·아래 두 층의 서로
+  //   다른 돌출부)이 하나로 합쳐져 **아래쪽만 받치고 위는 안 받치게 된다.**
+  //   Y 를 격자에 포함하면 "같은 자리 + 비슷한 높이"만 합쳐지므로 안전하다.
+  //
+  //   ## 검출 로직은 건드리지 않는다
+  //   `layer-graph.ts`(S-4b-2e 검수 통과분)는 무변경이다. 검출이 내놓는 영역은
+  //   그대로이고, 그 위에서 **점을 몇 개 찍을지**만 바뀐다.
+  //   ⚠️ 셀 인덱스는 `Math.floor` 로 낸다. `Math.round` 를 쓰면 셀 경계가 반 칸씩
+  //   어긋나 **첫 칸만 폭이 절반**이 된다(검증 §1 이 실측으로 잡아낸 결함 —
+  //   240층 벽에서 첫 두 점 간격이 3mm 가 아니라 1.5mm 로 나왔다). floor 는 모든
+  //   칸의 폭이 정확히 step 이라 "남은 점들의 최소 간격 ≥ step" 이 항상 성립한다.
+  const seenOverhang = new Set<string>();
+  const step = Math.max(params.overhangSpacingMm, 1e-3);
+  const vStep = Math.max(
+    params.verticalSpacingMm ?? params.overhangSpacingMm,
+    1e-3,
+  );
   for (const overhang of detect.overhangs) {
-    for (const c of overhangContacts(overhang, params)) {
-      out.push(makePoint(c, overhang.y, "slope", projectId, detect.stlId, params, now));
+    const iy = Math.floor(overhang.y / vStep);
+    for (const [x, z] of overhang.points) {
+      const key = `${Math.floor(x / step)},${Math.floor(z / step)},${iy}`;
+      if (seenOverhang.has(key)) continue;
+      seenOverhang.add(key);
+      out.push(
+        makePoint([x, z], overhang.y, "slope", projectId, detect.stlId, params, now),
+      );
     }
   }
 
@@ -121,25 +172,9 @@ function islandContacts(
   return grid.length > 0 ? grid : [island.centroid];
 }
 
-/**
- * 오버행 점 XZ 목록 (설계 3-2 의 1차 단순화 — 고정 간격 그리드 스냅).
- *   검출된 튀어나온 샘플점들을 overhangSpacing 격자 셀당 1점으로 성글게 한다.
- */
-function overhangContacts(
-  overhang: OverhangRegion,
-  params: PlacePointsParams,
-): Point2[] {
-  const step = Math.max(params.overhangSpacingMm, 1e-3);
-  const seen = new Set<string>();
-  const out: Point2[] = [];
-  for (const [x, z] of overhang.points) {
-    const key = `${Math.round(x / step)},${Math.round(z / step)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push([x, z]);
-  }
-  return out;
-}
+// (구 `overhangContacts` 제거 — B-22. 층별로 호출돼 **층 하나 안에서만** 중복을
+//  걸렀기 때문에 같은 자리에 층마다 점이 쌓였다. 이제 `placeSupportPoints` 가
+//  전체 층에 걸친 3D 격자로 한 번에 거른다.)
 
 /** 한 접점 XZ + 층 Y → SupportPointV2 (base 는 임시 플레이트). */
 function makePoint(
