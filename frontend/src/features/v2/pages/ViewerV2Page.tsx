@@ -111,6 +111,11 @@ const ViewerV2Page: React.FC = () => {
     setGizmoMode,
   });
 
+  // 출력영역 초과 경고 (C-2). 자동 소멸시키지 않는다 — 조건이 해소될 때까지
+  //   계속 보여야 하는 **상태**이지 일회성 알림이 아니다(모델을 안으로 옮기면
+  //   훅이 빈 배열을 올려보내 저절로 사라진다).
+  const [volumeIssues, setVolumeIssues] = useState<BuildVolumeIssue[]>([]);
+
   // 슬라이스 프리뷰 상태 + 내보내기 핸들러.
   const {
     slicePreview,
@@ -130,12 +135,9 @@ const ViewerV2Page: React.FC = () => {
     supportsLength: supports.length,
     printerProfile,
     sceneHandleRef,
+    // P-1: 출력영역을 벗어난 모델이 있으면 내보내기 전에 확인을 받는다.
+    volumeIssues,
   });
-
-  // 출력영역 초과 경고 (C-2). 자동 소멸시키지 않는다 — 조건이 해소될 때까지
-  //   계속 보여야 하는 **상태**이지 일회성 알림이 아니다(모델을 안으로 옮기면
-  //   훅이 빈 배열을 올려보내 저절로 사라진다).
-  const [volumeIssues, setVolumeIssues] = useState<BuildVolumeIssue[]>([]);
 
   // 서포트 구성 요약 (C-4). 저장된 점 목록에서 매번 파생 — 별도 상태를 두지
   //   않으므로 추가/삭제/undo 어느 경로로 바뀌든 자동으로 최신이다.
@@ -143,7 +145,6 @@ const ViewerV2Page: React.FC = () => {
     () => summarizeSupports(supports),
     [supports],
   );
-
 
   // 재설계 서포트 무효화 안내 (B-1). 5초 뒤 자동 소멸.
   const [redesignInvalidNotice, setRedesignInvalidNotice] = useState<

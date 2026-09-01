@@ -25,6 +25,7 @@
  */
 
 import NumberInput from "./common/NumberInput";
+import DetectParamsPanel from "../support/components/DetectParamsPanel";
 
 /** dental-brush 두께 입력 한계 (원본 SHIFT+휠 clamp 0.5~30mm 과 일치). */
 const BRUSH_MIN = 0.5;
@@ -388,6 +389,12 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
               재설계 표시 지우기
             </button>
           )}
+
+          {/* 검출·점생성 파라미터 (P-2) — 종전에는 전부 모듈 상수였다.
+              서포트가 너무 많으면 여기서 간격을 키운다. */}
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <DetectParamsPanel />
+          </div>
         </div>
       )}
     </div>

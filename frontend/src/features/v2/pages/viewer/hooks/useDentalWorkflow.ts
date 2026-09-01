@@ -2,6 +2,7 @@
 // (ViewerV2Page 에서 추출 — busy 라벨 페인트 순서·undo·통지 동작 불변.)
 
 import { useCallback, useState } from "react";
+import { useDetectParamsStore } from "../../../support/hooks/useDetectParamsStore";
 
 import { useUndoStore } from "../../../hooks/useUndoStore";
 import * as supportRepo from "../../../data/supports.repo";
@@ -59,6 +60,9 @@ export function useDentalWorkflow({
   addSupports,
   refreshSupports,
 }: UseDentalWorkflowArgs) {
+  // P-2: 검출·점생성 파라미터(사용자 조절). 스토어에서 직접 읽어
+  //   프롭 스레딩 없이 최신값을 쓴다.
+  const detectParams = useDetectParamsStore((st) => st.params);
   // dental-brush 색칠 두께 (mm). 씬 SHIFT+휠 로도 갱신됨.
   const [brushThicknessMm, setBrushThicknessMm] = useState(3);
   // stlId → painted face index 목록 (세션 상태). margin/island 조각 입력.
@@ -186,6 +190,8 @@ export function useDentalWorkflow({
         liftMm: supportParams.liftMm,
         // ★ C-3: 뷰어 빨간 하이라이트와 같은 각도로 검출한다.
         overhangAngleDeg: supportParams.overhangAngleDeg,
+        // P-2: 사용자가 검출 패널에서 조절한 값.
+        detect: detectParams,
       });
       if (!res) return;
       if (res.ok) {
@@ -205,6 +211,7 @@ export function useDentalWorkflow({
     layerHeightMm,
     supportParams.liftMm,
     supportParams.overhangAngleDeg, // C-3: 검출각이 바뀌면 재검출해야 한다.
+    detectParams, // P-2
     sceneHandleRef,
   ]);
 
@@ -229,6 +236,8 @@ export function useDentalWorkflow({
         liftMm: supportParams.liftMm,
         // ★ C-3: 뷰어 빨간 하이라이트와 같은 각도로 검출한다.
         overhangAngleDeg: supportParams.overhangAngleDeg,
+        // P-2: 사용자가 검출 패널에서 조절한 값.
+        detect: detectParams,
       });
       if (!res) return;
       if (!res.ok) {
@@ -308,6 +317,7 @@ export function useDentalWorkflow({
     // S-4b-2c: 라우팅이 반경(trunkDiameterMm)·화살촉 높이까지 보므로 params
     //   객체 전체를 의존성으로 둔다(종전엔 liftMm 만 썼다).
     supportParams,
+    detectParams, // P-2
     addSupports,
     refreshSupports,
     sceneHandleRef,

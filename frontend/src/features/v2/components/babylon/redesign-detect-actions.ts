@@ -25,6 +25,8 @@ import {
   DEFAULT_PLACE_POINTS_PARAMS,
   type LayerGraphResult,
 } from "../../support";
+import type { LayerGraphParams } from "../../support/detect/types";
+import type { PlacePointsParams } from "../../support/detect/place-points";
 import type { SupportParams, SupportPointV2 } from "../../support/types";
 import { makeTriangleBeamProbe } from "../../support/collision-probe";
 import {
@@ -59,7 +61,17 @@ export function disposeRedesignVisualization(ctx: SceneCtx): void {
 export function runRedesignDetect(
   ctx: SceneCtx,
   projectId: string,
-  opts: { layerHeightMm: number; liftMm: number; overhangAngleDeg?: number },
+  opts: {
+    layerHeightMm: number;
+    liftMm: number;
+    overhangAngleDeg?: number;
+    /**
+     * 검출·점생성 파라미터 덮어쓰기 (P-2). 미지정 항목은 기본값을 쓴다.
+     *   사용자가 패널에서 조절한 값이 여기로 들어온다. 종전에는 이 9개가
+     *   전부 모듈 상수라 UI 로 못 바꿨다(리드 결정 3 위반).
+     */
+    detect?: Partial<LayerGraphParams> & Partial<PlacePointsParams>;
+  },
 ):
   | { ok: true; points: SupportPointV2[]; stats: RedesignDetectStats }
   | { ok: false; reason: string } {
@@ -80,7 +92,8 @@ export function runRedesignDetect(
   //   하이라이트와 **같은 값**을 넘긴다. 미지정이면 종전 기본값이라 하위 호환.
   const detect = detectLayerGraph(triangles, active.id, {
     ...DEFAULT_LAYER_GRAPH_PARAMS,
-    layerHeightMm: opts.layerHeightMm,
+    ...(opts.detect ?? {}), // P-2: 사용자 조절 값
+    layerHeightMm: opts.detect?.layerHeightMm ?? opts.layerHeightMm,
     liftMm: opts.liftMm, // plateGap-lift 연동 (수용 C).
     ...(opts.overhangAngleDeg != null
       ? { overhangAngleDeg: opts.overhangAngleDeg }
@@ -88,7 +101,10 @@ export function runRedesignDetect(
   });
 
   // ── 2단계: 점 생성 ────────────────────────────────────────────────────
-  const points = placeSupportPoints(detect, projectId, DEFAULT_PLACE_POINTS_PARAMS);
+  const points = placeSupportPoints(detect, projectId, {
+    ...DEFAULT_PLACE_POINTS_PARAMS,
+    ...(opts.detect ?? {}), // P-2: 사용자 조절 값
+  });
 
   // ── 시각화 (기존 오버레이 정리 후 새로 그림) ─────────────────────────
   disposeRedesignVisualization(ctx);
