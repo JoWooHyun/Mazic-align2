@@ -88,6 +88,13 @@ export function useAlignFloorHover(
       });
       decal.material = material;
       decal.isPickable = false;
+      // 데칼을 원본 STL 의 child 로 묶는다.
+      //   `MeshBuilder.CreateDecal` 은 `useLocalComputation` 을 주지 않으면 부모를
+      //   설정하지 않아(decalBuilder.js) **자유 메시**로 남는다. 그러면 호버 중에
+      //   해당 STL 이 삭제될 때 노란 조각이 허공에 떠 남는다.
+      //   useDentalBrush 의 오버레이 데칼도 "STL mesh 의 child" 를 전제로 정리된다
+      //   (useFileMeshSync 주석) — 같은 규약을 따른다.
+      decal.parent = pick.pickedMesh;
     };
 
     const observer = scene.onPointerObservable.add(onMove);
@@ -98,5 +105,12 @@ export function useAlignFloorHover(
       material?.dispose();
       material = null;
     };
-  }, [ctx, alignFloorMode]);
+    // ⚠️ `ctx` 를 deps 에 넣지 않는다 (CLAUDE.md 규칙 7).
+    //   `useSceneRefs` 는 **매 렌더 새 객체 리터럴**을 반환하므로 ctx 를 deps 에 두면
+    //   부모가 리렌더될 때마다(슬라이스 프리뷰 틱·transform 커밋 등) 이 effect 가
+    //   teardown→재등록을 반복한다. 그러면 호버 중에 데칼이 깜빡이고 Babylon
+    //   머티리얼이 렌더마다 생성·폐기된다. ctx 는 ref 묶음이라 내용이 안정적이므로
+    //   값 deps 만 두는 것이 이 폴더의 규약이다(형제 훅들과 동일).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alignFloorMode]);
 }

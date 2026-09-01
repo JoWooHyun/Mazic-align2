@@ -107,14 +107,32 @@ export function useSceneBootstrap(
     //     target 이 절대 이탈하지 않아 줌인/줌아웃을 섞어도 안정적이다.
     //   POINTERWHEEL 을 Babylon 입력보다 먼저 받아 플래그만 토글한다(입력 로직
     //   자체는 Babylon 것을 그대로 쓴다 — 우리가 줌을 재구현하지 않는다).
-    scene.onPrePointerObservable.add((pi) => {
+    //
+    //   ⚠️ **관성 잔량 처리** — Babylon 의 `_zoomToMouse` 는 커서 방향 팬을
+    //   `_inertialPanning` 에 **누적**하고, 그 값은 `checkInputs()` 안에서만
+    //   빠져나간다. 그런데 `checkInputs` 는 플래그가 꺼져 있으면 **곧바로
+    //   return** 하므로, 줌인 관성이 아직 남은 상태에서 줌아웃으로 넘어가면
+    //   잔량이 그대로 얼어붙는다. 다음 줌인에서 플래그가 켜지는 순간 그 낡은
+    //   벡터가 `camera.target` 에 한꺼번에 적용돼 시점이 튄다 — B-28 이 드물게
+    //   재발하는 것처럼 보이는 경로다.
+    //   → 플래그를 끌 때 관성 잔량을 함께 0 으로 만들어 잔량이 남지 않게 한다.
+    const wheelObserver = scene.onPrePointerObservable.add((pi) => {
       if (pi.type !== PointerEventTypes.POINTERWHEEL) return;
       const ev = pi.event as { deltaY?: number; wheelDelta?: number };
       // deltaY > 0 = 휠을 아래로 = 줌아웃(Babylon 기본 매핑과 동일).
       const out =
         ev.deltaY != null ? ev.deltaY > 0 : (ev.wheelDelta ?? 0) < 0;
+      if (out && camera.zoomToMouseLocation) {
+        // 켜짐 → 꺼짐 전환. 이 시점에 남은 관성을 비운다.
+        const wheelInput = camera.inputs.attached.mousewheel as
+          | { _inertialPanning?: { setAll(v: number): void } }
+          | undefined;
+        wheelInput?._inertialPanning?.setAll(0);
+        camera.inertialRadiusOffset = 0;
+      }
       camera.zoomToMouseLocation = !out;
     });
+    ctx.wheelObserverRef.current = wheelObserver;
 
     // ChiTuBox 풍: 위는 강하게, 옆/아래는 약하게 → 윗면 밝고 옆면
     // 어두운 명확한 그림자 대비. 라이트 4 개 다 hemispheric 으로

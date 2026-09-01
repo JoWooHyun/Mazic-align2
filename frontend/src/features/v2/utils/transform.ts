@@ -315,11 +315,15 @@ export function computeAlignFloorTransform(
   let minY = Infinity;
   const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
   if (positions && positions.length >= 3) {
+    // ⚠️ `TransformCoordinates` 는 **정점마다 Vector3 를 새로 할당**한다(10만 정점
+    //   이면 10만 개). `...ToRef` 로 재사용 버퍼에 쓴다 — useBuildVolumeCheck 의
+    //   worldVertexAabb 가 이미 쓰는 패턴과 동일.
     const v = new Vector3();
+    const out = new Vector3();
     for (let i = 0; i + 2 < positions.length; i += 3) {
       v.set(positions[i] * sx, positions[i + 1] * sy, positions[i + 2] * sz);
-      const y = Vector3.TransformCoordinates(v, rotMat).y;
-      if (y < minY) minY = y;
+      Vector3.TransformCoordinatesToRef(v, rotMat, out);
+      if (out.y < minY) minY = out.y;
     }
   }
   if (!Number.isFinite(minY)) {
