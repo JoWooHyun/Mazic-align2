@@ -71,6 +71,13 @@ export function disposeScene(
   ctx.islandResultRef.current = null;
   // 서포트 재설계(S-4) 오버레이 ref 도 명시적으로 비운다 (island ref 와 동일 이유).
   ctx.redesignMarkersRef.current = [];
+  // 휠 줌 방향 옵저버 제거 (B-28). scene.dispose 가 어차피 옵저버블을 비우지만,
+  //   이 폴더의 규약(등록한 옵저버는 명시적으로 제거)을 따르고 camera 를 붙잡은
+  //   클로저를 남기지 않는다.
+  if (ctx.wheelObserverRef.current) {
+    scene.onPrePointerObservable.remove(ctx.wheelObserverRef.current);
+    ctx.wheelObserverRef.current = null;
+  }
   ctx.furnitureRef.current?.dispose();
   ctx.furnitureRef.current = null;
   hl.dispose();

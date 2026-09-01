@@ -11,7 +11,9 @@ import type {
   HighlightLayer,
   LinesMesh,
   Mesh,
+  Observer,
   PointerDragBehavior,
+  PointerInfoPre,
   PositionGizmo,
   RotationGizmo,
   ScaleGizmo,
@@ -96,6 +98,8 @@ export interface SceneCtx {
   furnitureRef: MutableRefObject<SceneFurniture | null>;
   highlightRef: MutableRefObject<HighlightLayer | null>;
   utilityLayerRef: MutableRefObject<UtilityLayerRenderer | null>;
+  /** 휠 줌 방향 감지 옵저버 (B-28). dispose 시 명시적으로 제거한다. */
+  wheelObserverRef: MutableRefObject<Observer<PointerInfoPre> | null>;
   positionGizmoRef: MutableRefObject<PositionGizmo | null>;
   rotationGizmoRef: MutableRefObject<RotationGizmo | null>;
   scaleGizmoRef: MutableRefObject<ScaleGizmo | null>;
@@ -194,6 +198,7 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
   const furnitureRef = useRef<SceneFurniture | null>(null);
   const highlightRef = useRef<HighlightLayer | null>(null);
   const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
+  const wheelObserverRef = useRef<Observer<PointerInfoPre> | null>(null);
   const positionGizmoRef = useRef<PositionGizmo | null>(null);
   const rotationGizmoRef = useRef<RotationGizmo | null>(null);
   const scaleGizmoRef = useRef<ScaleGizmo | null>(null);
@@ -303,6 +308,7 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
     furnitureRef,
     highlightRef,
     utilityLayerRef,
+    wheelObserverRef,
     positionGizmoRef,
     rotationGizmoRef,
     scaleGizmoRef,

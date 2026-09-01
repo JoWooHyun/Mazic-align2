@@ -21,6 +21,15 @@ export function useFileMeshSync(
   ctx: SceneCtx,
   files: STLFileV2[],
   overhangAngleDeg: number,
+  /**
+   * STL 로드가 **실제로 끝났을 때**(meshMapRef 에 등록된 뒤) 호출된다 (H3).
+   *
+   * 로드는 `Promise.all(...).then(...)` 안에서 완료되므로, 같은 커밋에서 도는
+   * 다른 훅들은 `meshMapRef.current.get(id)` 가 아직 undefined 다. 메쉬가 있어야
+   * 동작하는 소비자(출력영역 검사 등)가 "새로 불러온 모델"을 놓치지 않도록
+   * 완료 시점을 알린다.
+   */
+  onMeshesLoaded?: () => void,
 ): void {
   // 2) files 변경 시 메쉬 동기화
   useEffect(() => {
@@ -120,6 +129,9 @@ export function useFileMeshSync(
       refreshHighlight(ctx);
       // load 가 끝난 뒤에야 mesh 가 존재하므로 여기서 다시 attach.
       syncGizmo(ctx);
+      // 메쉬가 meshMapRef 에 올라온 **뒤** 소비자에게 알린다 (H3).
+      //   실제로 새로 로드된 것이 있을 때만 — 없으면 불필요한 리렌더가 된다.
+      if (loaded.some((m) => m !== null)) onMeshesLoaded?.();
     });
 
     // 기존 메쉬들은 transform 변경 가능성 체크

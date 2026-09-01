@@ -16,7 +16,7 @@
 //   경고를 mesh 색으로 칠하면 두 표시가 같은 채널을 두고 싸운다. 그래서 **별도의
 //   외곽선 박스 메시**로 그린다 — 오버행 색을 보존하면서 "이 모델이 범위를 벗어남"이
 //   한눈에 보인다.
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Color3, MeshBuilder, VertexBuffer, Vector3 } from "@babylonjs/core";
 import type { LinesMesh, Mesh } from "@babylonjs/core";
 
@@ -59,7 +59,24 @@ export function useBuildVolumeCheck(
   plateDepthMm: number,
   plateHeightMm: number,
   onIssues?: (issues: BuildVolumeIssue[]) => void,
+  /**
+   * STL 로드 완료 tick (H3). 값이 바뀌면 재검사한다.
+   *
+   * 로드는 `useFileMeshSync` 의 `Promise.all(...).then(...)` 안에서 끝나므로,
+   * `files` 만 deps 로 두면 **새로 불러온 모델은 아직 meshMapRef 에 없어 검사에서
+   * 통째로 빠진다.** 그러면 크기 초과 모델을 올려도 경고가 안 뜬다(기능이 정작
+   * 제 목적에 안 동작). 로드 완료 신호를 받아 다시 돈다.
+   */
+  meshLoadTick?: number,
 ): void {
+  // onIssues 를 ref 로 미러링한다 (M3).
+  //   deps 에서 제외하면 effect 가 **첫 렌더의 콜백을 영구 캡처**한다. 지금은
+  //   호출부가 `setVolumeIssues`(안정적)라 무해하지만, 인라인 화살표로 바뀌는
+  //   순간 조용히 낡은 클로저를 계속 부르게 된다 — 이 폴더의 다른 콜백들이
+  //   전부 `scene-refs.ts` 에서 ref 미러링되는 것과 같은 이유로 구조적으로 막는다.
+  const onIssuesRef = useRef(onIssues);
+  onIssuesRef.current = onIssues;
+
   useEffect(() => {
     const scene = ctx.sceneRef.current;
     if (!scene) return;
@@ -107,10 +124,18 @@ export function useBuildVolumeCheck(
       box.renderingGroupId = 1;
     }
 
-    onIssues?.(issues);
+    onIssuesRef.current?.(issues);
 
+    // 언마운트/재실행 시 경고 박스를 확실히 정리한다 (M2).
+    //   종전에는 "다음 실행 맨 앞"에서만 지워서, 마지막 실행 이후에는 남아 있었다
+    //   (scene.dispose 가 회수하므로 누수는 아니나, 이 폴더의 정리 규약과 어긋난다).
+    return () => {
+      for (const m of scene.meshes.slice()) {
+        if (m.name.startsWith(WARN_MESH_PREFIX)) m.dispose();
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, plateWidthMm, plateDepthMm, plateHeightMm]);
+  }, [files, plateWidthMm, plateDepthMm, plateHeightMm, meshLoadTick]);
 }
 
 /**
