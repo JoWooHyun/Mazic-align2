@@ -11,6 +11,8 @@ import type { RedesignDetectStats } from "./redesign-detect-actions";
 import type { EditMode } from "../EditModeControls";
 import type { ViewPreset } from "../../utils/camera-views";
 import type { STLFileV2 } from "../../types/stl";
+import type { LayerGraphParams } from "../../support/detect/types";
+import type { PlacePointsParams } from "../../support/detect/place-points";
 import type { BuildVolumeIssue } from "./hooks/useBuildVolumeCheck";
 
 export type { BuildVolumeIssue };
@@ -397,6 +399,11 @@ export interface BabylonSceneHandle {
        *   (`docs/view94.md` 14장 · `docs/supp94_v2.md` 16장이 공통으로 지목한 원칙).
        */
       overhangAngleDeg?: number;
+      /**
+       * 검출·점생성 파라미터 덮어쓰기 (P-2). 사용자가 패널에서 조절한 값.
+       *   미지정 항목은 기본값. 종전에는 9개가 전부 모듈 상수라 UI 로 못 바꿨다.
+       */
+      detect?: Partial<LayerGraphParams> & Partial<PlacePointsParams>;
     },
   ) =>
     | { ok: true; points: SupportPointV2[]; stats: RedesignDetectStats }

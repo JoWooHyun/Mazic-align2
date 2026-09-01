@@ -6,10 +6,16 @@ import { useCallback, useState } from "react";
 import type { STLFileV2 } from "../../../types/stl";
 import type { ProjectV2 } from "../../../types/project";
 import type { PrinterProfileV2 } from "../../../types/printer";
-import type { BabylonSceneHandle } from "../../../components/BabylonScene";
+import type {
+  BabylonSceneHandle,
+  BuildVolumeIssue,
+} from "../../../components/BabylonScene";
 import { downloadBlob } from "../../../utils/stl-export";
 import { sliceBatchService } from "../../../utils/slice-batch-service";
 import { profileExposure } from "../utils/profile-exposure";
+
+/** 확인 다이얼로그 줄바꿈. */
+const NL = String.fromCharCode(10);
 
 interface UseSliceExportArgs {
   files: STLFileV2[];
@@ -17,6 +23,14 @@ interface UseSliceExportArgs {
   supportsLength: number;
   printerProfile: PrinterProfileV2;
   sceneHandleRef: React.RefObject<BabylonSceneHandle>;
+  /**
+   * 출력영역을 벗어난 모델 목록 (P-1). 비어 있으면 정상.
+   *
+   * 종전에는 이 값이 **화면 배너에만** 쓰이고 내보내기 경로는 아무도 읽지
+   * 않았다. 그래서 빨간 경고를 보면서도 **잘려 나갈 모델의 ZIP/G-code 를
+   * 정상 생성**할 수 있었다(프루사는 베드 밖이면 슬라이스를 막는다).
+   */
+  volumeIssues?: BuildVolumeIssue[];
 }
 
 export function useSliceExport({
@@ -25,6 +39,7 @@ export function useSliceExport({
   supportsLength,
   printerProfile,
   sceneHandleRef,
+  volumeIssues,
 }: UseSliceExportArgs) {
   const [slicePreview, setSlicePreview] = useState<{
     on: boolean;
@@ -45,11 +60,38 @@ export function useSliceExport({
     Math.ceil(sceneTopY / slicePreview.layerHeightMm),
   );
 
+  /**
+   * 출력영역을 벗어난 모델이 있으면 사용자에게 확인을 받는다 (P-1).
+   *
+   * ## 왜 하드 차단이 아니라 확인인가
+   * 프루사는 베드 밖이면 슬라이스를 아예 막지만, 우리는 **의도적으로 일부를
+   * 잘라 뽑는 사용**(플레이트보다 큰 모델의 일부만 출력)을 막을 근거가 없다.
+   * "모르고 뽑는 것"만 막으면 목적은 달성된다 — 설계서 4-1 의 미세조각 필터를
+   * 두지 않기로 한 것과 같은 판단(판단은 사용자 몫, 도구는 알려만 준다).
+   *
+   * @returns 계속 진행해도 되면 true.
+   */
+  const confirmIfOutOfBounds = useCallback((): boolean => {
+    if (!volumeIssues || volumeIssues.length === 0) return true;
+    const names = volumeIssues
+      .slice(0, 3)
+      .map((it) => `· ${it.fileName} — ${it.message}`)
+      .join(NL);
+    const more =
+      volumeIssues.length > 3 ? `${NL}· 외 ${volumeIssues.length - 3}개` : "";
+    return window.confirm(
+      `⚠️ 출력영역을 벗어난 모델이 ${volumeIssues.length}개 있습니다.${NL}` +
+        `이대로 내보내면 벗어난 부분이 잘려 나갑니다.${NL}${NL}` +
+        `${names}${more}${NL}${NL}계속 내보낼까요?`,
+    );
+  }, [volumeIssues]);
+
   // ----- 마스크 ZIP 내보내기 -----
   const handleExportMasksZip = useCallback(async () => {
     const handle = sceneHandleRef.current;
     if (!handle || files.length === 0) return;
     if (batchExport.busy) return;
+    if (!confirmIfOutOfBounds()) return; // P-1
     setBatchExport({ busy: true, done: 0, total: 0 });
     try {
       // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열로 직렬화해 전달.
@@ -100,6 +142,7 @@ export function useSliceExport({
     batchExport.busy,
     printerProfile,
     sceneHandleRef,
+    confirmIfOutOfBounds, // P-1
   ]);
 
   // ----- .ctb v4 내보내기 -----
@@ -107,6 +150,7 @@ export function useSliceExport({
     const handle = sceneHandleRef.current;
     if (!handle || files.length === 0) return;
     if (batchExport.busy) return;
+    if (!confirmIfOutOfBounds()) return; // P-1
     setBatchExport({ busy: true, done: 0, total: 0 });
     try {
       // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열로 직렬화해 전달.
@@ -165,6 +209,7 @@ export function useSliceExport({
     batchExport.busy,
     printerProfile,
     sceneHandleRef,
+    confirmIfOutOfBounds, // P-1
   ]);
 
   // ----- FDM G-code 내보내기 (감사 A5 — 워커로 이동) -----
@@ -175,6 +220,7 @@ export function useSliceExport({
     const handle = sceneHandleRef.current;
     if (!handle || files.length === 0) return;
     if (batchExport.busy) return;
+    if (!confirmIfOutOfBounds()) return; // P-1
 
     // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열 + 범위 + 설정을 준비.
     const input = handle.getFdmSliceInput();
@@ -212,7 +258,13 @@ export function useSliceExport({
     } finally {
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
-  }, [files.length, project?.name, batchExport.busy, sceneHandleRef]);
+  }, [
+    files.length,
+    project?.name,
+    batchExport.busy,
+    sceneHandleRef,
+    confirmIfOutOfBounds, // P-1
+  ]);
 
   // ----- STL 내보내기 -----
   // Chrome/Edge 의 File System Access API (showSaveFilePicker) 우선 사용 —
