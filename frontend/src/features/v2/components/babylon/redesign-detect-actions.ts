@@ -46,10 +46,39 @@ export interface RedesignDetectStats {
   layerHeight: number;
 }
 
-/** 재설계 오버레이(아일랜드/오버행 색 + 서포트 점 구)를 모두 정리한다. */
+/**
+ * 재설계 오버레이(아일랜드/오버행 색 + 서포트 점 구)를 모두 정리한다.
+ *
+ * ## ⚠️ 머티리얼은 **따로** 정리한다 (2회차 실행 에러의 원인)
+ * 종전에는 `m.dispose(false, true)` — 두 번째 인자 true 가 "이 메시의 머티리얼도
+ * 함께 dispose" 다(`abstractMesh.js:1756-1764`). 그런데 이 오버레이는 머티리얼
+ * **1개를 수백 개 메시가 공유**한다(아일랜드 디스크 전부가 islandMat 하나 등).
+ * 그래서 **첫 메시가 공유 머티리얼을 dispose 해 버리고**, 남은 메시들은 이미 죽은
+ * 머티리얼을 참조한 채로 dispose 를 이어간다. 그 상태로 다시 생성하면 Babylon 이
+ * 폐기된 머티리얼/이펙트를 건드리며 터진다 — 리드 실물: "한 번은 되는데 두 번째부터
+ * 에러".
+ *
+ * → 메시는 머티리얼 건드리지 않고 정리하고(`dispose(false, false)`),
+ *   공유 머티리얼은 이름으로 찾아 **한 번만** 정리한다.
+ */
+const REDESIGN_MAT_NAMES = [
+  "v2_redesignIslandMat",
+  "v2_redesignOverhangMat",
+  "v2_redesignPointIslandMat",
+  "v2_redesignPointSlopeMat",
+];
+
 export function disposeRedesignVisualization(ctx: SceneCtx): void {
-  for (const m of ctx.redesignMarkersRef.current) m.dispose(false, true);
+  for (const m of ctx.redesignMarkersRef.current) m.dispose(false, false);
   ctx.redesignMarkersRef.current = [];
+
+  // 공유 머티리얼은 메시와 분리해 한 번씩만 정리한다.
+  //   남겨두면 같은 이름의 머티리얼이 실행할 때마다 쌓인다(누수).
+  const scene = ctx.sceneRef.current;
+  if (!scene) return;
+  for (const mat of scene.materials.slice()) {
+    if (REDESIGN_MAT_NAMES.includes(mat.name)) mat.dispose();
+  }
 }
 
 /**
