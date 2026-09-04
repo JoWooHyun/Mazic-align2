@@ -455,40 +455,46 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
               onChange={(e) => setUniformScale(e.target.checked)}
               className="accent-primary-600"
             />
-            통합 조정
+            비율 유지
           </label>
         }
       >
-        {uniformScale ? (
-          <Row
-            axis="XYZ"
-            value={local.sx}
-            min={0.1}
-            max={5}
-            step={0.01}
-            // 배율은 step 0.01 보다 한 자리 여유를 둔다 (B-14).
-            decimals={3}
-            onBegin={beginDrag}
-            onChange={(v) => applyScaleField(0, v)}
-            onEnd={endDrag}
-          />
-        ) : (
-          DISPLAY_AXIS_LABELS.map((label, i) => (
-            <Row
-              key={label}
-              axis={label}
-              // 표시 축 배율 (B-13) — 부호 없이 축만 교환한 값.
-              value={displayScale[i]}
-              min={0.1}
-              max={5}
-              step={0.01}
-              decimals={3}
-              onBegin={beginDrag}
-              onChange={(v) => applyScaleField(i as 0 | 1 | 2, v)}
-              onEnd={endDrag}
-            />
-          ))
-        )}
+        {/*
+          ★ 스케일은 **숫자 입력만** 둔다 (슬라이더 없음).
+            리드 지시: "xyz 뭉쳐서 하나의 슬라이더로 조절하게 하는건 안좋다.
+            수치로만 입력하게 하고 슬라이더 빼."
+            이유: 배율은 0.01 단위의 정밀한 값을 넣는 일이 대부분인데 슬라이더는
+            그 정밀도를 못 준다. 또 "통합 조정" 이 켜져 있어도 축이 3개로 보여야
+            지금 어떤 값인지 읽을 수 있다(하나로 합치면 축별 값이 안 보인다).
+            → 항상 X/Y/Z 세 칸을 보여주고, "비율 유지" 가 켜져 있으면 한 칸을
+              고쳤을 때 나머지가 **같은 값으로 따라간다**.
+        */}
+        <div className="space-y-1.5">
+          {DISPLAY_AXIS_LABELS.map((label, i) => (
+            <div key={label} className="flex items-center space-x-2">
+              <span className="w-4 text-xs font-bold text-gray-600">
+                {label}
+              </span>
+              <NumberInput
+                // 표시 축 배율 (B-13) — 부호 없이 축만 교환한 값.
+                value={displayScale[i]}
+                min={0.01}
+                max={100}
+                step={0.01}
+                decimals={3}
+                onBegin={beginDrag}
+                onChange={(v) => applyScaleField(i as 0 | 1 | 2, v)}
+                onEnd={endDrag}
+                ariaLabel={`${label} 배율`}
+                className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+              />
+              <span className="w-4 text-xs text-gray-400">×</span>
+            </div>
+          ))}
+        </div>
+        <p className="mt-1.5 text-[11px] text-gray-400">
+          1 = 원본 크기 · 0.5 = 절반 · 2 = 두 배
+        </p>
       </Section>
     </div>
   );
