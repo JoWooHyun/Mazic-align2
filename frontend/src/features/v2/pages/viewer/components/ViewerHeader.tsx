@@ -1,5 +1,5 @@
 // 뷰어 상단 헤더 — 프로젝트명/코드, 프로파일 선택, 슬라이스 미리보기 토글,
-// STL/GitHub 내보내기·불러오기, STL 열기 버튼.
+// STL 내보내기·열기 버튼.
 // (ViewerV2Page 에서 마크업 그대로 추출 — className·구조 불변.)
 
 import PrinterProfileSelect from "../../../components/PrinterProfileSelect";
@@ -8,30 +8,24 @@ import type { ProjectV2 } from "../../../types/project";
 interface ViewerHeaderProps {
   project: ProjectV2 | null | undefined;
   loading: boolean;
-  projectId: string | undefined;
   filesLength: number;
   slicePreviewOn: boolean;
   onBackToProjects: () => void;
   onEditProfile: () => void;
   onToggleSlicePreview: () => void;
   onExportStl: () => void;
-  onGithubSave: () => void;
-  onGithubLoad: () => void;
   onOpenStl: () => void;
 }
 
 export default function ViewerHeader({
   project,
   loading,
-  projectId,
   filesLength,
   slicePreviewOn,
   onBackToProjects,
   onEditProfile,
   onToggleSlicePreview,
   onExportStl,
-  onGithubSave,
-  onGithubLoad,
   onOpenStl,
 }: ViewerHeaderProps) {
   return (
@@ -72,21 +66,6 @@ export default function ViewerHeader({
             className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             STL 내보내기
-          </button>
-          <button
-            onClick={onGithubSave}
-            disabled={!projectId}
-            className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            title="현재 프로젝트 전체 (STL + 서포트 + 변환) 를 GitHub 에 저장"
-          >
-            GitHub 저장
-          </button>
-          <button
-            onClick={onGithubLoad}
-            className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 transition-colors"
-            title="GitHub 에서 저장된 프로젝트 불러오기"
-          >
-            GitHub 불러오기
           </button>
           <button
             onClick={onOpenStl}
