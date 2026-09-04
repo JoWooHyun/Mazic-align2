@@ -21,6 +21,7 @@ import { readWorldTriangles } from "../../utils/dental/dental-support";
 import { detectSliceIslands } from "../../utils/dental/island-detection";
 import type { IslandStats } from "./babylon-scene-types";
 import type { SceneCtx } from "./scene-refs";
+import { disposeRedesignVisualization } from "./redesign-detect-actions";
 import { getActiveStl } from "./scene-actions";
 
 /**
@@ -96,6 +97,16 @@ export function disposeIslandVisualization(
  * (해당 STL 에 검출 결과가 없으면 아무 일도 하지 않는다.)
  */
 export function invalidateDentalResults(ctx: SceneCtx, stlId: string): void {
+  // ★ 재설계 검출 오버레이(파란 점)도 함께 정리한다.
+  //   이 점들은 **world 좌표 고정**이라 STL 을 회전/이동하면 허공에 그대로 남는다
+  //   (리드 실물: "검출 점생성하고 stl 회전시키면 점들이 그대로 남아있다").
+  //   마진 초록 튜브·아일랜드 마젠타가 같은 이유로 이미 여기서 정리되는데,
+  //   재설계 오버레이만 이 경로에 빠져 있었다.
+  //   ⚠️ marginRef/islandResultRef 와 달리 재설계 마커에는 stlId 가 없다.
+  //   활성 STL 한 개에 대해서만 그려지는 디버그 오버레이라 통째로 지운다.
+  const hadRedesign = ctx.redesignMarkersRef.current.length > 0;
+  if (hadRedesign) disposeRedesignVisualization(ctx);
+
   const hadMargin = ctx.marginRef.current?.stlId === stlId;
   const hadIsland = ctx.islandResultRef.current?.stlId === stlId;
   if (!hadMargin && !hadIsland) return;
