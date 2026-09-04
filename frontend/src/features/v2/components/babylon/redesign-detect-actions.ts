@@ -87,6 +87,44 @@ export function disposeRedesignVisualization(ctx: SceneCtx): void {
  *   호출 측에서 실제 리프트 값을 넘긴다.
  *   반환: 생성된 서포트 점 + 통계 (실패 시 reason).
  */
+/**
+ * 워커 검출(S-2)에 넘길 **입력 묶음**을 만든다. 씬 접근은 여기서 끝난다.
+ *
+ * 검출 자체는 순수 계산이라 워커로 보내고, 이 함수는 "씬에서 삼각형과 활성
+ * STL id 를 꺼내오는" Babylon 의존 부분만 담당한다(규칙 2 — 씬은 handle 경유).
+ *
+ * ⚠️ 반환된 `triangles` 는 **transferable 로 워커에 넘어가 여기서 못 쓰게 된다.**
+ */
+export function prepareRedesignDetectInput(
+  ctx: SceneCtx,
+): { ok: true; triangles: Float32Array; stlId: string } | { ok: false; reason: string } {
+  const scene = ctx.sceneRef.current;
+  if (!scene) return { ok: false, reason: "씬이 준비되지 않았습니다." };
+  const active = getActiveStl(ctx);
+  if (!active) return { ok: false, reason: "대상 STL이 없습니다." };
+  active.mesh.computeWorldMatrix(true);
+  const triangles = extractWorldTriangles(active.mesh);
+  if (triangles.length === 0) {
+    return { ok: false, reason: "분석할 삼각형이 없습니다." };
+  }
+  return { ok: true, triangles, stlId: active.id };
+}
+
+/**
+ * 워커가 돌려준 검출 결과를 **시각화만** 한다 (S-2).
+ *   동기 경로의 renderDetectionOverlay + renderSupportPointSpheres 와 같은 일을
+ *   하되, 층 폴리곤(LayerGraphResult)은 워커에서 안 넘어오므로 **점만** 그린다.
+ *   점이 곧 검출 결과의 요약이라 실사용상 충분하고, 층 폴리곤까지 직렬화하면
+ *   전송량이 커진다(대형 모델에서 수만 개 폴리곤).
+ */
+export function renderRedesignPoints(
+  ctx: SceneCtx,
+  points: SupportPointV2[],
+): void {
+  disposeRedesignVisualization(ctx);
+  renderSupportPointSpheres(ctx, points);
+}
+
 export function runRedesignDetect(
   ctx: SceneCtx,
   projectId: string,
