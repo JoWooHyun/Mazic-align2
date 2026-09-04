@@ -16,6 +16,7 @@ import {
   disposeIslandVisualization,
   disposeMarginVisualization,
 } from "../dental-actions";
+import { disposeRedesignVisualization } from "../redesign-detect-actions";
 
 export function useFileMeshSync(
   ctx: SceneCtx,
@@ -63,6 +64,10 @@ export function useFileMeshSync(
         disposeMarginVisualization(ctx, id);
         // 이 STL 의 아일랜드 마젠타 overlay + 결과 ref 도 정리 (2-3b 패턴).
         disposeIslandVisualization(ctx, id);
+        // 재설계 검출 오버레이(파란 점)도 정리 — world 좌표 고정이라
+        //   모델을 지워도 허공에 그대로 남는다(리드 실물 발견).
+        //   stlId 구분이 없는 활성 STL 전용 디버그 오버레이라 통째로 지운다.
+        disposeRedesignVisualization(ctx);
         removedMesh?.dispose();
         ctx.meshMapRef.current.delete(id);
         // 이 STL 의 painted 목록도 비었음을 부모에 통지 (세션 상태 sync).
