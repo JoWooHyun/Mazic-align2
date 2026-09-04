@@ -14,7 +14,6 @@ import BabylonScene, {
 } from "../components/BabylonScene";
 import { type EditMode } from "../components/EditModeControls";
 import SliceSidePanel from "../components/SliceSidePanel";
-import GithubProjectDialog from "../components/GithubProjectDialog";
 import PrinterProfileDialog from "../components/PrinterProfileDialog";
 import ViewerContextMenu from "../components/ViewerContextMenu";
 import StlFileList from "../components/StlFileList";
@@ -68,7 +67,6 @@ const ViewerV2Page: React.FC = () => {
   supportsRef.current = supports;
 
   // ----- 핵심 공유 상태 (페이지 유지) -----
-  const [ghDialog, setGhDialog] = useState<"save" | "load" | null>(null);
   const [panelTab, setPanelTab] = useState<"transform" | "support" | "dental">(
     "transform",
   );
@@ -356,7 +354,7 @@ const ViewerV2Page: React.FC = () => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       // 다이얼로그가 열려 있으면 Esc는 다이얼로그가 처리 — 뷰어 선택 해제와 동시 발동 방지 (P5)
-      if (profileDialogOpen || ghDialog !== null) return;
+      if (profileDialogOpen) return;
       const t = e.target;
       if (
         t instanceof HTMLElement &&
@@ -394,7 +392,6 @@ const ViewerV2Page: React.FC = () => {
     selectedSupportId,
     selectedIds,
     profileDialogOpen,
-    ghDialog,
     setPendingBridge,
     setSelectedCp,
     setSelectedSupportId,
@@ -446,7 +443,6 @@ const ViewerV2Page: React.FC = () => {
       <ViewerHeader
         project={project}
         loading={loading}
-        projectId={projectId}
         filesLength={files.length}
         slicePreviewOn={slicePreview.on}
         onBackToProjects={() => navigate("/v2/projects")}
@@ -461,8 +457,6 @@ const ViewerV2Page: React.FC = () => {
           })
         }
         onExportStl={handleExportStl}
-        onGithubSave={() => setGhDialog("save")}
-        onGithubLoad={() => setGhDialog("load")}
         onOpenStl={() => fileInputRef.current?.click()}
       />
 
@@ -739,18 +733,6 @@ const ViewerV2Page: React.FC = () => {
       <PrinterProfileDialog
         open={profileDialogOpen}
         onClose={() => setProfileDialogOpen(false)}
-      />
-
-      <GithubProjectDialog
-        open={ghDialog !== null}
-        mode={ghDialog ?? "save"}
-        projectId={projectId}
-        projectName={project?.name}
-        onClose={() => setGhDialog(null)}
-        onLoaded={(newId) => {
-          setGhDialog(null);
-          navigate(`/v2/viewer/${newId}`);
-        }}
       />
 
       {/* 우클릭 컨텍스트 메뉴 (P5 · Select 모드 선택 대상: 삭제/복제/줌투핏) */}
