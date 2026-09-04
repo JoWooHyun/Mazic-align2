@@ -5,13 +5,19 @@ import type { BabylonSceneHandle } from "../babylon-scene-types";
 import type { SceneCtx } from "../scene-refs";
 import {
   disposeRedesignVisualization,
+  prepareRedesignDetectInput,
+  renderRedesignPoints,
   routeAndFinalizePoints,
   runRedesignDetect,
 } from "../redesign-detect-actions";
 
 type RedesignDetectHandle = Pick<
   BabylonSceneHandle,
-  "runRedesignDetect" | "clearRedesignDetect" | "routeAndFinalizeRedesignPoints"
+  | "runRedesignDetect"
+  | "clearRedesignDetect"
+  | "routeAndFinalizeRedesignPoints"
+  | "prepareRedesignDetectInput"
+  | "renderRedesignPoints"
 >;
 
 export function buildRedesignDetectHandle(ctx: SceneCtx): RedesignDetectHandle {
@@ -24,6 +30,13 @@ export function buildRedesignDetectHandle(ctx: SceneCtx): RedesignDetectHandle {
     },
     routeAndFinalizeRedesignPoints(points, params) {
       return routeAndFinalizePoints(ctx, points, params);
+    },
+    // S-2 워커 경로 — 씬 접근(삼각형 추출)과 시각화만 담당.
+    prepareRedesignDetectInput() {
+      return prepareRedesignDetectInput(ctx);
+    },
+    renderRedesignPoints(points) {
+      renderRedesignPoints(ctx, points);
     },
   };
 }

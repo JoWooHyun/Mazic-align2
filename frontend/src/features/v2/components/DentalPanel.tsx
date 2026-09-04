@@ -106,6 +106,10 @@ interface DentalPanelProps {
   onRunRedesignDetect?: () => void;
   /** 재설계 검출·점생성 진행 중 여부 (버튼 비활성/문구). */
   redesignBusy?: boolean;
+  /** 검출 진행률 (S-2). null 이면 진행 중 아님. */
+  redesignProgress?: { done: number; total: number; phase: string } | null;
+  /** 진행 중인 검출 취소 (S-2). */
+  onCancelRedesign?: () => void;
   /** 재설계 검출·점생성 시각화 지우기. */
   onClearRedesignDetect?: () => void;
   /** 재설계 검출·점생성 결과 상태 (없으면 미실행). ok=false → 실패 사유. */
@@ -138,6 +142,8 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
   autoSupportResult = null,
   onRunRedesignDetect,
   redesignBusy = false,
+  redesignProgress = null,
+  onCancelRedesign,
   onClearRedesignDetect,
   redesignStatus = null,
   onGenerateRedesignSupports,
@@ -368,6 +374,45 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
             >
               {redesignBusy ? "생성 중…" : "서포트 생성(재설계)"}
             </button>
+          )}
+
+          {/* 진행률 + 취소 (S-2) — 대형 모델은 수십 초 걸린다. */}
+          {redesignProgress && (
+            <div className="mt-2">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] text-gray-600">
+                  {redesignProgress.phase || "처리 중"}
+                  {redesignProgress.total > 1 &&
+                    ` ${Math.min(
+                      100,
+                      Math.round(
+                        (redesignProgress.done / redesignProgress.total) * 100,
+                      ),
+                    )}%`}
+                </span>
+                {onCancelRedesign && (
+                  <button
+                    onClick={onCancelRedesign}
+                    className="px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 rounded transition-colors"
+                  >
+                    취소
+                  </button>
+                )}
+              </div>
+              <div className="h-1.5 w-full bg-gray-200 rounded overflow-hidden">
+                <div
+                  className="h-full bg-primary-600 transition-all"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      redesignProgress.total > 0
+                        ? (redesignProgress.done / redesignProgress.total) * 100
+                        : 0,
+                    )}%`,
+                  }}
+                />
+              </div>
+            </div>
           )}
 
           {redesignStatus && (

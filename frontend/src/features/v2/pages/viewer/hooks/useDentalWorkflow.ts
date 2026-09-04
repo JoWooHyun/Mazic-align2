@@ -3,6 +3,14 @@
 
 import { useCallback, useState } from "react";
 import { useDetectParamsStore } from "../../../support/hooks/useDetectParamsStore";
+import {
+  detectService,
+  DetectCancelError,
+} from "../../../utils/detect-service";
+import {
+  DEFAULT_LAYER_GRAPH_PARAMS,
+  DEFAULT_PLACE_POINTS_PARAMS,
+} from "../../../support";
 
 import { useUndoStore } from "../../../hooks/useUndoStore";
 import * as supportRepo from "../../../data/supports.repo";
@@ -63,6 +71,12 @@ export function useDentalWorkflow({
   // P-2: 검출·점생성 파라미터(사용자 조절). 스토어에서 직접 읽어
   //   프롭 스레딩 없이 최신값을 쓴다.
   const detectParams = useDetectParamsStore((st) => st.params);
+  /** 검출 진행률 (S-2). null 이면 진행 중 아님. */
+  const [redesignProgress, setRedesignProgress] = useState<{
+    done: number;
+    total: number;
+    phase: string;
+  } | null>(null);
   // dental-brush 색칠 두께 (mm). 씬 SHIFT+휠 로도 갱신됨.
   const [brushThicknessMm, setBrushThicknessMm] = useState(3);
   // stlId → painted face index 목록 (세션 상태). margin/island 조각 입력.
@@ -182,38 +196,83 @@ export function useDentalWorkflow({
   //   기둥은 세우지 않는다(2단계). 점을 IndexedDB 에 저장하지 않는다 — 저장하면
   //   useSupportMeshSync 가 기둥을 세워 "점만" 원칙(설계 8장 2단계)에 어긋난다.
   //   liftMm 는 진단서 "리프트로 뜬 모델 바닥 전체 아일랜드 오검출" 방지(수용 C).
-  const handleRunRedesignDetect = useCallback(() => {
-    if (redesignBusy) return;
-    runWithBusy(setRedesignBusy, () => {
-      const res = sceneHandleRef.current?.runRedesignDetect(projectId ?? "", {
-        layerHeightMm,
-        liftMm: supportParams.liftMm,
-        // ★ C-3: 뷰어 빨간 하이라이트와 같은 각도로 검출한다.
-        overhangAngleDeg: supportParams.overhangAngleDeg,
-        // P-2: 사용자가 검출 패널에서 조절한 값.
-        detect: detectParams,
-      });
-      if (!res) return;
-      if (res.ok) {
-        setRedesignStatus({
-          ok: true,
-          message:
-            `아일랜드 ${res.stats.islandCount} · 오버행 ${res.stats.overhangCount} · ` +
-            `서포트 점 ${res.stats.pointCount}개 (층 ${res.stats.nLayers})`,
-        });
-      } else {
-        setRedesignStatus({ ok: false, message: res.reason });
-      }
-    });
+  /**
+   * 워커로 검출·점생성을 돌린다 (S-2). 진행률 보고 + 취소 가능.
+   *
+   * 종전에는 메인스레드 동기라 대형 모델(하악 아치 등)에서 **화면이 통째로
+   * 멈췄다** — 층 500개 × 층당 수만 샘플점이면 수백억 회 연산이다.
+   * 씬 접근(삼각형 추출)과 시각화만 handle 을 거치고, 계산은 워커가 한다.
+   */
+  const runDetectInWorker = useCallback(async () => {
+    const prep = sceneHandleRef.current?.prepareRedesignDetectInput();
+    if (!prep) return null;
+    if (!prep.ok) {
+      setRedesignStatus({ ok: false, message: prep.reason });
+      return null;
+    }
+    setRedesignProgress({ done: 0, total: 1, phase: "준비" });
+    try {
+      return await detectService.run(
+        {
+          triangles: prep.triangles,
+          stlId: prep.stlId,
+          projectId: projectId ?? "",
+          layerGraph: {
+            ...DEFAULT_LAYER_GRAPH_PARAMS,
+            ...detectParams,
+            layerHeightMm: detectParams.layerHeightMm ?? layerHeightMm,
+            liftMm: supportParams.liftMm,
+            // ★ C-3: 뷰어 빨간 하이라이트와 같은 각도로 검출한다.
+            overhangAngleDeg: supportParams.overhangAngleDeg,
+          },
+          placePoints: { ...DEFAULT_PLACE_POINTS_PARAMS, ...detectParams },
+        },
+        (done, total, phase) => setRedesignProgress({ done, total, phase }),
+      );
+    } finally {
+      setRedesignProgress(null);
+    }
   }, [
-    redesignBusy,
     projectId,
     layerHeightMm,
     supportParams.liftMm,
-    supportParams.overhangAngleDeg, // C-3: 검출각이 바뀌면 재검출해야 한다.
-    detectParams, // P-2
+    supportParams.overhangAngleDeg,
+    detectParams,
     sceneHandleRef,
   ]);
+
+  /** 진행 중인 검출을 취소한다 (S-2). */
+  const handleCancelRedesign = useCallback(() => {
+    detectService.cancel();
+  }, []);
+
+  const handleRunRedesignDetect = useCallback(async () => {
+    if (redesignBusy) return;
+    setRedesignBusy(true);
+    setRedesignStatus(null);
+    try {
+      const res = await runDetectInWorker();
+      if (!res) return;
+      sceneHandleRef.current?.renderRedesignPoints(res.points);
+      setRedesignStatus({
+        ok: true,
+        message:
+          `아일랜드 ${res.stats.islandCount} · 오버행 ${res.stats.overhangCount} · ` +
+          `서포트 점 ${res.stats.pointCount}개 (층 ${res.stats.nLayers})`,
+      });
+    } catch (e) {
+      if (e instanceof DetectCancelError) {
+        setRedesignStatus({ ok: false, message: "검출을 취소했습니다." });
+      } else {
+        setRedesignStatus({
+          ok: false,
+          message: `검출 실패: ${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    } finally {
+      setRedesignBusy(false);
+    }
+  }, [redesignBusy, runDetectInWorker, sceneHandleRef]);
 
   const handleClearRedesignDetect = useCallback(() => {
     sceneHandleRef.current?.clearRedesignDetect();
@@ -231,19 +290,9 @@ export function useDentalWorkflow({
     setRedesignBusy(true);
     setRedesignStatus(null);
     try {
-      const res = sceneHandleRef.current?.runRedesignDetect(projectId, {
-        layerHeightMm,
-        liftMm: supportParams.liftMm,
-        // ★ C-3: 뷰어 빨간 하이라이트와 같은 각도로 검출한다.
-        overhangAngleDeg: supportParams.overhangAngleDeg,
-        // P-2: 사용자가 검출 패널에서 조절한 값.
-        detect: detectParams,
-      });
+      // S-2: 검출은 워커에서. 화면이 안 멈추고 진행률·취소가 된다.
+      const res = await runDetectInWorker();
       if (!res) return;
-      if (!res.ok) {
-        setRedesignStatus({ ok: false, message: res.reason });
-        return;
-      }
       // 표면 스냅 + 3단 폴백 라우팅 + world→stl-local 변환 (S-4b-2c).
       const routed = sceneHandleRef.current?.routeAndFinalizeRedesignPoints(
         res.points,
@@ -313,11 +362,12 @@ export function useDentalWorkflow({
   }, [
     projectId,
     redesignBusy,
-    layerHeightMm,
     // S-4b-2c: 라우팅이 반경(trunkDiameterMm)·화살촉 높이까지 보므로 params
     //   객체 전체를 의존성으로 둔다(종전엔 liftMm 만 썼다).
     supportParams,
-    detectParams, // P-2
+    // S-2: 검출 입력(층높이·검출 파라미터)은 이 콜백이 안에 품고 있으므로
+    //   개별 값 대신 콜백 자체를 의존성으로 둔다 — 규칙 7(deps 누락) 준수.
+    runDetectInWorker,
     addSupports,
     refreshSupports,
     sceneHandleRef,
@@ -399,6 +449,9 @@ export function useDentalWorkflow({
     islandSupportResult,
     redesignBusy,
     redesignStatus,
+    // S-2 워커 경로 — 진행률 표시 + 취소.
+    redesignProgress,
+    handleCancelRedesign,
     // 핸들러
     handlePaintedFacesChange,
     handleClearDentalPaint,

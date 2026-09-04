@@ -446,7 +446,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
       </Section>
 
       <Section
-        title="Scale (×)"
+        title="Scale (%)"
         right={
           <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
             <input
@@ -475,25 +475,32 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
               <span className="w-4 text-xs font-bold text-gray-600">
                 {label}
               </span>
+              {/*
+                ★ 표시는 **백분율**, 저장은 배율 (리드 지시: "1,2,3 이면
+                  100% 200% 300% 인데 이게 더 직관적으로 알아보기 쉽잖아").
+                  내부 TransformV2.sx/sy/sz 는 **배율 그대로** 둔다 —
+                  저장 의미를 바꾸면 서포트 좌표·슬라이스가 전부 흔들린다
+                  (B-12/B-13 이 "표시만 환산" 을 지킨 것과 같은 원칙).
+              */}
               <NumberInput
-                // 표시 축 배율 (B-13) — 부호 없이 축만 교환한 값.
-                value={displayScale[i]}
-                min={0.01}
-                max={100}
-                step={0.01}
-                decimals={3}
+                // 표시 축 배율 (B-13) — 부호 없이 축만 교환한 값 × 100.
+                value={displayScale[i] * 100}
+                min={1}
+                max={10000}
+                step={1}
+                decimals={1}
                 onBegin={beginDrag}
-                onChange={(v) => applyScaleField(i as 0 | 1 | 2, v)}
+                onChange={(v) => applyScaleField(i as 0 | 1 | 2, v / 100)}
                 onEnd={endDrag}
-                ariaLabel={`${label} 배율`}
+                ariaLabel={`${label} 배율(%)`}
                 className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
               />
-              <span className="w-4 text-xs text-gray-400">×</span>
+              <span className="w-4 text-xs text-gray-400">%</span>
             </div>
           ))}
         </div>
         <p className="mt-1.5 text-[11px] text-gray-400">
-          1 = 원본 크기 · 0.5 = 절반 · 2 = 두 배
+          100% = 원본 크기 · 50% = 절반 · 200% = 두 배
         </p>
       </Section>
     </div>

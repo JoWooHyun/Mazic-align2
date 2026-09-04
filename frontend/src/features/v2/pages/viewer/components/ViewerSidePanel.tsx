@@ -62,6 +62,8 @@ interface ViewerSidePanelProps {
   // 서포트 재설계(S-4) 검출·점생성 (검증용 병행 경로).
   onRunRedesignDetect: () => void;
   redesignBusy: boolean;
+  redesignProgress: { done: number; total: number; phase: string } | null;
+  onCancelRedesign: () => void;
   onClearRedesignDetect: () => void;
   redesignStatus: { ok: boolean; message: string } | null;
   // 서포트 생성(재설계) — 점 생성 + 표면 스냅 + 저장 → 뷰어에 기둥 (S-4b-1).
@@ -99,6 +101,8 @@ export default function ViewerSidePanel({
   autoSupportResult,
   onRunRedesignDetect,
   redesignBusy,
+  redesignProgress,
+  onCancelRedesign,
   onClearRedesignDetect,
   redesignStatus,
   onGenerateRedesignSupports,
@@ -166,6 +170,8 @@ export default function ViewerSidePanel({
             autoSupportResult={autoSupportResult}
             onRunRedesignDetect={onRunRedesignDetect}
             redesignBusy={redesignBusy}
+            redesignProgress={redesignProgress}
+            onCancelRedesign={onCancelRedesign}
             onClearRedesignDetect={onClearRedesignDetect}
             redesignStatus={redesignStatus}
             onGenerateRedesignSupports={onGenerateRedesignSupports}

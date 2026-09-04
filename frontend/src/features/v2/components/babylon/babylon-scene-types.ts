@@ -408,6 +408,15 @@ export interface BabylonSceneHandle {
   ) =>
     | { ok: true; points: SupportPointV2[]; stats: RedesignDetectStats }
     | { ok: false; reason: string };
+  /**
+   * 서포트 검출(S-2 워커 경로)에 넘길 입력을 만든다 — world 삼각형 + 활성 STL id.
+   *   ⚠️ triangles 는 transferable 로 워커에 넘어가므로 호출 뒤 재사용 금지.
+   */
+  prepareRedesignDetectInput: () =>
+    | { ok: true; triangles: Float32Array; stlId: string }
+    | { ok: false; reason: string };
+  /** 워커가 돌려준 서포트 점을 뷰어에 표시한다 (S-2). */
+  renderRedesignPoints: (points: SupportPointV2[]) => void;
   /** 서포트 재설계(S-4) 오버레이(아일랜드/오버행 색 + 점 구)를 모두 지운다. */
   clearRedesignDetect: () => void;
   /**

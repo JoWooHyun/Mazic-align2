@@ -728,6 +728,8 @@ const ViewerV2Page: React.FC = () => {
           autoSupportResult={dental.islandSupportResult}
           onRunRedesignDetect={dental.handleRunRedesignDetect}
           redesignBusy={dental.redesignBusy}
+          redesignProgress={dental.redesignProgress}
+          onCancelRedesign={dental.handleCancelRedesign}
           onClearRedesignDetect={dental.handleClearRedesignDetect}
           redesignStatus={dental.redesignStatus}
           onGenerateRedesignSupports={dental.handleGenerateRedesignSupports}

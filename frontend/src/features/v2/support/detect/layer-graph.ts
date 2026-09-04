@@ -47,6 +47,12 @@ export function detectLayerGraph(
   triangles: Float32Array,
   stlId: string,
   params: LayerGraphParams,
+  /**
+   * 진행률 콜백 (S-2). 층 루프마다 호출된다. 미지정이면 종전과 완전히 동일.
+   *   워커에서 postMessage 로 진행률을 올려보내는 용도다. 순수성을 지키려고
+   *   콜백으로 받는다 — 이 모듈은 Babylon·워커 API 를 몰라야 한다.
+   */
+  onProgress?: (done: number, total: number, phase: string) => void,
 ): LayerGraphResult {
   const lh = Math.max(params.layerHeightMm, 1e-3);
   const islandFloorY = params.liftMm + params.plateGapMm;
@@ -85,6 +91,8 @@ export function detectLayerGraph(
     layerY[i] = y;
     const segs = sliceTrianglesAtY(triangles, y);
     layerPolys[i] = chainSegments(segs);
+    // 64층마다 보고 — 매 층 postMessage 는 그 자체가 비용이다.
+    if (onProgress && (i & 63) === 0) onProgress(i, nLayers * 2, "층 슬라이스");
   }
 
   const islands: IslandRegion[] = [];
@@ -94,6 +102,9 @@ export function detectLayerGraph(
 
   // ── 아래→위 훑기 ─────────────────────────────────────────────────────
   for (let i = 0; i < nLayers; i++) {
+    if (onProgress && (i & 63) === 0) {
+      onProgress(nLayers + i, nLayers * 2, "겹침 판정");
+    }
     const polys = layerPolys[i];
     if (polys.length === 0) continue;
     const belowPolys = i > 0 ? layerPolys[i - 1] : [];
