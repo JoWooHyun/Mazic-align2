@@ -61,6 +61,26 @@ export const DEFAULT_RETRACT_SPEED_MM_S = 3.0;
 export const DEFAULT_LIGHT_OFF_DELAY_SEC = 1.0;
 
 /**
+ * 프로파일 입력 한계 (다이얼로그 검증용). 하한은 저장 시 sanitize 와 별개로
+ * 저장 자체를 막는 기준 — 특히 리프트 속도 0 은 CTB 에 0 mm/min 이 기록돼
+ * 실기에서 플레이트가 안 올라가는 파일이 된다 (검수_20260915 V-9).
+ *
+ * 주의: 여기는 "입력 범위"만 정의한다. 노광·리프트의 **기본값**은 위의
+ * DEFAULT_* 하나만이 단일 소스이며, 이 상수는 기본값을 대체하지 않는다.
+ */
+export const PROFILE_FIELD_LIMITS = {
+  lcdPx: { min: 1, max: 20000 }, // 현존 최대 ~15K, 여유 포함
+  pixelPitchUm: { min: 1, max: 200 },
+  buildVolumeMm: { min: 1, max: 1000 },
+  exposureSec: { min: 0.1, max: 600 },
+  bottomExposureSec: { min: 0, max: 600 },
+  layerCount: { min: 0, max: 50 }, // 바닥·전환 공통
+  liftDistanceMm: { min: 0, max: 50 },
+  speedMmS: { min: 0.1, max: 50 }, // 리프트·하강 공통 — 0 금지
+  lightOffDelaySec: { min: 0, max: 60 },
+} as const;
+
+/**
  * 빌드플레이트 정렬(좌표 매핑)에 쓰는 헬퍼.
  *   plateWidthMm  → Babylon X
  *   plateDepthMm  → Babylon Z
