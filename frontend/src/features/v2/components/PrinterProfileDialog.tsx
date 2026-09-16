@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   BUILT_IN_PROFILES,
@@ -15,6 +15,7 @@ import {
   DEFAULT_LIFT_SPEED_MM_S,
   DEFAULT_RETRACT_SPEED_MM_S,
   DEFAULT_LIGHT_OFF_DELAY_SEC,
+  PROFILE_FIELD_LIMITS,
   type PrinterProfileV2,
 } from "../types/printer";
 // 로컬 NumberInput 래퍼와 이름이 겹치지 않게 별칭으로 받는다 (B-14).
@@ -61,6 +62,155 @@ const EMPTY_DRAFT: Draft = {
   lightOffDelaySec: DEFAULT_LIGHT_OFF_DELAY_SEC,
 };
 
+const L = PROFILE_FIELD_LIMITS;
+
+/** 한계 위반이면 한국어 사유 한 줄, 아니면 null. */
+function checkRange(
+  value: number,
+  limit: { min: number; max: number },
+  message: string,
+): string | null {
+  if (!Number.isFinite(value) || value < limit.min || value > limit.max) {
+    return message;
+  }
+  return null;
+}
+
+/**
+ * draft 검증 (P0-3, 검수_20260915 V-8/V-9).
+ *
+ * errors 는 저장을 막는다 — 워커 OOM(초대형 해상도)이나 실기에서 못 쓰는
+ * 파일(리프트 속도 0)을 만들기 전에 차단하는 것이 목적이다.
+ * warnings 는 저장은 허용하되 리드가 값을 다시 볼 수 있게 노란색으로 알린다.
+ * 문구는 비개발자가 그대로 읽는 안내이므로 한국어 + 단위를 반드시 적는다.
+ *
+ * NumberInput 은 Enter/blur 커밋이라 draft 는 자주 바뀌지 않는다 —
+ * 매 렌더 계산으로 충분하고 debounce 는 두지 않는다.
+ */
+function validateDraft(d: Draft): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const push = (m: string | null) => {
+    if (m) errors.push(m);
+  };
+
+  if (!d.name.trim()) {
+    errors.push("프로파일 이름을 입력하세요.");
+  }
+
+  push(
+    checkRange(
+      d.lcdWidthPx,
+      L.lcdPx,
+      `LCD 가로 해상도는 ${L.lcdPx.min}~${L.lcdPx.max} px 사이여야 합니다.`,
+    ),
+  );
+  push(
+    checkRange(
+      d.lcdHeightPx,
+      L.lcdPx,
+      `LCD 세로 해상도는 ${L.lcdPx.min}~${L.lcdPx.max} px 사이여야 합니다.`,
+    ),
+  );
+  push(
+    checkRange(
+      d.pixelPitchUm,
+      L.pixelPitchUm,
+      `픽셀 피치는 ${L.pixelPitchUm.min}~${L.pixelPitchUm.max} µm 사이여야 합니다.`,
+    ),
+  );
+
+  const bv = L.buildVolumeMm;
+  push(
+    checkRange(
+      d.bvX,
+      bv,
+      `빌드 볼륨 X(가로)는 ${bv.min}~${bv.max} mm 사이여야 합니다.`,
+    ),
+  );
+  push(
+    checkRange(
+      d.bvY,
+      bv,
+      `빌드 볼륨 Y(세로)는 ${bv.min}~${bv.max} mm 사이여야 합니다.`,
+    ),
+  );
+  push(
+    checkRange(
+      d.bvZ,
+      bv,
+      `빌드 볼륨 Z(높이)는 ${bv.min}~${bv.max} mm 사이여야 합니다.`,
+    ),
+  );
+
+  push(
+    checkRange(
+      d.exposureSec,
+      L.exposureSec,
+      `일반 노광 시간은 ${L.exposureSec.min}~${L.exposureSec.max} 초 사이여야 합니다.`,
+    ),
+  );
+  push(
+    checkRange(
+      d.bottomExposureSec,
+      L.bottomExposureSec,
+      `바닥 노광 시간은 ${L.bottomExposureSec.min}~${L.bottomExposureSec.max} 초 사이여야 합니다.`,
+    ),
+  );
+  push(
+    checkRange(
+      d.bottomLayerCount,
+      L.layerCount,
+      `바닥 레이어 수는 ${L.layerCount.min}~${L.layerCount.max} 장 사이여야 합니다.`,
+    ),
+  );
+  push(
+    checkRange(
+      d.transitionLayerCount,
+      L.layerCount,
+      `전환 레이어 수는 ${L.layerCount.min}~${L.layerCount.max} 장 사이여야 합니다.`,
+    ),
+  );
+
+  push(
+    checkRange(
+      d.liftDistanceMm,
+      L.liftDistanceMm,
+      `리프트 거리는 ${L.liftDistanceMm.min}~${L.liftDistanceMm.max} mm 사이여야 합니다.`,
+    ),
+  );
+  push(
+    checkRange(
+      d.liftSpeedMmS,
+      L.speedMmS,
+      `리프트 속도는 ${L.speedMmS.min}~${L.speedMmS.max} mm/s 사이여야 합니다 (0이면 실제 프린터에서 플레이트가 올라가지 않습니다).`,
+    ),
+  );
+  push(
+    checkRange(
+      d.retractSpeedMmS,
+      L.speedMmS,
+      `하강 속도는 ${L.speedMmS.min}~${L.speedMmS.max} mm/s 사이여야 합니다 (0이면 실제 프린터에서 플레이트가 내려오지 않습니다).`,
+    ),
+  );
+  push(
+    checkRange(
+      d.lightOffDelaySec,
+      L.lightOffDelaySec,
+      `노광 후 대기 시간은 ${L.lightOffDelaySec.min}~${L.lightOffDelaySec.max} 초 사이여야 합니다.`,
+    ),
+  );
+
+  if (d.bottomExposureSec < d.exposureSec) {
+    warnings.push(
+      "바닥 노광이 일반 노광보다 짧습니다 — 전환 레이어 보간이 역방향이 됩니다. 의도한 값인지 확인하세요.",
+    );
+  }
+
+  return { errors, warnings };
+}
+
 const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
   const all = useAllProfiles();
   const addProfile = usePrinterProfileStore((s) => s.addProfile);
@@ -72,6 +222,18 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [isNew, setIsNew] = useState(false);
+  /** 저장하지 않은 변경 여부 (P0-2, 검수_20260915 V-4). */
+  const [dirty, setDirty] = useState(false);
+
+  /**
+   * draft 를 바꾸는 유일한 통로. setDraft 를 직접 부르면 dirty 표시가 빠지므로
+   * (입력칸이 15곳이라 한 군데만 놓쳐도 경고가 안 뜬다) 이름 input 을 포함한
+   * 모든 onChange 는 반드시 이 헬퍼를 경유한다.
+   */
+  function updateDraft(patch: Partial<Draft>) {
+    setDraft((d) => ({ ...d, ...patch }));
+    setDirty(true);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -104,20 +266,67 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
       retractSpeedMmS: p.retractSpeedMmS ?? DEFAULT_RETRACT_SPEED_MM_S,
       lightOffDelaySec: p.lightOffDelaySec ?? DEFAULT_LIGHT_OFF_DELAY_SEC,
     });
+    // 저장된 값으로 다시 채웠으므로 미저장 변경 없음.
+    // (all 은 이제 참조가 안정적이라 이 effect 는 실제 스토어·선택 변경 때만
+    //  돈다 — P0-1. 저장 직후 한 번 도는 것은 방금 저장한 값으로의 복원이라 무해.)
+    setDirty(false);
   }, [selectedId, isNew, all]);
+
+  // 닫힐 때 편집 상태를 버린다 — 재열림 시 "버린 편집값·dirty 잔존" 방지 (검수 FAIL-1).
+  // confirm 에서 "취소"를 누른 경우는 open 이 유지되므로 이 effect 가 돌지 않아
+  // 편집 내용이 그대로 보존된다.
+  useEffect(() => {
+    if (open) return;
+    setIsNew(false);
+    setDirty(false);
+    // selectedId 를 비우면 재열림 때 open 효과가 currentId 로 재선택하고,
+    // 복원 effect 가 스토어 값으로 draft 를 다시 채우면서 dirty 도 풀린다.
+    setSelectedId(null);
+  }, [open]);
+
+  const readOnly = !isNew && selectedId !== null && isBuiltIn(selectedId);
+
+  const { errors, warnings } = validateDraft(draft);
+  const canSave = !readOnly && errors.length === 0;
+
+  /**
+   * 편집 중이면 확인을 받는다. 계속 진행해도 되면 true.
+   * readOnly 는 입력이 전부 disabled 라 dirty 가 생길 수 없지만 방어용으로 둔다.
+   */
+  function confirmDiscard(): boolean {
+    if (!dirty || readOnly) return true;
+    return window.confirm(
+      "저장하지 않은 변경이 있습니다. 저장하지 않고 닫을까요?",
+    );
+  }
+
+  /** 닫기 5경로(배경·Esc·헤더 ×·하단 닫기)가 공유하는 종료 지점. */
+  function requestClose() {
+    if (!confirmDiscard()) return;
+    onClose();
+  }
+
+  /**
+   * Esc 핸들러가 보는 최신 닫기 로직. onKey 는 effect 생성 시점의 클로저를
+   * 붙잡으므로 dirty 를 직접 읽으면 스테일 값이 된다(규칙 7). ref 로 최신
+   * 함수를 갈아끼워 리스너 재등록 없이 항상 현재 dirty 를 보게 한다.
+   */
+  const requestCloseRef = useRef<() => void>(() => onClose());
+
+  useEffect(() => {
+    requestCloseRef.current = requestClose;
+  }); // deps 없음 — 매 커밋 갱신 (렌더 중 ref 쓰기는 React 규칙 위반, 검수 FAIL-2)
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") requestCloseRef.current();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
-
-  const readOnly = !isNew && selectedId !== null && isBuiltIn(selectedId);
 
   function toProfile(d: Draft): Omit<PrinterProfileV2, "id"> {
     return {
@@ -142,6 +351,9 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
   }
 
   function handleSave() {
+    // 버튼이 disabled 라 여기까지 오지 않지만, 검증 실패 값이 저장되는 일이
+    // 없도록 한 번 더 막는다.
+    if (!canSave) return;
     const payload = toProfile(draft);
     if (isNew) {
       const id = addProfile(payload);
@@ -151,6 +363,7 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
     } else if (selectedId) {
       updateProfile(selectedId, payload);
     }
+    setDirty(false);
   }
 
   function handleDelete() {
@@ -162,15 +375,26 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
   }
 
   function handleAddNew() {
+    // 편집 중이던 내용이 조용히 사라지는 경로이므로 닫기와 동일하게 확인받는다.
+    if (!confirmDiscard()) return;
     setIsNew(true);
     setSelectedId(null);
     setDraft(EMPTY_DRAFT);
+    setDirty(false);
+  }
+
+  /** 리스트에서 다른 프로파일 선택 — 이것도 편집 내용이 날아가는 경로. */
+  function handleSelect(id: string) {
+    if (id === selectedId && !isNew) return;
+    if (!confirmDiscard()) return; // 취소 시 현재 선택 유지
+    setSelectedId(id);
+    setIsNew(false);
   }
 
   return (
     <div
       className="fixed inset-0 z-40 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center p-6"
-      onClick={onClose}
+      onClick={requestClose}
     >
       <div
         className="bg-white rounded-lg shadow-2xl w-[920px] max-w-full max-h-[88vh] flex flex-col"
@@ -186,7 +410,7 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
             </p>
           </div>
           <button
-            onClick={onClose}
+            onClick={requestClose}
             className="text-gray-400 hover:text-gray-700 text-2xl leading-none"
           >
             ×
@@ -199,10 +423,7 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
             {all.map((p) => (
               <div
                 key={p.id}
-                onClick={() => {
-                  setSelectedId(p.id);
-                  setIsNew(false);
-                }}
+                onClick={() => handleSelect(p.id)}
                 className={`px-3 py-2 rounded cursor-pointer ${
                   selectedId === p.id && !isNew
                     ? "bg-primary-50 border border-primary-300"
@@ -237,9 +458,7 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
                 type="text"
                 value={draft.name}
                 disabled={readOnly}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, name: e.target.value }))
-                }
+                onChange={(e) => updateDraft({ name: e.target.value })}
                 className="w-full px-2 py-1 text-sm border border-gray-300 rounded disabled:bg-gray-50"
               />
             </FormRow>
@@ -248,13 +467,13 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
               <div className="flex items-center gap-2">
                 <NumberInput
                   value={draft.lcdWidthPx}
-                  onChange={(v) => setDraft((d) => ({ ...d, lcdWidthPx: v }))}
+                  onChange={(v) => updateDraft({ lcdWidthPx: v })}
                   disabled={readOnly}
                 />
                 <span>×</span>
                 <NumberInput
                   value={draft.lcdHeightPx}
-                  onChange={(v) => setDraft((d) => ({ ...d, lcdHeightPx: v }))}
+                  onChange={(v) => updateDraft({ lcdHeightPx: v })}
                   disabled={readOnly}
                 />
               </div>
@@ -263,7 +482,7 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
             <FormRow label="픽셀 피치" unit="µm">
               <NumberInput
                 value={draft.pixelPitchUm}
-                onChange={(v) => setDraft((d) => ({ ...d, pixelPitchUm: v }))}
+                onChange={(v) => updateDraft({ pixelPitchUm: v })}
                 disabled={readOnly}
                 step={0.1}
               />
@@ -273,21 +492,21 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
               <div className="flex items-center gap-2">
                 <NumberInput
                   value={draft.bvX}
-                  onChange={(v) => setDraft((d) => ({ ...d, bvX: v }))}
+                  onChange={(v) => updateDraft({ bvX: v })}
                   disabled={readOnly}
                   step={0.01}
                 />
                 <span>×</span>
                 <NumberInput
                   value={draft.bvY}
-                  onChange={(v) => setDraft((d) => ({ ...d, bvY: v }))}
+                  onChange={(v) => updateDraft({ bvY: v })}
                   disabled={readOnly}
                   step={0.01}
                 />
                 <span>×</span>
                 <NumberInput
                   value={draft.bvZ}
-                  onChange={(v) => setDraft((d) => ({ ...d, bvZ: v }))}
+                  onChange={(v) => updateDraft({ bvZ: v })}
                   disabled={readOnly}
                   step={0.01}
                 />
@@ -301,16 +520,14 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
               <div className="flex items-center gap-2">
                 <NumberInput
                   value={draft.exposureSec}
-                  onChange={(v) => setDraft((d) => ({ ...d, exposureSec: v }))}
+                  onChange={(v) => updateDraft({ exposureSec: v })}
                   disabled={readOnly}
                   step={0.1}
                 />
                 <span className="text-xs text-gray-500">일반</span>
                 <NumberInput
                   value={draft.bottomExposureSec}
-                  onChange={(v) =>
-                    setDraft((d) => ({ ...d, bottomExposureSec: v }))
-                  }
+                  onChange={(v) => updateDraft({ bottomExposureSec: v })}
                   disabled={readOnly}
                   step={0.1}
                 />
@@ -322,17 +539,13 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
               <div className="flex items-center gap-2">
                 <NumberInput
                   value={draft.bottomLayerCount}
-                  onChange={(v) =>
-                    setDraft((d) => ({ ...d, bottomLayerCount: v }))
-                  }
+                  onChange={(v) => updateDraft({ bottomLayerCount: v })}
                   disabled={readOnly}
                 />
                 <span className="text-xs text-gray-500">바닥</span>
                 <NumberInput
                   value={draft.transitionLayerCount}
-                  onChange={(v) =>
-                    setDraft((d) => ({ ...d, transitionLayerCount: v }))
-                  }
+                  onChange={(v) => updateDraft({ transitionLayerCount: v })}
                   disabled={readOnly}
                 />
                 <span className="text-xs text-gray-500">전환</span>
@@ -346,9 +559,7 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
             <FormRow label="리프트 거리 (mm)">
               <NumberInput
                 value={draft.liftDistanceMm}
-                onChange={(v) =>
-                  setDraft((d) => ({ ...d, liftDistanceMm: v }))
-                }
+                onChange={(v) => updateDraft({ liftDistanceMm: v })}
                 disabled={readOnly}
                 step={0.1}
               />
@@ -358,18 +569,14 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
               <div className="flex items-center gap-2">
                 <NumberInput
                   value={draft.liftSpeedMmS}
-                  onChange={(v) =>
-                    setDraft((d) => ({ ...d, liftSpeedMmS: v }))
-                  }
+                  onChange={(v) => updateDraft({ liftSpeedMmS: v })}
                   disabled={readOnly}
                   step={0.1}
                 />
                 <span className="text-xs text-gray-500">리프트</span>
                 <NumberInput
                   value={draft.retractSpeedMmS}
-                  onChange={(v) =>
-                    setDraft((d) => ({ ...d, retractSpeedMmS: v }))
-                  }
+                  onChange={(v) => updateDraft({ retractSpeedMmS: v })}
                   disabled={readOnly}
                   step={0.1}
                 />
@@ -380,9 +587,7 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
             <FormRow label="노광 후 대기 (초)">
               <NumberInput
                 value={draft.lightOffDelaySec}
-                onChange={(v) =>
-                  setDraft((d) => ({ ...d, lightOffDelaySec: v }))
-                }
+                onChange={(v) => updateDraft({ lightOffDelaySec: v })}
                 disabled={readOnly}
                 step={0.1}
               />
@@ -391,11 +596,48 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
               </p>
             </FormRow>
 
-            <div className="mt-auto flex items-center gap-2">
+            {/* 검증 결과 — 빨강(errors)은 저장 차단, 노랑(warnings)은 확인용 (P0-3). */}
+            {!readOnly && errors.length > 0 && (
+              <ul className="mt-auto list-disc pl-5 space-y-0.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                {errors.map((msg) => (
+                  <li key={msg}>{msg}</li>
+                ))}
+              </ul>
+            )}
+            {!readOnly && warnings.length > 0 && (
+              <ul
+                className={`list-disc pl-5 space-y-0.5 text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded px-3 py-2 ${
+                  errors.length === 0 ? "mt-auto" : ""
+                }`}
+              >
+                {warnings.map((msg) => (
+                  <li key={msg}>{msg}</li>
+                ))}
+              </ul>
+            )}
+
+            {/* 목록이 하나도 안 뜨는 경우(readOnly 포함)에만 버튼 행이 하단에 붙는다. */}
+            <div
+              className={`flex items-center gap-2 ${
+                !readOnly && (errors.length > 0 || warnings.length > 0)
+                  ? ""
+                  : "mt-auto"
+              }`}
+            >
               {!readOnly && (
                 <button
                   onClick={handleSave}
-                  className="px-3 py-1.5 text-sm bg-primary-600 text-white rounded hover:bg-primary-700"
+                  disabled={!canSave}
+                  className={`px-3 py-1.5 text-sm rounded ${
+                    canSave
+                      ? "bg-primary-600 text-white hover:bg-primary-700"
+                      : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                  }`}
+                  title={
+                    canSave
+                      ? undefined
+                      : "입력값 오류를 먼저 수정해야 저장할 수 있습니다."
+                  }
                 >
                   {isNew ? "추가" : "저장"}
                 </button>
@@ -414,7 +656,7 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
                 </span>
               )}
               <button
-                onClick={onClose}
+                onClick={requestClose}
                 className="ml-auto px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded"
               >
                 닫기
@@ -462,6 +704,7 @@ function FormRow({
  * min/max 는 **일부러 걸지 않는다**. 이 다이얼로그는 저장 시점에
  * `sanitizeDraft`(Math.max/round)로 한 번에 정리하는 방식이고, 편집 중에 범위를
  * 걸면 종전에 없던 제약이 생긴다. 표시 반올림 자릿수만 step 에 맞춰 정한다.
+ * 범위 검증은 `validateDraft` 가 담당한다 (P0-3).
  */
 function NumberInput({
   value,

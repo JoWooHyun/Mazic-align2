@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
@@ -90,10 +91,18 @@ export const usePrinterProfileStore = create<PrinterProfileState>()(
   ),
 );
 
-/** 빌트인 + 사용자 프로파일 합산. */
+/**
+ * 빌트인 + 사용자 프로파일 합산.
+ *
+ * useMemo 필수 — 예전처럼 매 렌더 새 배열을 만들면, 이 배열을 useEffect dep 으로
+ * 쓰는 쪽(PrinterProfileDialog 의 draft 복원 effect)이 스토어와 무관한 부모
+ * 리렌더마다 재실행돼 편집 중이던 입력이 저장된 값으로 되돌아간다
+ * (검수_20260915 V-2/V-3 — "매 렌더 새 배열 → effect dep 폭주" B-계열 반복 사고).
+ * userProfiles 가 그대로면 반환 배열의 참조도 그대로여야 한다.
+ */
 export function useAllProfiles(): PrinterProfileV2[] {
   const userProfiles = usePrinterProfileStore((s) => s.userProfiles);
-  return [...BUILT_IN_PROFILES, ...userProfiles];
+  return useMemo(() => [...BUILT_IN_PROFILES, ...userProfiles], [userProfiles]);
 }
 
 export function useCurrentProfile(): PrinterProfileV2 {
