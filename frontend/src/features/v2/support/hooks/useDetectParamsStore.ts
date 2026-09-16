@@ -26,12 +26,22 @@ import type { PlacePointsParams } from "../detect/place-points";
  * 검출각은 **뷰어의 빨간 오버행 하이라이트와 같은 값이어야 한다**(판정서 C-3).
  * 그 단일 출처는 `useSupportParamsStore.overhangAngleDeg` 이므로, 여기서는
  * 검출각을 **다루지 않는다** — 중복 소유는 두 값이 어긋나는 원래 버그로 되돌아간다.
+ *
+ * ## `layerHeightMm` 의 소유권 (B-31 과의 관계)
+ * 층높이의 단일 출처는 **슬라이스 패널**(`slicePreview.layerHeightMm`) 이다.
+ * 여기에 기본값을 두면 이 키가 **항상 정의돼 있어** 호출부의
+ * `detectParams.layerHeightMm ?? layerHeightMm` 폴백이 사문이 되고, 검출이
+ * 슬라이스 설정과 단절된 채 기본값(0.05mm)으로 굳는다 — B-31 에서 실제로
+ * 겪은 조용한 회귀다. 그래서 타입에서 아예 **제외**해 tsc 가 우발적
+ * 재도입(`setParam("layerHeightMm", …)`)을 막게 한다.
  */
-export type DetectParams = Omit<LayerGraphParams, "liftMm" | "overhangAngleDeg"> &
+export type DetectParams = Omit<
+  LayerGraphParams,
+  "liftMm" | "overhangAngleDeg" | "layerHeightMm"
+> &
   PlacePointsParams;
 
 const DEFAULT_DETECT_PARAMS: DetectParams = {
-  layerHeightMm: DEFAULT_LAYER_GRAPH_PARAMS.layerHeightMm,
   plateGapMm: DEFAULT_LAYER_GRAPH_PARAMS.plateGapMm,
   overlapSampleMm: DEFAULT_LAYER_GRAPH_PARAMS.overlapSampleMm,
   ...DEFAULT_PLACE_POINTS_PARAMS,
