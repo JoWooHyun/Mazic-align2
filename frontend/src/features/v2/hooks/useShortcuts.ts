@@ -83,7 +83,10 @@ function resolveAction(e: KeyboardEvent): {
   action: ShortcutAction;
   requiresMeta: boolean;
 } | null {
-  if (e.key === "Delete" || e.key === "Backspace") {
+  // 삭제는 Delete 키만 — Backspace 는 아무 기능 없음 (리드 지시 2026-09-16).
+  //   Backspace 는 습관적으로 눌리기 쉬워(브라우저 뒤로가기 습관 등) 모델이
+  //   의도치 않게 삭제되는 사고 경로였다. STL 삭제 undo 미지원(P-5)이라 특히 위험.
+  if (e.key === "Delete") {
     return { action: "delete", requiresMeta: false };
   }
   const key = e.key.toLowerCase();
