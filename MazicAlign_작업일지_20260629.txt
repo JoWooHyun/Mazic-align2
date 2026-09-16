@@ -324,7 +324,7 @@
     - 개발 기준: integrate/v2-mainline + docs/통합로드맵.md
     - 릴리스: 태그 + GitHub Release 양쪽 (최신 v0.13.2-remove-github)
     - 품질 기준선: tsc 12건 / lint 34건 (전부 기존 이슈, 신규 0 유지)
-      검증 스크립트 8종 상시 PASS
+      검증 스크립트 16종 상시 PASS (종전 "8종"은 오기 — 2026-09-15 정정)
 
   ── 완료된 기능 ──
     [O] 3D STL 뷰어 (Babylon.js, ArcRotateCamera)
@@ -395,7 +395,8 @@
 
 
   ── 성능·품질 (언제든) ──
-   12. S-2 서포트 검출·라우팅 워커화 + 취소 (현재 전 과정 메인스레드 동기)
+   12. (완료 2026-09-04) S-2 검출·점생성 워커화 - v0.13.0 으로 출하.
+       잔여 = 라우팅·조립(서포트 생성) 단계는 아직 메인스레드
    13. CX-2 extractWorldTriangles 캐싱 (호출마다 전체 재할당)
    14. CX-1 Coverage/Supplement 패스 (S-4c/4d 이후)
    15. 기존 tsc 12건 / lint 34건 정리
@@ -417,7 +418,7 @@
              js-clipper(G-code), 자체 삼각형 인덱스(균일격자+3D-DDA)
   출력     : PNG-ZIP / CTB(검증 중) / FDM G-code / STL
   Backend  : Express + SQLite - **동결**(실행 불요, 신규 의존 금지)
-  기타     : JSZip, 헤드리스 검증 스크립트 8종(npx tsx scripts/verify-*.mjs)
+  기타     : JSZip, 헤드리스 검증 스크립트 16종(npx tsx scripts/verify-*.mjs)
 
 
 ================================================================================

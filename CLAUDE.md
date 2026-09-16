@@ -63,8 +63,8 @@ cd frontend && npm run build      # vite build
 
 ## 알려진 이슈 (수정 대상 아님 — 별도 정리에서만)
 
-- tsc 13건: babylon/hooks/setup-gizmos(undoLift — 구 BabylonScene), pages/viewer/hooks(Cps 튜플 — 구 ViewerV2Page), auto-generate, project-archive, zip-store (2026-07-20 리팩토링으로 위치만 이동, 내용 동일)
-- lint 40건: exhaustive-deps 14, no-explicit-any 10, prefer-const 7 등 (2026-07-08 첫 집계)
+- tsc 12건: useBridgeControlPoints 5(Cps 튜플 — 구 ViewerV2Page), zip-store 4, useTransformCommit·auto-generate·project-archive 각 1 (2026-09-15 재집계. setup-gizmos undoLift 건은 R-1로 해소 — PR #59)
+- lint 34건: exhaustive-deps·no-explicit-any 등 (2026-09-15 재집계 — 24 errors, 10 warnings)
 - 이 때문에 작업을 중단하지 말 것. 단 **새 코드에서 추가 금지.**
 
 ## Git / PR

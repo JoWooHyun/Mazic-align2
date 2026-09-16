@@ -33,3 +33,6 @@ node_modules
 .env
 .env.local
 .env.production
+
+# 로컬 테스트용 STL 샘플 (정본은 ji/STL-samples 브랜치)
+stl모음/
