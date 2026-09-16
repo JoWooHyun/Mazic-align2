@@ -94,7 +94,12 @@ export function useAlignFloorHover(
       //   해당 STL 이 삭제될 때 노란 조각이 허공에 떠 남는다.
       //   useDentalBrush 의 오버레이 데칼도 "STL mesh 의 child" 를 전제로 정리된다
       //   (useFileMeshSync 주석) — 같은 규약을 따른다.
-      decal.parent = pick.pickedMesh;
+      //   ⚠️ `.parent =` 직접 대입 금지 (B-32): 데칼 정점은 이미 **월드 좌표로
+      //   구워져** 있어서, 원시 대입은 부모의 이동·회전을 그 위에 또 얹는다
+      //   (이동·회전된 모델일수록 노란 표시가 옆으로 밀려남 — 리드 실물 발견).
+      //   `setParent()` 는 월드 위치를 보존하도록 로컬 변환을 역산해 준다 —
+      //   useDentalBrush(:274)와 동일한 방식.
+      decal.setParent(pick.pickedMesh);
     };
 
     const observer = scene.onPointerObservable.add(onMove);
