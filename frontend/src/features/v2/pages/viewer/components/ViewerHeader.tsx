@@ -1,9 +1,12 @@
 // 뷰어 상단 헤더 — 프로젝트명/코드, 프로파일 선택, 슬라이스 미리보기 토글,
-// STL 내보내기·열기 버튼.
+// 예제 모델 불러오기, STL 내보내기·열기 버튼.
 // (ViewerV2Page 에서 마크업 그대로 추출 — className·구조 불변.)
+
+import { useEffect, useRef, useState } from "react";
 
 import PrinterProfileSelect from "../../../components/PrinterProfileSelect";
 import type { ProjectV2 } from "../../../types/project";
+import { SAMPLE_MODELS, type SampleModelDef } from "../../../utils/sample-models";
 
 interface ViewerHeaderProps {
   project: ProjectV2 | null | undefined;
@@ -15,6 +18,7 @@ interface ViewerHeaderProps {
   onToggleSlicePreview: () => void;
   onExportStl: () => void;
   onOpenStl: () => void;
+  onLoadSample: (id: SampleModelDef["id"]) => void;
 }
 
 export default function ViewerHeader({
@@ -27,7 +31,32 @@ export default function ViewerHeader({
   onToggleSlicePreview,
   onExportStl,
   onOpenStl,
+  onLoadSample,
 }: ViewerHeaderProps) {
+  // 예제 드롭다운 열림 여부 — 이 컴포넌트 안에서만 쓰는 로컬 상태.
+  const [sampleOpen, setSampleOpen] = useState(false);
+  // 바깥 클릭 판정을 위해 버튼+메뉴를 감싸는 래퍼 참조.
+  const sampleRef = useRef<HTMLDivElement>(null);
+
+  // 바깥 클릭 / Esc 로 드롭다운 닫기. 열려 있을 때만 리스너를 붙이고
+  // 언마운트·닫힘 시 반드시 해제한다.
+  useEffect(() => {
+    if (!sampleOpen) return;
+    const handlePointerDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (target && !sampleRef.current?.contains(target)) setSampleOpen(false);
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSampleOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [sampleOpen]);
+
   return (
     <header className="bg-white border-b">
       <div className="px-6 py-3 flex items-center justify-between">
@@ -67,6 +96,32 @@ export default function ViewerHeader({
           >
             STL 내보내기
           </button>
+          {/* 예제 모델 드롭다운 — 파일 없이 코드로 생성해 바로 불러온다. */}
+          <div className="relative" ref={sampleRef}>
+            <button
+              onClick={() => setSampleOpen((v) => !v)}
+              className="px-3 py-1 text-sm text-primary-700 border border-primary-600 rounded hover:bg-primary-50 transition-colors"
+              title="치수 확인·시험 출력용 기본 도형을 불러옵니다"
+            >
+              예제 ▾
+            </button>
+            {sampleOpen && (
+              <div className="absolute right-0 mt-1 z-20 w-56 bg-white border rounded shadow-lg py-1">
+                {SAMPLE_MODELS.map((def) => (
+                  <button
+                    key={def.id}
+                    onClick={() => {
+                      setSampleOpen(false);
+                      onLoadSample(def.id);
+                    }}
+                    className="w-full px-3 py-1.5 text-sm text-left text-gray-700 hover:bg-primary-50 transition-colors"
+                  >
+                    {def.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <button
             onClick={onOpenStl}
             className="px-3 py-1 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 transition-colors"

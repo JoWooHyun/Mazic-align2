@@ -1,7 +1,9 @@
-// 네이티브 STL 파일 열기 + 뷰어 영역 드래그앤드롭 가져오기.
+// 네이티브 STL 파일 열기 + 뷰어 영역 드래그앤드롭 가져오기 + 예제 모델 불러오기.
 // (ViewerV2Page 에서 추출 — 필터·알림·선택 동작 불변.)
 
 import { useCallback, useRef, useState } from "react";
+
+import type { SampleModelDef } from "../../../utils/sample-models";
 
 import type { AddStlFile } from "./types";
 
@@ -52,6 +54,23 @@ export function useStlDropImport({
         }
       }
       if (newIds.length > 0) setSelectedIds(new Set(newIds));
+    },
+    [addStlFile, setSelectedIds],
+  );
+
+  // 예제 모델(정육면체/구)을 코드로 생성해 같은 저장 경로로 넣는다.
+  //   addNativeFiles 와 동일하게 addStlFile → repo → IndexedDB 를 타므로,
+  //   불러온 뒤에는 일반 STL 과 완전히 같게 동작한다 (이동/회전/슬라이스/내보내기).
+  const addSampleModel = useCallback(
+    async (def: SampleModelDef) => {
+      try {
+        const created = await addStlFile(def.fileName, def.build());
+        setSelectedIds(new Set([created.id]));
+      } catch (err) {
+        // IndexedDB 저장 실패 등 — 네이티브 열기와 같은 방식으로 알린다.
+        const msg = err instanceof Error ? err.message : String(err);
+        window.alert(`예제를 불러오지 못했습니다: ${def.label} — ${msg}`);
+      }
     },
     [addStlFile, setSelectedIds],
   );
@@ -107,6 +126,7 @@ export function useStlDropImport({
   return {
     isDragOver,
     fileInputRef,
+    addSampleModel,
     handleNativeInputChange,
     handleDragOver,
     handleDragLeave,
