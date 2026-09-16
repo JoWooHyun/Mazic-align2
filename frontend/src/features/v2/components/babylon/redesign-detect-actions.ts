@@ -82,12 +82,6 @@ export function disposeRedesignVisualization(ctx: SceneCtx): void {
 }
 
 /**
- * 활성 STL 에서 재설계 검출(1단계)+점생성(2단계)을 실행하고 시각화한다.
- *   layerHeightMm 미지정 시 기본값(0.05mm). liftMm 는 진단 C 방지를 위해
- *   호출 측에서 실제 리프트 값을 넘긴다.
- *   반환: 생성된 서포트 점 + 통계 (실패 시 reason).
- */
-/**
  * 워커 검출(S-2)에 넘길 **입력 묶음**을 만든다. 씬 접근은 여기서 끝난다.
  *
  * 검출 자체는 순수 계산이라 워커로 보내고, 이 함수는 "씬에서 삼각형과 활성
@@ -160,7 +154,7 @@ export function runRedesignDetect(
   const detect = detectLayerGraph(triangles, active.id, {
     ...DEFAULT_LAYER_GRAPH_PARAMS,
     ...(opts.detect ?? {}), // P-2: 사용자 조절 값
-    layerHeightMm: opts.detect?.layerHeightMm ?? opts.layerHeightMm,
+    layerHeightMm: opts.layerHeightMm, // ★ B-31: 층높이는 호출 측(슬라이스 패널) 값만 — detect 덮어쓰기 대상 아님
     liftMm: opts.liftMm, // plateGap-lift 연동 (수용 C).
     ...(opts.overhangAngleDeg != null
       ? { overhangAngleDeg: opts.overhangAngleDeg }

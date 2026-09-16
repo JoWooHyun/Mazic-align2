@@ -220,7 +220,8 @@ export function useDentalWorkflow({
           layerGraph: {
             ...DEFAULT_LAYER_GRAPH_PARAMS,
             ...detectParams,
-            layerHeightMm: detectParams.layerHeightMm ?? layerHeightMm,
+            // ★ B-31: 층높이의 단일 출처는 슬라이스 패널 — 검출 스토어는 이 키를 갖지 않는다.
+            layerHeightMm,
             liftMm: supportParams.liftMm,
             // ★ C-3: 뷰어 빨간 하이라이트와 같은 각도로 검출한다.
             overhangAngleDeg: supportParams.overhangAngleDeg,
