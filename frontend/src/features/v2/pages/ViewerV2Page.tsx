@@ -19,6 +19,7 @@ import ViewerContextMenu from "../components/ViewerContextMenu";
 import StlFileList from "../components/StlFileList";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM } from "../types/transform";
+import { SAMPLE_MODELS } from "../utils/sample-models";
 
 import { useClipboardActions } from "./viewer/hooks/useClipboardActions";
 import { useViewerShortcuts } from "./viewer/hooks/useViewerShortcuts";
@@ -238,6 +239,7 @@ const ViewerV2Page: React.FC = () => {
   const {
     isDragOver,
     fileInputRef,
+    addSampleModel,
     handleNativeInputChange,
     handleDragOver,
     handleDragLeave,
@@ -458,6 +460,10 @@ const ViewerV2Page: React.FC = () => {
         }
         onExportStl={handleExportStl}
         onOpenStl={() => fileInputRef.current?.click()}
+        onLoadSample={(id) => {
+          const def = SAMPLE_MODELS.find((d) => d.id === id);
+          if (def) void addSampleModel(def);
+        }}
       />
 
       {/* 네이티브 파일 열기용 숨김 input — 버튼 클릭으로 트리거. */}
