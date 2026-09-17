@@ -14,7 +14,7 @@ import {
 } from "@babylonjs/core";
 import type { StandardMaterial } from "@babylonjs/core";
 import { readMeshTransform } from "../../../utils/transform";
-import { placePivotProxy } from "../scene-actions";
+import { placePivotProxy, syncGizmo } from "../scene-actions";
 // R-1: 종전에는 import 없이 스코프 밖 `undoLift` 를 참조해 Bridge 끝점 gizmo
 //   드래그 커밋에서 런타임 ReferenceError 가 날 수 있었다. 공용 유틸로 해소.
 import { undoLift } from "../../../utils/bridge-lift";
@@ -175,7 +175,7 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
       }
     }
   };
-  const onDragEnd = () => {
+  const commitDragEnd = () => {
     const started = ctx.gizmoDragStartRef.current;
     ctx.gizmoDragStartRef.current = null;
     if (!started) return;
@@ -255,6 +255,20 @@ export function setupGizmos(ctx: SceneCtx, utility: UtilityLayerRenderer): void 
     const end = readMeshTransform(mesh);
     // 무효화(감사 B1)는 페이지 측 handleCommitTransform 수렴점에서 처리.
     ctx.onGizmoCommitRef.current(started.id, started.t, end);
+  };
+  /**
+   * 드래그 종료 처리 + **잠금 정착**.
+   *
+   * 드래그 도중 슬라이스 미리보기가 켜지면(S2) `syncGizmo` 는 detach 를 미뤄
+   * 둔다 — `setParent(proxy)` ↔ `setParent(null)` 짝(§5 불변식 4)을 드래그
+   * 중간에 끊으면 메쉬가 프록시 아래 고아로 남기 때문. `commitDragEnd` 가
+   * 그 짝을 모두 닫고 커밋까지 끝낸 **뒤** 여기서 syncGizmo 를 한 번 더 불러
+   * 미뤄 둔 detach 를 실행한다. 잠금이 아닐 때는 호출하지 않는다 — 평소의
+   * 재attach 는 effect #5 가 담당하던 그대로 두어 동작을 바꾸지 않는다.
+   */
+  const onDragEnd = () => {
+    commitDragEnd();
+    if (ctx.sliceLockedRef.current) syncGizmo(ctx);
   };
   [positionGizmo, rotationGizmo, scaleGizmo].forEach((giz) => {
     giz.onDragStartObservable.add(onDragStart);

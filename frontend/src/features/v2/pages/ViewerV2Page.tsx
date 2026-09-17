@@ -460,6 +460,20 @@ const ViewerV2Page: React.FC = () => {
             //   setSceneTopY 의 state 반영을 기다릴 필요가 없다.
             const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
             setSceneTopY(top);
+            // 미리보기 진입 시 편집 모드를 select 로 강제한다.
+            //   support/dental-brush 를 켠 채로 두면 보이지 않는(clipPlane 으로
+            //   잘려 나간) 표면을 클릭해 서포트가 엉뚱한 곳에 생기거나 색칠이
+            //   된다 — picking ray 는 셰이더 discard 와 무관하게 원본 메쉬를
+            //   전부 맞히기 때문. select 하나로 수렴시키면 잠금 대상이 단일
+            //   경로가 된다.
+            //
+            //   ⚠️ 미리보기를 꺼도 **이전 모드로 되돌리지 않는다.** 사용자가
+            //   명시적으로 다시 고르게 둔다 — 예기치 않은 모드 복귀가 더
+            //   혼란스럽고, 그 사이 선택/서포트 상태가 바뀌었을 수 있다.
+            setEditMode("select");
+            // "면 클릭 대기" 상태로 들어가 있었다면 함께 해제 — 바닥면
+            //   붙이기도 클릭 한 번으로 모델을 회전시키는 변환이라 잠금 대상.
+            setAlignFloorMode(false);
             return {
               ...s,
               on: true,
@@ -560,6 +574,7 @@ const ViewerV2Page: React.FC = () => {
             editMode={editMode}
             gizmoMode={gizmoMode}
             alignFloorMode={alignFloorMode}
+            slicePreviewOn={slicePreview.on}
             bridgeMode={bridgeMode}
             pendingBridge={pendingBridge}
             selectedSupportId={selectedSupportId}

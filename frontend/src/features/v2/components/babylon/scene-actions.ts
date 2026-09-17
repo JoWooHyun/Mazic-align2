@@ -122,7 +122,10 @@ export function attachDragBehavior(
   });
 
   // 'support' 모드면 attach 보류 (mode effect 가 attach).
-  if (ctx.editModeRef.current === "select") {
+  //   슬라이스 미리보기 중(편집 잠금)에도 붙이지 않는다 — 미리보기를 켜 둔 채
+  //   새 STL 을 불러오는 경로가 여기라, 빠뜨리면 그 메쉬만 드래그가 살아 있다.
+  //   미리보기를 끄면 useEditModeSync 의 attach 분기가 다시 붙여 준다.
+  if (ctx.editModeRef.current === "select" && !ctx.sliceLockedRef.current) {
     mesh.addBehavior(drag);
   }
   ctx.dragBehaviorMapRef.current.set(fileId, drag);
@@ -154,6 +157,34 @@ export function syncGizmo(ctx: SceneCtx): void {
     pg.attachedMesh = null;
     pg.attachedNode = null;
   };
+
+  // 슬라이스 미리보기 중에는 기즈모를 붙이지 않는다 (편집 잠금).
+  //
+  // ⚠️ S2 — **기즈모 드래그가 진행 중이면 detach 를 미룬다.** setup-gizmos 의
+  //   onDragStart 는 `mesh.setParent(proxy)` 로 메쉬를 피벗 프록시에 매달고
+  //   (§5 불변식 4), 그 짝인 `setParent(null)` 은 onDragEnd 에서만 풀린다.
+  //
+  //   Babylon 소스 확인 결과 드래그 도중 attachedNode 를 null 로 밀면:
+  //     · `Gizmo.set attachedNode`(gizmo.js:66-71)는 슬롯만 바꾸고
+  //       `_attachedNodeChanged` 를 부를 뿐 releaseDrag/onDragEnd 를 부르지 않는다.
+  //     · 각 축 기즈모의 `_attachedNodeChanged`(axisDragGizmo.js 등)는
+  //       `dragBehavior.enabled = false` 만 세운다.
+  //     · disabled 된 behavior 는 **다음 포인터 이벤트가 올 때** 그것도
+  //       `_attachedToElement` 일 때만 releaseDrag 한다
+  //       (pointerDragBehavior.js:211-217).
+  //   즉 onDragEnd 가 아예 안 오거나, 와도 attach 가 이미 풀린 뒤라 순서가
+  //   뒤집힌다 → `setParent` 짝이 닫히지 않아 메쉬가 프록시 아래 **고아로 남는다**.
+  //
+  //   그래서 여기서는 아무것도 하지 않고 돌아간다. 드래그가 정상 종료되면
+  //   onDragEnd 가 setParent(null) 로 짝을 닫고 커밋한 **뒤** syncGizmo 를 다시
+  //   부르고(setup-gizmos), 그때 이 가드가 걸려 기즈모가 떨어진다.
+  if (ctx.sliceLockedRef.current) {
+    if (ctx.gizmoDragStartRef.current === null) {
+      detachMove();
+      detachRotScale();
+    }
+    return;
+  }
 
   if (ctx.editModeRef.current === "support") {
     const handleMesh = ctx.selectedBridgeSphereRef.current;
