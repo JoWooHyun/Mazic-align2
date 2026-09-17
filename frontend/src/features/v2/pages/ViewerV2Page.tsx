@@ -30,6 +30,9 @@ import { useSliceExport } from "./viewer/hooks/useSliceExport";
 import { layerCountFor } from "./viewer/utils/layer-count";
 import { useStlDropImport } from "./viewer/hooks/useStlDropImport";
 import ViewerHeader from "./viewer/components/ViewerHeader";
+import SliceModeHeader from "./viewer/components/SliceModeHeader";
+import SliceLayerRail from "./viewer/components/SliceLayerRail";
+import SliceSectionPane from "./viewer/components/SliceSectionPane";
 import ViewportOverlays from "./viewer/components/ViewportOverlays";
 import ViewportInfoPanels from "./viewer/components/ViewportInfoPanels";
 import ViewerSidePanel from "./viewer/components/ViewerSidePanel";
@@ -441,53 +444,101 @@ const ViewerV2Page: React.FC = () => {
     return sceneHandleRef.current?.getModelWorldPivot(selectedFileId) ?? null;
   };
 
+  /**
+   * 슬라이스 미리보기 **모드** 진입 (B-38 1단계).
+   *
+   * 라우트를 나누지 않고 같은 ViewerV2Page 안에서 화면 구성만 바꾼다 — 리드
+   * 확정("인터넷 새 탭 내는 건 아니지?"). BabylonScene 을 언마운트하면 dispose
+   * 로 STL 재로드 + 카메라 리셋이 나서 미리보기가 성립하지 않기 때문이다.
+   *
+   * ⚠️ 평범한 함수로 둔다 — 위쪽 early return(!projectId) 아래라 useCallback 을
+   *   쓰면 훅 호출 순서가 렌더마다 달라진다(rules-of-hooks). 호출 시점에 최신
+   *   ref/상태를 읽으므로 메모이제이션이 필요 없다.
+   */
+  const enterSliceMode = () => {
+    // 켤 때는 **최상층**부터 보여준다 (리드: "다른 슬라이서는 0층이 아니라
+    //   끝 레이어부터 보여준다"). 0층은 바닥 한 겹이라 켜자마자 거의
+    //   아무것도 안 보이는 상태로 시작했다.
+    //   getSceneTopY() 는 동기라 여기서 층수를 바로 구할 수 있다 —
+    //   setSceneTopY 의 state 반영을 기다릴 필요가 없다.
+    const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
+    setSceneTopY(top);
+    // 미리보기 진입 시 편집 모드를 select 로 강제한다.
+    //   support/dental-brush 를 켠 채로 두면 보이지 않는(clipPlane 으로
+    //   잘려 나간) 표면을 클릭해 서포트가 엉뚱한 곳에 생기거나 색칠이
+    //   된다 — picking ray 는 셰이더 discard 와 무관하게 원본 메쉬를
+    //   전부 맞히기 때문. select 하나로 수렴시키면 잠금 대상이 단일
+    //   경로가 된다.
+    //
+    //   ⚠️ 미리보기를 꺼도 **이전 모드로 되돌리지 않는다.** 사용자가
+    //   명시적으로 다시 고르게 둔다 — 예기치 않은 모드 복귀가 더
+    //   혼란스럽고, 그 사이 선택/서포트 상태가 바뀌었을 수 있다.
+    setEditMode("select");
+    // "면 클릭 대기" 상태로 들어가 있었다면 함께 해제 — 바닥면
+    //   붙이기도 클릭 한 번으로 모델을 회전시키는 변환이라 잠금 대상.
+    setAlignFloorMode(false);
+    setSlicePreview((s) => ({
+      ...s,
+      on: true,
+      layerIdx: layerCountFor(top, s.layerHeightMm) - 1,
+    }));
+  };
+
+  /**
+   * 모드 이탈 — `on` 만 내린다.
+   *
+   * layerIdx/layerHeightMm 은 유지한다: 다시 들어올 때 진입 로직이 layerIdx 를
+   * 최상층으로 덮고, 레이어 두께는 사용자가 고른 설정이라 초기화 대상이 아니다.
+   * 편집 화면 쪽 상태(선택·카메라·서포트)는 애초에 건드리지 않으므로 그대로
+   * 복귀한다.
+   */
+  const exitSliceMode = () => setSlicePreview((s) => ({ ...s, on: false }));
+
+  // 슬라이스 미리보기 모드 여부 — 기존 `slicePreview.on` 이 단일 출처.
+  //   별도 모드 state 를 두지 않는다(두 값이 어긋날 여지를 만들지 않기 위해).
+  const sliceMode = slicePreview.on;
+
+  // 층 슬라이더에 표시할 현재 층 — 범위 클램프한 값.
+  //   층높이를 키우면 총 층수가 줄어 저장된 layerIdx 가 범위를 벗어날 수 있다.
+  //   `sliceYNow` 도 훅 안에서 같은 클램프를 거치므로 표시와 실제 단면이 일치한다.
+  //   (SliceSidePanel 이 내부에서 쓰는 것과 같은 식 — 훅의 export 를 늘리지 않았다.)
+  const safeLayerIdx = Math.min(
+    slicePreview.layerIdx,
+    Math.max(0, layerCount - 1),
+  );
+
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
-      <ViewerHeader
-        project={project}
-        loading={loading}
-        filesLength={files.length}
-        slicePreviewOn={slicePreview.on}
-        onBackToProjects={() => navigate("/v2/projects")}
-        onEditProfile={() => setProfileDialogOpen(true)}
-        onToggleSlicePreview={() =>
-          setSlicePreview((s) => {
-            if (s.on) return { ...s, on: false };
-            // 켤 때는 **최상층**부터 보여준다 (리드: "다른 슬라이서는 0층이 아니라
-            //   끝 레이어부터 보여준다"). 0층은 바닥 한 겹이라 켜자마자 거의
-            //   아무것도 안 보이는 상태로 시작했다.
-            //   getSceneTopY() 는 동기라 여기서 층수를 바로 구할 수 있다 —
-            //   setSceneTopY 의 state 반영을 기다릴 필요가 없다.
-            const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
-            setSceneTopY(top);
-            // 미리보기 진입 시 편집 모드를 select 로 강제한다.
-            //   support/dental-brush 를 켠 채로 두면 보이지 않는(clipPlane 으로
-            //   잘려 나간) 표면을 클릭해 서포트가 엉뚱한 곳에 생기거나 색칠이
-            //   된다 — picking ray 는 셰이더 discard 와 무관하게 원본 메쉬를
-            //   전부 맞히기 때문. select 하나로 수렴시키면 잠금 대상이 단일
-            //   경로가 된다.
-            //
-            //   ⚠️ 미리보기를 꺼도 **이전 모드로 되돌리지 않는다.** 사용자가
-            //   명시적으로 다시 고르게 둔다 — 예기치 않은 모드 복귀가 더
-            //   혼란스럽고, 그 사이 선택/서포트 상태가 바뀌었을 수 있다.
-            setEditMode("select");
-            // "면 클릭 대기" 상태로 들어가 있었다면 함께 해제 — 바닥면
-            //   붙이기도 클릭 한 번으로 모델을 회전시키는 변환이라 잠금 대상.
-            setAlignFloorMode(false);
-            return {
-              ...s,
-              on: true,
-              layerIdx: layerCountFor(top, s.layerHeightMm) - 1,
-            };
-          })
-        }
-        onExportStl={handleExportStl}
-        onOpenStl={() => fileInputRef.current?.click()}
-        onLoadSample={(id) => {
-          const def = SAMPLE_MODELS.find((d) => d.id === id);
-          if (def) void addSampleModel(def);
-        }}
-      />
+      {/*
+        헤더만 모드에 따라 교체한다. 아래 뷰포트(<main>)는 **분기 밖**에 그대로
+        둬 BabylonScene 이 절대 언마운트되지 않게 한다.
+      */}
+      {sliceMode ? (
+        <SliceModeHeader
+          project={project}
+          loading={loading}
+          onBack={exitSliceMode}
+          // 내보내기 진행 중에는 모드를 못 빠져나가게 한다 — 기존
+          //   SliceSidePanel 의 닫기 버튼과 같은 가드.
+          backDisabled={batchExport.busy}
+        />
+      ) : (
+        <ViewerHeader
+          project={project}
+          loading={loading}
+          filesLength={files.length}
+          slicePreviewOn={slicePreview.on}
+          onBackToProjects={() => navigate("/v2/projects")}
+          onEditProfile={() => setProfileDialogOpen(true)}
+          onToggleSlicePreview={enterSliceMode}
+          onExportStl={handleExportStl}
+          onOpenStl={() => fileInputRef.current?.click()}
+          onLoadSample={(id) => {
+            const def = SAMPLE_MODELS.find((d) => d.id === id);
+            if (def) void addSampleModel(def);
+          }}
+        />
+      )}
 
       {/* 네이티브 파일 열기용 숨김 input — 버튼 클릭으로 트리거. */}
       <input
@@ -500,20 +551,36 @@ const ViewerV2Page: React.FC = () => {
       />
 
       <div className="flex-1 flex min-h-0">
-        <StlFileList
-          files={files}
-          selectedIds={selectedIds}
-          onPick={(id, opts) => handlePick(id, opts)}
-          onAdd={() => fileInputRef.current?.click()}
-          onRemove={handleRemove}
-          loading={filesLoading}
-        />
+        {/* STL 목록은 편집 화면 전용 — 미리보기 모드에서는 숨긴다. */}
+        {!sliceMode && (
+          <StlFileList
+            files={files}
+            selectedIds={selectedIds}
+            onPick={(id, opts) => handlePick(id, opts)}
+            onAdd={() => fileInputRef.current?.click()}
+            onRemove={handleRemove}
+            loading={filesLoading}
+          />
+        )}
 
+        {/*
+          ★ 수용 기준 5 — 이 <main> 과 그 안의 <BabylonScene> 은 **모드 분기
+            바깥**에 있다. 모드가 바뀌어도 React 는 같은 위치의 같은 타입
+            엘리먼트로 보아 재조정(reconcile)만 하므로 BabylonScene 은
+            언마운트/재마운트되지 않는다 — Engine·Scene·로드된 STL·카메라가
+            전부 그대로 유지된다. 바뀌는 건 className(레이아웃)과 형제
+            오버레이의 표시 여부뿐이다.
+        */}
         <main
-          className="flex-1 relative bg-gray-100"
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
+          // min-w-0 — 미리보기 모드에서 오른쪽에 층 레일·2D 단면이 붙으므로
+          //   flex 아이템이 콘텐츠 최소폭에 걸려 넘치지 않도록 한다.
+          className="flex-1 min-w-0 relative bg-gray-100"
+          // 드래그 임포트는 편집 행위 — 미리보기 모드에서는 핸들러 자체를
+          //   떼어 둔다. 오버레이만 숨기면 드롭 시 조용히 STL 이 추가돼
+          //   편집 잠금과 어긋난다.
+          onDragOver={sliceMode ? undefined : handleDragOver}
+          onDragLeave={sliceMode ? undefined : handleDragLeave}
+          onDrop={sliceMode ? undefined : handleDrop}
           onPointerDown={support.handleViewportPointerDown}
           onPointerUp={support.handleViewportPointerUp}
           onContextMenu={(e) => e.preventDefault()}
@@ -568,41 +635,51 @@ const ViewerV2Page: React.FC = () => {
             onDentalResultsInvalidated={dental.handleDentalResultsInvalidated}
           />
 
-          <ViewportOverlays
-            files={files}
-            selectedIds={selectedIds}
-            editMode={editMode}
-            gizmoMode={gizmoMode}
-            alignFloorMode={alignFloorMode}
-            slicePreviewOn={slicePreview.on}
-            bridgeMode={bridgeMode}
-            pendingBridge={pendingBridge}
-            selectedSupportId={selectedSupportId}
-            supports={supports}
-            onSetView={(p) => sceneHandleRef.current?.setView(p)}
-            onFit={() => sceneHandleRef.current?.fit()}
-            onGizmoModeChange={setGizmoMode}
-            onToggleAlignFloor={() => setAlignFloorMode((v) => !v)}
-            onEditModeChange={(m) => {
-              setEditMode(m);
-              setSelectedCp(null);
-              // support 전용 상태는 support 모드가 아닐 때 정리.
-              if (m !== "support") {
-                setSelectedSupportId(null);
-                setBridgeMode(false);
+          {/*
+            뷰포트 오버레이(편집 툴바·뷰 프리셋)는 미리보기 모드에서 숨긴다.
+            ⚠️ `sliceLockedRef` 편집 잠금(PR #91)은 **그대로 둔다** — 화면에서
+            편집 UI 가 사라져도 picking ray 는 clipPlane 과 무관하게 원본 메쉬를
+            맞히므로 잠금의 근본 이유가 유지된다. ViewportOverlays 안의
+            "미리보기 중 — 편집 잠금" 배지는 오버레이 자체가 안 보이므로 자연히
+            사라지지만, 코드는 남겨 둔다(2단계 정리 대상).
+          */}
+          {!sliceMode && (
+            <ViewportOverlays
+              files={files}
+              selectedIds={selectedIds}
+              editMode={editMode}
+              gizmoMode={gizmoMode}
+              alignFloorMode={alignFloorMode}
+              slicePreviewOn={slicePreview.on}
+              bridgeMode={bridgeMode}
+              pendingBridge={pendingBridge}
+              selectedSupportId={selectedSupportId}
+              supports={supports}
+              onSetView={(p) => sceneHandleRef.current?.setView(p)}
+              onFit={() => sceneHandleRef.current?.fit()}
+              onGizmoModeChange={setGizmoMode}
+              onToggleAlignFloor={() => setAlignFloorMode((v) => !v)}
+              onEditModeChange={(m) => {
+                setEditMode(m);
+                setSelectedCp(null);
+                // support 전용 상태는 support 모드가 아닐 때 정리.
+                if (m !== "support") {
+                  setSelectedSupportId(null);
+                  setBridgeMode(false);
+                  setPendingBridge(null);
+                }
+                // 모드 진입 시 우측 패널을 해당 탭으로 전환 (Dental·Support 일관, 감사 #4).
+                if (m === "dental-brush") setPanelTab("dental");
+                if (m === "support") setPanelTab("support");
+              }}
+              onToggleBridge={() => {
+                setBridgeMode((v) => !v);
                 setPendingBridge(null);
-              }
-              // 모드 진입 시 우측 패널을 해당 탭으로 전환 (Dental·Support 일관, 감사 #4).
-              if (m === "dental-brush") setPanelTab("dental");
-              if (m === "support") setPanelTab("support");
-            }}
-            onToggleBridge={() => {
-              setBridgeMode((v) => !v);
-              setPendingBridge(null);
-            }}
-            onResetBridgeCurve={() => void support.handleResetBridgeCurve()}
-            onDeleteSelected={handleDeleteSelectedSupport}
-          />
+              }}
+              onResetBridgeCurve={() => void support.handleResetBridgeCurve()}
+              onDeleteSelected={handleDeleteSelectedSupport}
+            />
+          )}
 
           {/*
             B-27 — STL 이 없을 때 뜨던 안내 오버레이 제거 (리드 지시:
@@ -612,7 +689,7 @@ const ViewerV2Page: React.FC = () => {
           */}
 
           {/* 재설계 서포트 무효화 안내 (B-1). 5초 후 자동 소멸. */}
-          {redesignInvalidNotice && (
+          {!sliceMode && redesignInvalidNotice && (
             <div className="absolute inset-x-0 bottom-4 flex justify-center pointer-events-none px-4">
               <div className="bg-amber-50/95 backdrop-blur border border-amber-300 rounded-md shadow px-4 py-2 text-sm text-amber-900 select-none">
                 {redesignInvalidNotice}
@@ -626,7 +703,14 @@ const ViewerV2Page: React.FC = () => {
             저절로 사라진다. 뷰포트에는 해당 모델을 감싸는 빨간 와이어박스가
             함께 표시된다(useBuildVolumeCheck).
           */}
-          {volumeIssues.length > 0 && (
+          {/*
+            미리보기 모드에서는 숨긴다 (지시: 알림 배너 숨김). 안전장치가
+            사라지는 것은 아니다 — 내보내기 경로는 useSliceExport 의
+            `confirmIfOutOfBounds`(P-1) 가 여전히 확인 다이얼로그로 막는다.
+            "플레이트 위로 올리기" 는 모델을 움직이는 **변환**이라 편집 잠금
+            중인 미리보기 모드에 있어서도 안 된다.
+          */}
+          {!sliceMode && volumeIssues.length > 0 && (
             <div className="absolute inset-x-0 top-4 flex justify-center px-4 pointer-events-none">
               <div className="bg-red-50/95 backdrop-blur border border-red-300 rounded-md shadow px-4 py-2 text-sm text-red-900 select-none max-w-xl pointer-events-auto">
                 <div className="font-medium">
@@ -664,7 +748,7 @@ const ViewerV2Page: React.FC = () => {
 
           {/* 드래그앤드롭 오버레이 — pointer-events-none 로 drop 이벤트가
               main 컨테이너에 그대로 도달하게 한다. */}
-          {isDragOver && (
+          {!sliceMode && isDragOver && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-primary-500/10 border-2 border-dashed border-primary-500 pointer-events-none">
               <div className="bg-white/95 backdrop-blur rounded-lg shadow-lg px-6 py-4 text-base font-medium text-primary-700">
                 여기에 STL 을 놓으세요
@@ -672,25 +756,51 @@ const ViewerV2Page: React.FC = () => {
             </div>
           )}
 
-          <ViewportInfoPanels
-            filesLength={files.length}
-            overhangAngleDeg={overhangAngleDeg}
-            editMode={editMode}
-            plateWidthMm={printerProfile.buildVolumeMm[0]}
-            plateDepthMm={printerProfile.buildVolumeMm[1]}
-            supportSummary={supportSummary}
-          />
+          {!sliceMode && (
+            <ViewportInfoPanels
+              filesLength={files.length}
+              overhangAngleDeg={overhangAngleDeg}
+              editMode={editMode}
+              plateWidthMm={printerProfile.buildVolumeMm[0]}
+              plateDepthMm={printerProfile.buildVolumeMm[1]}
+              supportSummary={supportSummary}
+            />
+          )}
         </main>
 
-        {slicePreview.on && (
-          <SliceSidePanel
-            onClose={() =>
-              setSlicePreview({
-                on: false,
-                layerIdx: 0,
-                layerHeightMm: 0.05,
-              })
+        {/*
+          미리보기 모드 가운데 세로 층 슬라이더 (위=최상층, 아래=0층).
+          기존 onLayerIdxChange 경로를 그대로 재사용한다.
+        */}
+        {sliceMode && (
+          <SliceLayerRail
+            layerIdx={safeLayerIdx}
+            layerCount={layerCount}
+            sliceYNow={sliceYNow}
+            onLayerIdxChange={(i) =>
+              setSlicePreview((s) => ({ ...s, layerIdx: i }))
             }
+          />
+        )}
+
+        {/* 미리보기 모드 우측 2D 단면 (SliceMaskPreview 재사용, 해상도 상한 고정). */}
+        {sliceMode && (
+          <SliceSectionPane
+            sceneHandleRef={sceneHandleRef}
+            sliceY={sliceYNow}
+            lcdWidthPx={printerProfile.lcdWidthPx}
+            lcdHeightPx={printerProfile.lcdHeightPx}
+          />
+        )}
+
+        {/*
+          1단계에서는 SliceSidePanel 을 그대로 유지한다 — 출력 추정·레이어
+          두께·내보내기(마스크 ZIP / G-code / .ctb)가 전부 여기 있어서 빼면
+          기능이 사라진다. 하단 설정 줄로 재배치하는 것은 2단계 과제.
+        */}
+        {sliceMode && (
+          <SliceSidePanel
+            onClose={exitSliceMode}
             sceneHandleRef={sceneHandleRef}
             sliceYNow={sliceYNow}
             layerIdx={slicePreview.layerIdx}
@@ -719,55 +829,60 @@ const ViewerV2Page: React.FC = () => {
             batchDone={batchExport.done}
             batchTotal={batchExport.total}
             modelCount={files.length}
+            // 가운데 단면 pane 이 같은 마스크를 이미 크게 그린다 — 패널 미니맵은 끈다.
+            hideMaskPreview
           />
         )}
 
-        <ViewerSidePanel
-          error={error}
-          panelTab={panelTab}
-          onPanelTabChange={setPanelTab}
-          transformPanelSelected={transformPanelSelected}
-          onPreviewTransform={handlePreviewTransform}
-          onCommitTransform={handleCommitTransform}
-          getTransformPivot={getTransformPivot}
-          onAutoGenerate={support.handleAutoGenerate}
-          onClearAllSupports={support.handleClearAllSupports}
-          supportCount={supports.length}
-          autoBusy={autoBusy}
-          editMode={editMode}
-          onToggleBrush={(active) => {
-            setEditMode(active ? "dental-brush" : "select");
-            setSelectedCp(null);
-            setSelectedSupportId(null);
-            setBridgeMode(false);
-            setPendingBridge(null);
-          }}
-          brushThicknessMm={dental.brushThicknessMm}
-          onBrushThicknessChange={dental.setBrushThicknessMm}
-          onClearPaint={dental.handleClearDentalPaint}
-          paintedFaceCount={Object.values(dental.paintedFaces).reduce(
-            (sum, ids) => sum + ids.length,
-            0,
-          )}
-          onFindMargin={dental.handleFindMargin}
-          marginBusy={dental.marginBusy}
-          onClearMargin={dental.handleClearMargin}
-          marginStatus={dental.marginStatus}
-          onDetectIslands={dental.handleDetectIslands}
-          islandBusy={dental.islandBusy}
-          onClearIslands={dental.handleClearIslands}
-          islandStatus={dental.islandStatus}
-          onAutoSupportIslands={dental.handleAutoSupportIslands}
-          autoSupportBusy={dental.islandSupportBusy}
-          autoSupportResult={dental.islandSupportResult}
-          onRunRedesignDetect={dental.handleRunRedesignDetect}
-          redesignBusy={dental.redesignBusy}
-          redesignProgress={dental.redesignProgress}
-          onCancelRedesign={dental.handleCancelRedesign}
-          onClearRedesignDetect={dental.handleClearRedesignDetect}
-          redesignStatus={dental.redesignStatus}
-          onGenerateRedesignSupports={dental.handleGenerateRedesignSupports}
-        />
+        {/* 우측 편집 패널 — 편집 화면 전용. */}
+        {!sliceMode && (
+          <ViewerSidePanel
+            error={error}
+            panelTab={panelTab}
+            onPanelTabChange={setPanelTab}
+            transformPanelSelected={transformPanelSelected}
+            onPreviewTransform={handlePreviewTransform}
+            onCommitTransform={handleCommitTransform}
+            getTransformPivot={getTransformPivot}
+            onAutoGenerate={support.handleAutoGenerate}
+            onClearAllSupports={support.handleClearAllSupports}
+            supportCount={supports.length}
+            autoBusy={autoBusy}
+            editMode={editMode}
+            onToggleBrush={(active) => {
+              setEditMode(active ? "dental-brush" : "select");
+              setSelectedCp(null);
+              setSelectedSupportId(null);
+              setBridgeMode(false);
+              setPendingBridge(null);
+            }}
+            brushThicknessMm={dental.brushThicknessMm}
+            onBrushThicknessChange={dental.setBrushThicknessMm}
+            onClearPaint={dental.handleClearDentalPaint}
+            paintedFaceCount={Object.values(dental.paintedFaces).reduce(
+              (sum, ids) => sum + ids.length,
+              0,
+            )}
+            onFindMargin={dental.handleFindMargin}
+            marginBusy={dental.marginBusy}
+            onClearMargin={dental.handleClearMargin}
+            marginStatus={dental.marginStatus}
+            onDetectIslands={dental.handleDetectIslands}
+            islandBusy={dental.islandBusy}
+            onClearIslands={dental.handleClearIslands}
+            islandStatus={dental.islandStatus}
+            onAutoSupportIslands={dental.handleAutoSupportIslands}
+            autoSupportBusy={dental.islandSupportBusy}
+            autoSupportResult={dental.islandSupportResult}
+            onRunRedesignDetect={dental.handleRunRedesignDetect}
+            redesignBusy={dental.redesignBusy}
+            redesignProgress={dental.redesignProgress}
+            onCancelRedesign={dental.handleCancelRedesign}
+            onClearRedesignDetect={dental.handleClearRedesignDetect}
+            redesignStatus={dental.redesignStatus}
+            onGenerateRedesignSupports={dental.handleGenerateRedesignSupports}
+          />
+        )}
       </div>
 
       <PrinterProfileDialog
