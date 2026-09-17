@@ -13,6 +13,7 @@ import type {
 import { downloadBlob } from "../../../utils/stl-export";
 import { sliceBatchService } from "../../../utils/slice-batch-service";
 import { profileExposure } from "../utils/profile-exposure";
+import { layerCountFor } from "../utils/layer-count";
 
 /** 확인 다이얼로그 줄바꿈. */
 const NL = String.fromCharCode(10);
@@ -53,12 +54,13 @@ export function useSliceExport({
     total: number;
   }>({ busy: false, done: 0, total: 0 });
 
-  // sliceY = (layerIdx + 0.5) × layerHeight — 레이어 중심을 픽업
-  const sliceYNow = (slicePreview.layerIdx + 0.5) * slicePreview.layerHeightMm;
-  const layerCount = Math.max(
-    1,
-    Math.ceil(sceneTopY / slicePreview.layerHeightMm),
-  );
+  const layerCount = layerCountFor(sceneTopY, slicePreview.layerHeightMm);
+  // sliceY = (layerIdx + 0.5) × layerHeight — 레이어 중심을 픽업.
+  //   ⚠️ layerIdx 를 **반드시 클램프**한다: 층높이를 키우면 layerCount 가 줄어
+  //   기존 layerIdx 가 범위를 벗어나고, 그러면 단면이 모델 위 허공을 가리켜
+  //   화면이 빈 채로 남는다(패널은 safeLayerIdx 로 표시만 보정하고 있었다).
+  const safeIdx = Math.min(slicePreview.layerIdx, layerCount - 1);
+  const sliceYNow = (safeIdx + 0.5) * slicePreview.layerHeightMm;
 
   /**
    * 출력영역을 벗어난 모델이 있으면 사용자에게 확인을 받는다 (P-1).
