@@ -225,7 +225,13 @@ export function useSliceExport({
     if (!confirmIfOutOfBounds()) return; // P-1
 
     // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열 + 범위 + 설정을 준비.
-    const input = handle.getFdmSliceInput();
+    //
+    // ⚠️ layerHeight 를 반드시 넘긴다. 인자를 비우면 DEFAULT_FDM_SETTINGS 의
+    //   0.05 로 폴백해, 사용자가 패널에서 고른 두께가 G-code 에 전혀 반영되지
+    //   않는다(마스크 ZIP·CTB 는 넘기는데 G-code 만 빠져 있던 비대칭 — B-37).
+    const input = handle.getFdmSliceInput({
+      layerHeight: slicePreview.layerHeightMm,
+    });
     if (!input) {
       // 모델이 없거나 유효 슬라이스 범위가 없음 (동기 경로의 null 반환과 동일 상황).
       // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
@@ -247,7 +253,12 @@ export function useSliceExport({
         window.alert("내보낼 G-code 가 없습니다. 모델을 먼저 불러오세요.");
         return;
       }
-      const blob = new Blob([gcode], { type: "text/plain" });
+      // ⚠️ text/plain 으로 만들면 브라우저가 "표시 가능한 타입"으로 보고
+      //   download 속성을 무시한 채 blob URL 로 네비게이션하는 경우가 있다.
+      //   그러면 SPA 가 통째로 이탈했다 돌아와 slicePreview 가 초기값으로
+      //   리셋된다(= 미리보기 모드가 풀려 메인화면으로 튕김 — B-38).
+      //   .zip/.ctb 가 멀쩡했던 이유도 이것들은 표시 불가 타입이기 때문.
+      const blob = new Blob([gcode], { type: "application/octet-stream" });
       const safe = (project?.name ?? "project").replace(/[\\/:*?"<>|]/g, "_");
       downloadBlob(blob, `${safe}.gcode`);
     } catch (e) {
@@ -265,6 +276,9 @@ export function useSliceExport({
     project?.name,
     batchExport.busy,
     sceneHandleRef,
+    // 규칙 7: layerHeightMm 을 새로 참조하므로 deps 에 반드시 넣는다.
+    //   빠지면 stale closure 로 "처음 진입 시점의 두께"가 계속 쓰인다.
+    slicePreview.layerHeightMm,
     confirmIfOutOfBounds, // P-1
   ]);
 
