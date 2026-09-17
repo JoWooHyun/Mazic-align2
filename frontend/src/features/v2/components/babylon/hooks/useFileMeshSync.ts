@@ -3,7 +3,7 @@
 //   그 순서로 등록한다. manifold man.delete() 짝, painted/margin/island 정리 등 무변경.
 import { useEffect } from "react";
 import { Mesh } from "@babylonjs/core";
-import { loadStlIntoScene } from "../../../utils/stl-loader";
+import { loadStlIntoScene, setModelDiffuseMode } from "../../../utils/stl-loader";
 import { applyOverhangColors } from "../../../utils/overhang";
 import { applyTransformToMesh } from "../../../utils/transform";
 import { IDENTITY_TRANSFORM } from "../../../types/transform";
@@ -104,6 +104,15 @@ export function useFileMeshSync(
           //   틀린 색이 보이지 않도록 여기서도 순서를 맞춘다.
           applyTransformToMesh(mesh, f.transform ?? IDENTITY_TRANSFORM);
           applyOverhangColors(mesh, ctx.overhangRef.current);
+          // 표시 모드를 **로드 시점의 현재 모드**에 맞춘다 (리드 결정 C안).
+          //   로드는 비동기(Promise.all().then())라, 서포트 탭에 **있는 동안**
+          //   STL 을 떨어뜨리면 이 메쉬가 meshMapRef 에 올라오는 시점이
+          //   useEditModeSync 의 effect 보다 늦다. 그 훅의 deps
+          //   ([editMode, files, supports])는 로드 완료 신호(meshLoadTick)로는
+          //   변하지 않으므로 다시 돌지 않는다 → 새 모델만 파란색으로 남는다.
+          //   여기서 한 번 맞춰 두면 그 구멍이 없다 (모드 전환 시의 일괄 적용은
+          //   useEditModeSync 가 계속 담당).
+          setModelDiffuseMode(mesh, ctx.editModeRef.current === "support");
           mesh.isPickable = true;
           attachDragBehavior(ctx, mesh, f.id);
           ctx.meshMapRef.current.set(f.id, mesh);

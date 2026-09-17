@@ -1,13 +1,21 @@
 // 뷰포트 우측 하단 stack — 오버행/세이프 색 범례 + 축·플레이트 정보 + 서포트 통계.
 // (ViewerV2Page 의 우하단 stack 마크업 그대로 추출. 서포트 통계는 C-4 로 추가.)
+// 오버행 범례는 서포트 탭에서만 보인다 (리드 결정 2026-09-17, C안).
 import {
   pillarSavingRatio,
   type SupportSummary,
 } from "../../../support/support-stats";
+import type { EditMode } from "../../../components/EditModeControls";
 
 interface ViewportInfoPanelsProps {
   filesLength: number;
   overhangAngleDeg: number;
+  /**
+   * 현재 편집 모드 — 오버행 범례의 표시 조건 (리드 결정 2026-09-17, C안).
+   *   오버행 색은 서포트 탭에서만 보이므로 범례도 같은 조건으로 묶는다.
+   *   (모델은 파란데 "Overhang" 범례만 떠 있으면 거짓 정보가 된다.)
+   */
+  editMode: EditMode;
   plateWidthMm: number;
   plateDepthMm: number;
   /**
@@ -20,13 +28,14 @@ interface ViewportInfoPanelsProps {
 export default function ViewportInfoPanels({
   filesLength,
   overhangAngleDeg,
+  editMode,
   plateWidthMm,
   plateDepthMm,
   supportSummary = null,
 }: ViewportInfoPanelsProps) {
   return (
     <div className="absolute bottom-3 right-3 flex flex-col items-end gap-2">
-      {filesLength > 0 && (
+      {filesLength > 0 && editMode === "support" && (
         <div className="bg-white/90 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700 space-y-1 pointer-events-none">
           <div className="flex items-center space-x-2">
             <span
