@@ -14,9 +14,11 @@ export function disposeScene(
     scene: Scene;
     hl: HighlightLayer;
     onResize: () => void;
+    /** 캔버스 크기 감시자 (B-36). 없을 수 있는 환경 대비로 optional. */
+    resizeObserver?: ResizeObserver | null;
   },
 ): void {
-  const { engine, scene, hl, onResize } = args;
+  const { engine, scene, hl, onResize, resizeObserver } = args;
   // 언마운트 표시 — 이 cleanup 은 deps [] 이라 언마운트에서만 실행된다.
   //   React 는 언마운트 시 effect cleanup 을 선언 순서대로 실행하므로, 이
   //   씬-셋업 effect(먼저 선언)의 cleanup 이 브러쉬 effect(나중 선언) cleanup
@@ -25,6 +27,9 @@ export function disposeScene(
   //   (언마운트 중 부모 setState 방지 — 뒤이어 전체 dispose 가 온다).
   ctx.isUnmountingRef.current = true;
   window.removeEventListener("resize", onResize);
+  // 캔버스 크기 감시자도 **같은 자리**에서 해제한다 (dispose 순서 규약 유지).
+  //   engine.dispose() 보다 반드시 먼저 — 폐기된 엔진에 resize 가 날아가면 안 된다.
+  resizeObserver?.disconnect();
   ctx.positionGizmoRef.current?.dispose();
   ctx.rotationGizmoRef.current?.dispose();
   ctx.scaleGizmoRef.current?.dispose();

@@ -240,7 +240,26 @@ export function useSceneBootstrap(
     const onResize = () => engine.resize();
     window.addEventListener("resize", onResize);
 
-    return () => disposeScene(ctx, { engine, scene, hl, onResize });
+    // ⚠️ window resize 만으로는 부족하다 (B-36).
+    //   슬라이스 미리보기를 켜면 우측 패널(420px)이 열리며 **캔버스만** 좁아지는데,
+    //   이건 창 크기 변화가 아니라 window resize 가 발화하지 않는다. 그러면 엔진은
+    //   예전 넓이로 계속 그려서 ①화면이 가로로 눌려 **모델이 세로로 길어 보이고**
+    //   ②`scene.pick` 의 좌표 기준도 예전 크기라 **마우스 실제 위치와 어긋난다**
+    //   (리드 실물: "화살표를 다른 곳에 대야 잡힌다").
+    //   → 캔버스 엘리먼트 자체의 크기를 감시해 그때마다 engine.resize() 한다.
+    //   같은 크기로 다시 호출돼도 Babylon 이 내부에서 걸러내므로 비용은 무시할 만하다.
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => engine.resize());
+      // ⚠️ `as unknown as Element`: Babylon 이 번들한 DOM 타입 선언 때문에
+      //   HTMLCanvasElement 와 표준 lib.dom 의 Element 가 서로 다른 선언으로
+      //   잡혀 tsc 가 거부한다(런타임은 같은 객체다). 캐스트를 이 한 줄에
+      //   가둬 두고, 감시 대상은 여전히 실제 캔버스 엘리먼트다.
+      resizeObserver.observe(canvas as unknown as Element);
+    }
+
+    return () =>
+      disposeScene(ctx, { engine, scene, hl, onResize, resizeObserver });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
