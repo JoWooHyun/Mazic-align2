@@ -27,6 +27,7 @@ import { useTransformCommit } from "./viewer/hooks/useTransformCommit";
 import { useSupportEditing } from "./viewer/hooks/useSupportEditing";
 import { useDentalWorkflow } from "./viewer/hooks/useDentalWorkflow";
 import { useSliceExport } from "./viewer/hooks/useSliceExport";
+import { layerCountFor } from "./viewer/utils/layer-count";
 import { useStlDropImport } from "./viewer/hooks/useStlDropImport";
 import ViewerHeader from "./viewer/components/ViewerHeader";
 import ViewportOverlays from "./viewer/components/ViewportOverlays";
@@ -451,11 +452,19 @@ const ViewerV2Page: React.FC = () => {
         onEditProfile={() => setProfileDialogOpen(true)}
         onToggleSlicePreview={() =>
           setSlicePreview((s) => {
-            if (!s.on) {
-              const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
-              setSceneTopY(top);
-            }
-            return { ...s, on: !s.on };
+            if (s.on) return { ...s, on: false };
+            // 켤 때는 **최상층**부터 보여준다 (리드: "다른 슬라이서는 0층이 아니라
+            //   끝 레이어부터 보여준다"). 0층은 바닥 한 겹이라 켜자마자 거의
+            //   아무것도 안 보이는 상태로 시작했다.
+            //   getSceneTopY() 는 동기라 여기서 층수를 바로 구할 수 있다 —
+            //   setSceneTopY 의 state 반영을 기다릴 필요가 없다.
+            const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
+            setSceneTopY(top);
+            return {
+              ...s,
+              on: true,
+              layerIdx: layerCountFor(top, s.layerHeightMm) - 1,
+            };
           })
         }
         onExportStl={handleExportStl}
@@ -677,7 +686,16 @@ const ViewerV2Page: React.FC = () => {
               setSlicePreview((s) => ({ ...s, layerIdx: i }))
             }
             onLayerHeightChange={(mm) =>
-              setSlicePreview((s) => ({ ...s, layerHeightMm: mm }))
+              setSlicePreview((s) => ({
+                ...s,
+                layerHeightMm: mm,
+                // 층높이를 키우면 총 층수가 줄어 기존 layerIdx 가 범위를 벗어난다.
+                //   그대로 두면 단면이 모델 위 허공을 가리켜 화면이 빈다.
+                layerIdx: Math.min(
+                  s.layerIdx,
+                  layerCountFor(sceneTopY, mm) - 1,
+                ),
+              }))
             }
             onExportMasksZip={() => void handleExportMasksZip()}
             onExportGcode={() => void handleExportGcode()}
