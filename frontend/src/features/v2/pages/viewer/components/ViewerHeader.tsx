@@ -40,20 +40,29 @@ export default function ViewerHeader({
 
   // 바깥 클릭 / Esc 로 드롭다운 닫기. 열려 있을 때만 리스너를 붙이고
   // 언마운트·닫힘 시 반드시 해제한다.
+  //
+  // ⚠️ `mousedown` 이 아니라 **`pointerdown` + capture** 로 듣는다 (B-33).
+  //   Babylon 은 캔버스의 `pointerdown` 에 `preventDefault()` 를 건다
+  //   (`scene.preventDefaultOnPointerDown` 기본 true — 캔버스 포커스·텍스트 선택
+  //   방지용이라 끄면 단축키 등이 회귀한다). `pointerdown` 을 preventDefault 하면
+  //   브라우저는 뒤따르는 호환 이벤트 `mousedown` 을 **아예 발생시키지 않으므로**,
+  //   캔버스 위를 클릭했을 때 document 의 mousedown 리스너가 영영 안 불린다
+  //   (리드 실물: "바깥 클릭은 메뉴가 안 닫혀, Esc 는 잘 돼" — keydown 은 무관해서
+  //   Esc 만 동작했다). `ViewerContextMenu` 가 이미 쓰는 패턴과 통일한다.
   useEffect(() => {
     if (!sampleOpen) return;
-    const handlePointerDown = (e: MouseEvent) => {
+    const handlePointerDown = (e: PointerEvent) => {
       const target = e.target as Node | null;
       if (target && !sampleRef.current?.contains(target)) setSampleOpen(false);
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setSampleOpen(false);
     };
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown, true);
     return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown, true);
     };
   }, [sampleOpen]);
 

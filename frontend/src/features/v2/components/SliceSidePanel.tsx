@@ -11,6 +11,7 @@ import { sliceBatchService } from "../utils/slice-batch-service";
 import type { BabylonSceneHandle } from "./BabylonScene";
 import NumberInput from "./common/NumberInput";
 import SliceMaskPreview from "./SliceMaskPreview";
+import { useSupportParamsStore } from "../support/hooks/useSupportParamsStore";
 
 /** SLA 레진 평균 밀도 (g/cm³). 메이커마다 1.05 ~ 1.15. */
 const RESIN_DENSITY_G_PER_CM3 = 1.1;
@@ -76,6 +77,16 @@ const SliceSidePanel: React.FC<Props> = ({
 
   // 예상 출력 시간 추정에 쓰는 현재 프린터 프로파일 (노광 + 리프트/딜레이).
   const printerProfile = useCurrentProfile();
+
+  // 모델 리프트(mm) — STL 은 바닥이 y=liftMm 에 오도록 올려 놓이므로
+  //   (stl-loader 의 alignMeshToPlate), 씬 최고점에는 이 값이 포함돼 있다.
+  //   20mm 예제인데 "모델 top 25"로 보여 리드가 오해한 지점이다.
+  //   ⚠️ 뺄셈으로 "모델 높이 = top - lift" 를 단정하지 않는다:
+  //     `getSceneTopY()` 는 **서포트까지 포함한 씬 최고점**이라 서포트가 모델보다
+  //     높으면 그 뺄셈이 거짓이 되고, lift 는 로드 시점에 정점에 베이크되므로
+  //     로드 후 lift 를 바꾸면 스토어 현재값과도 어긋난다(검수 지적).
+  //     그래서 라벨을 "씬 top"으로 정정하고 **리프트가 포함돼 있다는 사실만** 알린다.
+  const liftMm = useSupportParamsStore((st) => st.params.liftMm);
 
   // G-code 내보내기는 감사 A5 로 워커 경로로 이동했다. 조립·다운로드·에러
   // 처리는 ViewerV2Page 의 handleExportGcode(onExportGcode)가 마스크 ZIP/CTB
@@ -175,7 +186,15 @@ const SliceSidePanel: React.FC<Props> = ({
             </span>
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            모델 top: {sceneTopY.toFixed(2)} mm
+            씬 top: {sceneTopY.toFixed(2)} mm
+            {liftMm > 0 && (
+              <>
+                {" "}
+                <span className="text-gray-400">
+                  (바닥 리프트 {liftMm.toFixed(2)} mm 포함)
+                </span>
+              </>
+            )}
           </p>
         </Card>
 

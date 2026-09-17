@@ -43,8 +43,18 @@ export function useSlicePreview(
 
     scene.clipPlane = new Plane(0, 1, 0, -sliceY);
 
-    const yFill = sliceY + 0.005;
-    const yLine = sliceY + 0.02;
+    // ⚠️ 단면 fill·outline 은 반드시 평면 **아래**에 둔다 (B-34).
+    //   clipPlane(0,1,0,-sliceY) 의 판정은 셰이더에서
+    //   `fClipDistance = y - sliceY > 0 → discard` 다(clipPlaneFragment.js).
+    //   종전엔 z-fighting 을 피하려고 fill 을 sliceY+0.005, outline 을 +0.02 로
+    //   **위로** 띄웠는데, 그러면 **막으려고 만든 단면 자신이 전량 clip** 돼
+    //   한 픽셀도 안 그려진다 — 속 빈 STL 껍데기만 남아 바닥·뒷면이 사라진
+    //   "V자 조각"으로 보였다(리드 실물). 이 기능은 최초 구현(7ed9c80)부터
+    //   한 번도 화면에 나온 적이 없다.
+    //   → 부호를 뒤집어 평면 아래에 놓는다. 서로의 간격(0.003mm)은 유지되므로
+    //     outline 이 fill 위에 그려지는 순서는 그대로다.
+    const yFill = sliceY - 0.005;
+    const yLine = sliceY - 0.002;
     const lines: Vector3[][] = [];
 
     // 모델 단면.
