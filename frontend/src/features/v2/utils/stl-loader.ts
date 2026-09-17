@@ -9,6 +9,52 @@ import {
 import "@babylonjs/loaders/STL";
 
 /**
+ * 평상 모드(select / dental-brush)의 모델 기본색 — ChiTuBox 풍 청록빛 파랑.
+ *
+ * ★ 색은 이 상수 **한 곳**에서만 관리한다 (CLAUDE.md 규칙 6 의 정신).
+ *   로드 시점(loadStlIntoScene)과 모드 전환 시점(useEditModeSync →
+ *   setModelDiffuseMode)이 같은 값을 써야 두 경로가 갈라지지 않는다.
+ *
+ * ⚠ Babylon 의 Color3 는 가변(mutable)이다. 이 상수를 머티리얼에 직접
+ *   대입하면 이후 그 머티리얼의 색을 만지는 코드가 전역 상수를 오염시킨다.
+ *   반드시 clone() 해서 넣는다.
+ */
+export const MODEL_DIFFUSE_COLOR = new Color3(0.19, 0.55, 0.82);
+
+/**
+ * 서포트 탭(editMode === "support") 의 모델 기본색 — 흰색.
+ *
+ * diffuseColor 와 vertex color 는 **곱셈**으로 결합한다. 흰색은 곱셈의
+ * 항등원이라 `overhang.ts` 가 칠한 중성 회색(0.78, 0.79, 0.83) / 오버행
+ * 빨강(1.0, 0.32, 0.32)이 그대로 보인다 — overhang.ts 의 함수 주석이
+ * 명시한 계약("diffuseColor 가 흰색이면 vertex color 가 그대로 보인다")
+ * 을 이 상수가 충족시킨다.
+ */
+export const MODEL_DIFFUSE_COLOR_OVERHANG = new Color3(1, 1, 1);
+
+/**
+ * STL 메쉬 머티리얼의 diffuseColor 를 표시 모드에 맞춰 전환한다.
+ *
+ * 리드 결정(2026-09-17, C안) — 오버행 색은 **서포트를 달 때만** 필요하다:
+ *   · overhang = true  → 흰색        → 회색 모델 + 빨간 오버행 (CHITUBOX 방식)
+ *   · overhang = false → 청록빛 파랑 → 깔끔한 단색 모델
+ *
+ * **vertex color 는 건드리지 않는다.** 전 정점 순회 없이 머티리얼 색 1개만
+ * 바꾸므로 수십만 정점 모델에서도 모드 전환이 즉각적이다. 오버행 vertex
+ * color 자체는 `useFileMeshSync` 의 재색칠 effect 가 임계각·자세 변경마다
+ * 최신으로 유지한다 (B-35).
+ *
+ * 이미 같은 색이면 아무 일도 하지 않는다 (멱등).
+ */
+export function setModelDiffuseMode(mesh: Mesh, overhang: boolean): void {
+  const mat = mesh.material;
+  if (!(mat instanceof StandardMaterial)) return;
+  const next = overhang ? MODEL_DIFFUSE_COLOR_OVERHANG : MODEL_DIFFUSE_COLOR;
+  if (mat.diffuseColor.equals(next)) return;
+  mat.diffuseColor = next.clone();
+}
+
+/**
  * STL Blob → Babylon Mesh.
  *
  *  1. STL Z-up → Babylon Y-up: X 축 -90° 회전을 vertex 에 베이크.
@@ -18,7 +64,9 @@ import "@babylonjs/loaders/STL";
  *         (liftMm=0 이면 base 가 Y=0, liftMm=5 면 base 가 Y=5 위)
  *     mesh.position 은 (0,0,0) 으로 시작 → Transform Reset 시에도
  *     자동으로 base 가 다시 liftMm 위치로 복귀.
- *  3. 흰색 StandardMaterial 적용 → vertex color 그대로 보임.
+ *  3. StandardMaterial 적용 — 기본은 평상 모드의 청록빛 파랑
+ *     (`MODEL_DIFFUSE_COLOR`). 호출 측(useFileMeshSync)이 로드 직후
+ *     setModelDiffuseMode() 로 현재 편집 모드에 맞춰 보정한다.
  */
 export async function loadStlIntoScene(
   scene: Scene,
@@ -67,9 +115,11 @@ export async function loadStlIntoScene(
   // 2) 빌드플레이트에 정렬 (XZ center, Y base=liftMm).
   alignMeshToPlate(mesh, liftMm);
 
-  // 3) Material — ChiTuBox 풍 청록빛 파란색.
+  // 3) Material — ChiTuBox 풍 청록빛 파란색 (평상 모드).
+  //    서포트 탭에서는 setModelDiffuseMode() 가 흰색으로 바꿔 vertex color
+  //    (회색 모델 + 빨간 오버행)가 그대로 드러나게 한다.
   const mat = new StandardMaterial(`${meshName}-mat`, scene);
-  mat.diffuseColor = new Color3(0.19, 0.55, 0.82); // 청록빛 파랑
+  mat.diffuseColor = MODEL_DIFFUSE_COLOR.clone(); // 청록빛 파랑
   mat.specularColor = new Color3(0.04, 0.04, 0.04); // 거의 무광 (matte)
   // scene.ambientColor 가 적용되려면 material 측의 ambientColor 가
   // 0 이 아니어야 한다 (둘은 곱셈으로 결합).

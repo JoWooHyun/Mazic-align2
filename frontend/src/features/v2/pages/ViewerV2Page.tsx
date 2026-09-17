@@ -651,6 +651,7 @@ const ViewerV2Page: React.FC = () => {
           <ViewportInfoPanels
             filesLength={files.length}
             overhangAngleDeg={overhangAngleDeg}
+            editMode={editMode}
             plateWidthMm={printerProfile.buildVolumeMm[0]}
             plateDepthMm={printerProfile.buildVolumeMm[1]}
             supportSummary={supportSummary}
