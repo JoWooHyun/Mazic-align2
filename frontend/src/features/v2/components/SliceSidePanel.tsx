@@ -47,6 +47,15 @@ interface Props {
   batchTotal: number;
 
   modelCount: number;
+
+  /**
+   * 패널 자체의 미니맵 미리보기를 숨긴다 (기본 false = 표시).
+   *
+   * 슬라이스 별도 화면 모드에서는 가운데에 큰 단면 pane 이 이미 같은 마스크를
+   * 그리므로, 여기서도 그리면 화면에 단면이 두 번 나오고 `getSliceMask` 가
+   * 층 스크럽마다 2회 동기 호출된다(메인스레드 비용 2배).
+   */
+  hideMaskPreview?: boolean;
 }
 
 /**
@@ -65,6 +74,7 @@ const SliceSidePanel: React.FC<Props> = ({
   sceneTopY,
   onLayerIdxChange,
   onLayerHeightChange,
+  hideMaskPreview = false,
   onExportMasksZip,
   onExportGcode,
   onExportCtb,
@@ -118,7 +128,9 @@ const SliceSidePanel: React.FC<Props> = ({
             슬라이스 미리보기
           </h2>
           <p className="text-xs text-gray-500 mt-0.5">
-            LCD 1bpp 마스크 (흰 = 모델 영역)
+            {hideMaskPreview
+              ? "출력 추정 · 레이어 · 내보내기"
+              : "LCD 1bpp 마스크 (흰 = 모델 영역)"}
           </p>
         </div>
         <button
@@ -132,14 +144,16 @@ const SliceSidePanel: React.FC<Props> = ({
       </header>
 
       <div className="p-4 flex flex-col gap-4">
-        <div className="flex items-center justify-center bg-gray-50 rounded p-2">
-          <SliceMaskPreview
-            sceneHandleRef={sceneHandleRef}
-            sliceY={sliceYNow}
-            widthPx={380}
-            heightPx={240}
-          />
-        </div>
+        {!hideMaskPreview && (
+          <div className="flex items-center justify-center bg-gray-50 rounded p-2">
+            <SliceMaskPreview
+              sceneHandleRef={sceneHandleRef}
+              sliceY={sliceYNow}
+              widthPx={380}
+              heightPx={240}
+            />
+          </div>
+        )}
 
         <Card title="출력 추정">
           <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
