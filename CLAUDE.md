@@ -28,7 +28,17 @@ cd frontend && npm run lint       # ESLint (기존 40건은 알려진 이슈, �
 cd frontend && npm run build      # vite build
 ```
 
-- 자동 테스트 없음. 검증 = `docs/WORKFLOW.md`의 v2 수동 체크리스트.
+```
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-09-16 기준 17종)
+```
+
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 17종**이 상시 PASS여야 한다
+  (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
+  확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
+  판정은 출력 문자열이 아니라 **exit code**로 — 뮤테이션 대조군 스크립트는 정상 단언 레이블에도
+  "FAIL" 문자열이 들어간다.
+- 새 검증 스크립트는 **대조군 원칙**: 수정 전 구현·변조 구현이 실제로 FAIL 나는지 증명할 것.
+- 사람 확인 = `docs/WORKFLOW.md`의 v2 수동 체크리스트.
 
 ## 코드 구조 (frontend/src/features/v2)
 
@@ -44,7 +54,8 @@ cd frontend && npm run build      # vite build
 | `utils/slice-*` + `workers/` | 배치 슬라이스 (마스크/CTB, 워커) | 산출물 바이트 변경 금지 원칙 |
 | `utils/{exposure,print-time,ctb-encoder,mask-png}.ts` | 노광 보간, 시간 추정, 출력 포맷 | 기본값 단일 소스 유지 |
 | `data/*.repo.ts` + `data/db.ts` | IndexedDB 계층 | 스키마 변경은 협의 |
-| `types/printer.ts` | 프린터 프로파일 (노광 4종 + 리프트 4종, DEFAULT_*) | |
+| `types/printer.ts` | 프린터 프로파일 (노광 4종 + 리프트 4종, DEFAULT_* + PROFILE_FIELD_LIMITS) | 값 변경은 CTB 기록값 변경 — 규칙 5 |
+| `utils/sample-models.ts` | 예제 모델(20mm 큐브·구) 바이너리 STL 코드 생성 | 비등방 도형 추가 시 Y-up 전제 재검토 |
 | `components/DentalPanel.tsx` 등 | 우측 패널 UI들 | |
 
 `src/components·pages·services`(v2 밖)는 구 v1 — 동결, 수정 금지 (Step 3-2 정리 예정).
