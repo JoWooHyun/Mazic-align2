@@ -97,8 +97,13 @@ export function useFileMeshSync(
             mesh.dispose();
             return null;
           }
-          applyOverhangColors(mesh, ctx.overhangRef.current);
+          // ★ transform 을 **먼저** 적용한 뒤 색칠한다 (B-35). 색칠이 world
+          //   법선으로 판정하므로, 순서가 뒤집히면 저장된 자세가 아직 반영되지
+          //   않은 world 행렬로 칠해진다(프로젝트를 다시 열었을 때 회전이
+          //   무시된 색). 아래 effect #3 이 곧바로 덮어쓰긴 하지만, 한 프레임
+          //   틀린 색이 보이지 않도록 여기서도 순서를 맞춘다.
           applyTransformToMesh(mesh, f.transform ?? IDENTITY_TRANSFORM);
+          applyOverhangColors(mesh, ctx.overhangRef.current);
           mesh.isPickable = true;
           attachDragBehavior(ctx, mesh, f.id);
           ctx.meshMapRef.current.set(f.id, mesh);
@@ -155,11 +160,30 @@ export function useFileMeshSync(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files]);
 
-  // 3) 임계각 변경 시 모든 메쉬 색 재할당
+  // 3) 임계각 변경 **또는 transform 커밋** 시 모든 메쉬 색 재할당
+  //
+  // ★ B-35 — deps 에 `files` 를 더한다. 색칠이 world 법선 기준이 된 이상
+  //   (overhang.ts 참고) 모델 자세가 바뀔 때마다 다시 칠해야 한다. 종전에는
+  //   deps 가 [overhangAngleDeg] 뿐이라 각도를 건드릴 때만 갱신됐다.
+  //
+  //   왜 `files` 가 그 신호인가: transform 커밋은 useTransformCommit →
+  //   useStlFilesV2.updateTransform → repo.updateStlFile → refresh() →
+  //   setFiles(await listStlFilesByProject(...)) 로 이어져 **IndexedDB 에서
+  //   새로 읽은 배열**이 들어온다. 즉 이동·회전·크기 커밋마다 참조가 바뀐다.
+  //
+  //   ⚠️ 드래그 **중**(previewTransform)은 camera-handle 이 mesh 를 직접
+  //   건드릴 뿐 files 를 갱신하지 않는다 → 매 프레임 전 정점 순회가 도는 일은
+  //   없고, 커밋 후 1회만 돈다. 전 정점 루프를 프레임 경로에 올리지 않기 위한
+  //   의도적 선택이다.
+  //
+  //   순서: 이 effect 는 위 #2 보다 **뒤에** 선언돼 있고, #2 는 기존 메쉬의
+  //   transform 을 동기적으로 적용한다(아래쪽 for 루프). 따라서 같은 커밋에서
+  //   여기 도달했을 때 메쉬는 이미 새 자세다 — world 법선이 최신이다.
+  //   (새로 로드되는 메쉬는 #2 의 비동기 then 안에서 자체적으로 색칠한다.)
   useEffect(() => {
     for (const mesh of ctx.meshMapRef.current.values()) {
       applyOverhangColors(mesh, overhangAngleDeg);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overhangAngleDeg]);
+  }, [overhangAngleDeg, files]);
 }
