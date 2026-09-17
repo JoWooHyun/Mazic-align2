@@ -2,8 +2,9 @@
 //   STL 드래그 behavior detach/attach + support isPickable 토글 + 카메라 좌클릭 버튼
 //   매핑 조정(dental-brush 진입 [1,2] / 이탈 [0,1,2] 원복, 감사 B2)
 //   + 모델 머티리얼 표시 모드 전환(서포트 탭에서만 오버행 색, 리드 결정 C안).
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { setModelDiffuseMode } from "../../../utils/stl-loader";
+import { syncGizmo } from "../scene-actions";
 import type { STLFileV2 } from "../../../types/stl";
 import type { SupportPointV2 } from "../../../support/types";
 import type { EditMode } from "../../EditModeControls";
@@ -14,7 +15,13 @@ export function useEditModeSync(
   editMode: EditMode,
   files: STLFileV2[],
   supports: SupportPointV2[],
+  /** 슬라이스 미리보기 편집 잠금 (= `sliceY != null`). boolean 정규화된 값. */
+  sliceLocked: boolean,
 ): void {
+  // 직전 잠금 상태 — 아래 effect 가 "잠금이 바뀐 렌더"만 골라내는 데 쓴다.
+  //   초기값을 현재 값으로 두어 마운트 시점에는 전환으로 보지 않는다.
+  const sliceLockedPrevRef = useRef<boolean>(sliceLocked);
+
   // 6) editMode 변경 시:
   //    · STL 메쉬의 PointerDragBehavior detach/attach
   //    · support 메쉬의 isPickable 토글
@@ -44,6 +51,11 @@ export function useEditModeSync(
     // 서포트 탭에서만 오버행 색을 보여준다.
     const showOverhang = editMode === "support";
 
+    // 슬라이스 미리보기 중에는 select 모드여도 드래그를 붙이지 않는다.
+    //   미리보기는 clipPlane(셰이더 discard)이라 picking ray 가 잘린 윗부분까지
+    //   맞히므로, 보이지 않는 곳을 잡아 모델이 끌려가는 사고가 난다(구 v1 근거).
+    const dragAllowed = editMode === "select" && !sliceLocked;
+
     for (const [id, mesh] of ctx.meshMapRef.current) {
       // 머티리얼은 mesh 마다 개별 생성(`${meshName}-mat`)되므로 **모든** STL
       // 메쉬에 적용해야 한다. 서포트 메쉬·플레이트·기즈모는 meshMapRef 에
@@ -53,9 +65,23 @@ export function useEditModeSync(
       const drag = ctx.dragBehaviorMapRef.current.get(id);
       if (!drag) continue;
       const attached = mesh.behaviors.includes(drag);
-      if (editMode !== "select" && attached) {
+      if (!dragAllowed && attached) {
+        // ⚠️ S1 — 드래그 **도중** 잠금이 걸려도 이동 커밋이 유실되지 않는다.
+        //   Babylon `Node.removeBehavior` → `PointerDragBehavior.detach()` 는
+        //   마지막에 `releaseDrag()` 를 부르고, releaseDrag 는 `dragging` 이면
+        //   `onDragEndObservable` 을 notify 한다(pointerDragBehavior.js:290-294,
+        //   503-518). 그 observable 은 생성자에서 만들어져 detach 가 지우지
+        //   않으므로, scene-actions 의 onDragEnd 핸들러가 정상 발화해
+        //   gizmoDragStartRef 를 비우고 onGizmoCommit 까지 수행한다.
         mesh.removeBehavior(drag);
-      } else if (editMode === "select" && !attached) {
+        // 보험: 위 경로가 어떤 이유로든 발화하지 않았다면 stale 스냅샷이 남아
+        //   다음 드래그의 onDragEnd 가 엉뚱한 시작값으로 커밋한다. 이 메쉬의
+        //   것일 때만 비운다(다른 종류의 드래그 스냅샷은 건드리지 않는다).
+        const started = ctx.gizmoDragStartRef.current;
+        if (started?.kind === "stl" && started.id === id) {
+          ctx.gizmoDragStartRef.current = null;
+        }
+      } else if (dragAllowed && !attached) {
         mesh.addBehavior(drag);
       }
     }
@@ -74,6 +100,21 @@ export function useEditModeSync(
       pointersInput.buttons =
         editMode === "dental-brush" ? [1, 2] : [0, 1, 2];
     }
+
+    // 잠금 **전환 시에만** 기즈모를 떼거나 되붙인다. effect #5(useSelectionSync)
+    //   의 deps 에는 sliceLocked 가 없어 미리보기 토글만으로는 재실행되지 않으므로,
+    //   여기서 한 번 불러 "켠 순간 화살표가 사라진다"를 보장한다. 해제 시에는
+    //   같은 호출이 평소 규칙대로 재attach 하므로 편집 상태가 복원된다.
+    //   (기즈모 드래그 진행 중이면 syncGizmo 가 스스로 detach 를 미룬다 — S2.)
+    //
+    //   ⚠️ editMode/files/supports 변경 경로에서는 부르지 않는다 — 그 셋은 이미
+    //   effect #5 가 담당하고 있어, 여기서 겹쳐 부르면 기존 동작에 없던 중복
+    //   호출이 생긴다(레이어 스크럽 무영향은 sliceLocked 의 boolean 정규화가,
+    //   중복 회피는 이 조건이 각각 보장).
+    if (sliceLockedPrevRef.current !== sliceLocked) {
+      sliceLockedPrevRef.current = sliceLocked;
+      syncGizmo(ctx);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, files, supports]);
+  }, [editMode, files, supports, sliceLocked]);
 }

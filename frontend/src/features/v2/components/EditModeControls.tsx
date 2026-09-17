@@ -3,6 +3,8 @@ export type EditMode = "select" | "support" | "dental-brush";
 interface EditModeControlsProps {
   mode: EditMode;
   onChange: (mode: EditMode) => void;
+  /** 슬라이스 미리보기 중 편집 잠금 — 세 탭 모두 회색 비활성. */
+  disabled?: boolean;
   className?: string;
 }
 
@@ -17,6 +19,7 @@ interface EditModeControlsProps {
 const EditModeControls: React.FC<EditModeControlsProps> = ({
   mode,
   onChange,
+  disabled = false,
   className = "",
 }) => {
   return (
@@ -25,16 +28,19 @@ const EditModeControls: React.FC<EditModeControlsProps> = ({
     >
       <Btn
         active={mode === "select"}
+        disabled={disabled}
         onClick={() => onChange("select")}
         label="Select"
       />
       <Btn
         active={mode === "support"}
+        disabled={disabled}
         onClick={() => onChange("support")}
         label="Support"
       />
       <Btn
         active={mode === "dental-brush"}
+        disabled={disabled}
         onClick={() => onChange("dental-brush")}
         label="Dental"
       />
@@ -44,19 +50,24 @@ const EditModeControls: React.FC<EditModeControlsProps> = ({
 
 function Btn({
   active,
+  disabled,
   onClick,
   label,
 }: {
   active: boolean;
+  disabled: boolean;
   onClick: () => void;
   label: string;
 }) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={`px-3 py-1.5 transition-colors border-r border-gray-200 last:border-r-0 ${
         active
           ? "bg-primary-600 text-white"
+          : disabled
+          ? "text-gray-300 cursor-not-allowed"
           : "text-gray-700 hover:bg-gray-100"
       }`}
     >

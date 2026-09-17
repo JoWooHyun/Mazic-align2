@@ -106,7 +106,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       supportParams,
       files,
     ); // #5.6 pending marker + #5.7 Bridge 시각화
-    useEditModeSync(ctx, editMode, files, supports); // #6 editMode 동기화
+    // #6 editMode 동기화. sliceY != null 이면 슬라이스 미리보기 편집 잠금 —
+    //   boolean 으로 좁혀 넘겨야 레이어 스크럽(sliceY 변경)마다 재실행되지 않는다.
+    useEditModeSync(ctx, editMode, files, supports, sliceY != null);
     useDentalBrush(ctx, editMode); // #6.5 dental-brush 페인팅
     // #7 출력영역 초과 경고 (C-2). 씬 상태를 읽기만 하고 아무도 이 훅에
     //   의존하지 않으므로, 불변식 1(훅 순서)을 흔들지 않도록 맨 끝에 둔다.

@@ -24,6 +24,8 @@ interface ViewportOverlaysProps {
   editMode: EditMode;
   gizmoMode: GizmoMode;
   alignFloorMode: boolean;
+  /** 슬라이스 미리보기 ON — 편집 잠금 상태. */
+  slicePreviewOn: boolean;
   bridgeMode: boolean;
   pendingBridge: unknown | null;
   selectedSupportId: string | null;
@@ -44,6 +46,7 @@ export default function ViewportOverlays({
   editMode,
   gizmoMode,
   alignFloorMode,
+  slicePreviewOn,
   bridgeMode,
   pendingBridge,
   selectedSupportId,
@@ -65,10 +68,12 @@ export default function ViewportOverlays({
       <GizmoControls
         mode={gizmoMode}
         onChange={onGizmoModeChange}
-        enabled={selectedIds.size === 1 && editMode === "select"}
+        enabled={
+          selectedIds.size === 1 && editMode === "select" && !slicePreviewOn
+        }
       />
 
-      {gizmoMode === "rotate" && editMode === "select" && (
+      {gizmoMode === "rotate" && editMode === "select" && !slicePreviewOn && (
         <button
           onClick={onToggleAlignFloor}
           className={`px-3 py-1.5 text-xs rounded-md shadow border transition-colors ${
@@ -82,7 +87,22 @@ export default function ViewportOverlays({
         </button>
       )}
 
-      <EditModeControls mode={editMode} onChange={onEditModeChange} />
+      <EditModeControls
+        mode={editMode}
+        onChange={onEditModeChange}
+        disabled={slicePreviewOn}
+      />
+
+      {/*
+        슬라이스 미리보기 편집 잠금 배지. 리드: "다른 슬라이서는 슬라이스 누르면
+        새 창으로 넘어간다" — 우리는 같은 뷰포트에 머무르므로, 왜 갑자기 기즈모가
+        사라지고 모델이 안 끌리는지 알려 주는 **상태 변화 신호**가 반드시 필요하다.
+      */}
+      {slicePreviewOn && (
+        <div className="bg-amber-50/95 backdrop-blur rounded-md shadow border border-amber-300 px-3 py-1.5 text-xs text-amber-800 pointer-events-none">
+          미리보기 중 — 편집 잠금 (뷰 조작은 가능)
+        </div>
+      )}
 
       {selectedIds.size === 1 &&
         editMode === "select" &&

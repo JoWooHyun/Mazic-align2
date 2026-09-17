@@ -78,7 +78,12 @@ export function setupPointerHandlers(ctx: SceneCtx, scene: Scene): void {
     //   · Bridge sub-mode 면 기둥 픽도 endpoint 로 → onAddSupportAt.
     //   · 그 외 기둥 픽 → 선택. 모델 표면 픽 → 추가.
     //   · 빈 공간 픽 → 선택 해제 (bridge 모드는 무시, Esc 로 취소).
-    if (ctx.editModeRef.current === "support") {
+    // 슬라이스 미리보기 중에는 서포트 추가/이동을 받지 않는다. 페이지가 미리보기
+    //   진입 시 editMode 를 "select" 로 강제하므로 평소에는 여기까지 오지 않지만,
+    //   setEditMode 는 다음 렌더에 반영되므로 그 사이 클릭을 막는 안전망이다.
+    //   (미리보기는 clipPlane 이라 picking ray 가 잘린 윗부분까지 맞혀, 보이지
+    //   않는 곳에 서포트가 생기는 사고가 난다 — 구 v1 경고와 같은 유형.)
+    if (ctx.editModeRef.current === "support" && !ctx.sliceLockedRef.current) {
       const bridge = ctx.bridgeModeRef.current;
 
       if (!picked) {
@@ -228,7 +233,15 @@ export function setupPointerHandlers(ctx: SceneCtx, scene: Scene): void {
       ctx.onPickRef.current(null, { multi });
       return;
     }
-    if (ctx.alignFloorModeRef.current && info.pickInfo) {
+    // 슬라이스 미리보기 중에는 바닥면 붙이기를 받지 않는다 — 클릭 한 번으로
+    //   모델을 회전시키는 **변환**이라 편집 잠금 대상이다. UI 에서도 버튼을
+    //   숨기지만(ViewportOverlays), 이미 "면 클릭 대기" 상태로 들어간 뒤
+    //   미리보기를 켜는 경로가 있어 씬 쪽에서도 막는다.
+    if (
+      ctx.alignFloorModeRef.current &&
+      !ctx.sliceLockedRef.current &&
+      info.pickInfo
+    ) {
       const n = info.pickInfo.getNormal(true, true);
       for (const [id, mesh] of ctx.meshMapRef.current) {
         if (mesh === picked && n) {

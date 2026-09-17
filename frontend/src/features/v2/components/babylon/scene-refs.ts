@@ -119,6 +119,19 @@ export interface SceneCtx {
   plateWRef: MutableRefObject<number>;
   plateDRef: MutableRefObject<number>;
   editModeRef: MutableRefObject<EditMode>;
+  /**
+   * 슬라이스 미리보기 중 편집 잠금 여부 (= `sliceY != null`).
+   *
+   * ⚠️ **원시 sliceY 가 아니라 boolean 으로 정규화해서 담는다.** 레이어 스크럽은
+   *   sliceY 를 매 프레임 바꾸지만 "잠겼는가"는 그대로라, boolean 으로 좁혀야
+   *   이 ref 를 읽는 쪽(syncGizmo/드래그 attach)이 불필요하게 재실행되지 않는다.
+   *
+   * 잠그는 이유: 슬라이스 미리보기는 clipPlane(셰이더 discard)으로 그리므로
+   *   **picking ray 는 여전히 원본 메쉬 전체를 맞힌다.** 화면에 보이지 않는
+   *   윗부분을 클릭하면 모델이 엉뚱하게 끌려간다(구 v1 STLViewer 의 sliceLocked
+   *   와 같은 근거). 카메라·picking·하이라이트는 잠그지 않는다 — 뷰는 봐야 한다.
+   */
+  sliceLockedRef: MutableRefObject<boolean>;
   onAddSupportRef: MutableRefObject<BabylonSceneProps["onAddSupportAt"]>;
   onPickSupportRef: MutableRefObject<BabylonSceneProps["onPickSupport"]>;
   onMoveSupportRef: MutableRefObject<BabylonSceneProps["onMoveSupport"]>;
@@ -221,6 +234,9 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
   plateDRef.current = props.plateDepthMm;
   const editModeRef = useRef<EditMode>(props.editMode);
   editModeRef.current = props.editMode;
+  // 슬라이스 미리보기 편집 잠금 — boolean 정규화(위 타입 주석 참고).
+  const sliceLockedRef = useRef<boolean>(props.sliceY != null);
+  sliceLockedRef.current = props.sliceY != null;
   const onAddSupportRef = useRef(props.onAddSupportAt);
   onAddSupportRef.current = props.onAddSupportAt;
   const onPickSupportRef = useRef(props.onPickSupport);
@@ -321,6 +337,7 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
     plateWRef,
     plateDRef,
     editModeRef,
+    sliceLockedRef,
     onAddSupportRef,
     onPickSupportRef,
     onMoveSupportRef,
