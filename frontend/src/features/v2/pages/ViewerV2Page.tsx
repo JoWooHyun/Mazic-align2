@@ -27,6 +27,7 @@ import { useTransformCommit } from "./viewer/hooks/useTransformCommit";
 import { useSupportEditing } from "./viewer/hooks/useSupportEditing";
 import { useDentalWorkflow } from "./viewer/hooks/useDentalWorkflow";
 import { useSliceExport } from "./viewer/hooks/useSliceExport";
+import { layerCountFor } from "./viewer/utils/layer-count";
 import { useStlDropImport } from "./viewer/hooks/useStlDropImport";
 import ViewerHeader from "./viewer/components/ViewerHeader";
 import ViewportOverlays from "./viewer/components/ViewportOverlays";
@@ -451,25 +452,33 @@ const ViewerV2Page: React.FC = () => {
         onEditProfile={() => setProfileDialogOpen(true)}
         onToggleSlicePreview={() =>
           setSlicePreview((s) => {
-            if (!s.on) {
-              const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
-              setSceneTopY(top);
-              // 미리보기 진입 시 편집 모드를 select 로 강제한다.
-              //   support/dental-brush 를 켠 채로 두면 보이지 않는(clipPlane 으로
-              //   잘려 나간) 표면을 클릭해 서포트가 엉뚱한 곳에 생기거나 색칠이
-              //   된다 — picking ray 는 셰이더 discard 와 무관하게 원본 메쉬를
-              //   전부 맞히기 때문. select 하나로 수렴시키면 잠금 대상이 단일
-              //   경로가 된다.
-              //
-              //   ⚠️ 미리보기를 꺼도 **이전 모드로 되돌리지 않는다.** 사용자가
-              //   명시적으로 다시 고르게 둔다 — 예기치 않은 모드 복귀가 더
-              //   혼란스럽고, 그 사이 선택/서포트 상태가 바뀌었을 수 있다.
-              setEditMode("select");
-              // "면 클릭 대기" 상태로 들어가 있었다면 함께 해제 — 바닥면
-              //   붙이기도 클릭 한 번으로 모델을 회전시키는 변환이라 잠금 대상.
-              setAlignFloorMode(false);
-            }
-            return { ...s, on: !s.on };
+            if (s.on) return { ...s, on: false };
+            // 켤 때는 **최상층**부터 보여준다 (리드: "다른 슬라이서는 0층이 아니라
+            //   끝 레이어부터 보여준다"). 0층은 바닥 한 겹이라 켜자마자 거의
+            //   아무것도 안 보이는 상태로 시작했다.
+            //   getSceneTopY() 는 동기라 여기서 층수를 바로 구할 수 있다 —
+            //   setSceneTopY 의 state 반영을 기다릴 필요가 없다.
+            const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
+            setSceneTopY(top);
+            // 미리보기 진입 시 편집 모드를 select 로 강제한다.
+            //   support/dental-brush 를 켠 채로 두면 보이지 않는(clipPlane 으로
+            //   잘려 나간) 표면을 클릭해 서포트가 엉뚱한 곳에 생기거나 색칠이
+            //   된다 — picking ray 는 셰이더 discard 와 무관하게 원본 메쉬를
+            //   전부 맞히기 때문. select 하나로 수렴시키면 잠금 대상이 단일
+            //   경로가 된다.
+            //
+            //   ⚠️ 미리보기를 꺼도 **이전 모드로 되돌리지 않는다.** 사용자가
+            //   명시적으로 다시 고르게 둔다 — 예기치 않은 모드 복귀가 더
+            //   혼란스럽고, 그 사이 선택/서포트 상태가 바뀌었을 수 있다.
+            setEditMode("select");
+            // "면 클릭 대기" 상태로 들어가 있었다면 함께 해제 — 바닥면
+            //   붙이기도 클릭 한 번으로 모델을 회전시키는 변환이라 잠금 대상.
+            setAlignFloorMode(false);
+            return {
+              ...s,
+              on: true,
+              layerIdx: layerCountFor(top, s.layerHeightMm) - 1,
+            };
           })
         }
         onExportStl={handleExportStl}
@@ -692,7 +701,16 @@ const ViewerV2Page: React.FC = () => {
               setSlicePreview((s) => ({ ...s, layerIdx: i }))
             }
             onLayerHeightChange={(mm) =>
-              setSlicePreview((s) => ({ ...s, layerHeightMm: mm }))
+              setSlicePreview((s) => ({
+                ...s,
+                layerHeightMm: mm,
+                // 층높이를 키우면 총 층수가 줄어 기존 layerIdx 가 범위를 벗어난다.
+                //   그대로 두면 단면이 모델 위 허공을 가리켜 화면이 빈다.
+                layerIdx: Math.min(
+                  s.layerIdx,
+                  layerCountFor(sceneTopY, mm) - 1,
+                ),
+              }))
             }
             onExportMasksZip={() => void handleExportMasksZip()}
             onExportGcode={() => void handleExportGcode()}
