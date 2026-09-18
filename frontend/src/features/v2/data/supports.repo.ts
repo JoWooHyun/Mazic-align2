@@ -1,5 +1,5 @@
 import { openDb, STORE_SUPPORTS } from "./db";
-import type { SupportPointV2 } from "../support/types";
+import type { PillarBraceRecord, SupportPointV2 } from "../support/types";
 
 /**
  * 폐기된 dental disc 서포트 레코드 판별 (하위 호환).
@@ -9,6 +9,27 @@ import type { SupportPointV2 } from "../support/types";
  */
 function isDiscRecord(value: unknown): boolean {
   return (value as { variant?: string } | null)?.variant === "disc";
+}
+
+/**
+ * 기둥 연결 브레이스 레코드 판별 (S-4b-2d 2단계).
+ *   위 `isDiscRecord` 와 **같은 패턴** — 하나의 스토어에 이종 레코드를 공존시키고
+ *   판별 필드로 조회를 가른다. 이렇게 두면 `by_project`/`by_stl` 인덱스를 그대로
+ *   재사용해 **cascade 삭제가 자동**이고 DB_VERSION 을 올릴 필요가 없다.
+ *
+ *   ⚠️ `listSupportsByProject`/`listSupportsByStl` 의 반환 타입은 `SupportPointV2[]`
+ *   이므로 브레이스가 섞여 나가면 **화면·조립·export 전부가 이상한 점 하나를
+ *   기둥으로 세우려 든다**. 반드시 여기서 걸러낸다(타입 오염 방지).
+ */
+function isBraceRecord(value: unknown): boolean {
+  return (
+    (value as { recordKind?: string } | null)?.recordKind === "pillarBrace"
+  );
+}
+
+/** 서포트 점 조회에서 제외해야 하는 이종 레코드인가. */
+function isForeignRecord(value: unknown): boolean {
+  return isDiscRecord(value) || isBraceRecord(value);
 }
 
 /** 프로젝트의 모든 서포트 점. */
@@ -23,7 +44,7 @@ export async function listSupportsByProject(
     idx.openCursor(IDBKeyRange.only(projectId)).onsuccess = (e) => {
       const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
       if (cursor) {
-        if (!isDiscRecord(cursor.value)) out.push(cursor.value as SupportPointV2);
+        if (!isForeignRecord(cursor.value)) out.push(cursor.value as SupportPointV2);
         cursor.continue();
       }
     };
@@ -44,7 +65,7 @@ export async function listSupportsByStl(
     idx.openCursor(IDBKeyRange.only(stlId)).onsuccess = (e) => {
       const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
       if (cursor) {
-        if (!isDiscRecord(cursor.value)) out.push(cursor.value as SupportPointV2);
+        if (!isForeignRecord(cursor.value)) out.push(cursor.value as SupportPointV2);
         cursor.continue();
       }
     };
@@ -188,6 +209,94 @@ export async function deleteSupportsByStl(stlId: string): Promise<void> {
     };
 
     tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 기둥 연결 브레이스 (S-4b-2d 2단계)
+//   같은 스토어(STORE_SUPPORTS)에 공존하되 `recordKind:'pillarBrace'` 로 갈린다.
+//   ★ 삭제 계열은 **일부러 추가하지 않았다** — `deleteSupportsByProject` /
+//     `deleteSupportsByStl` 이 인덱스 커서로 스토어 전체를 훑으므로 브레이스도
+//     같이 지워진다(cascade 공짜). 여기 있는 삭제 함수는 "기둥 하나를 지울 때
+//     그 기둥의 다리만" 지우는 경우뿐이다.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 프로젝트의 브레이스 레코드만. 서포트 점 조회와 반환 타입이 다르다(타입 오염 방지). */
+export async function listPillarBracesByProject(
+  projectId: string,
+): Promise<PillarBraceRecord[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_SUPPORTS, "readonly");
+    const idx = tx.objectStore(STORE_SUPPORTS).index("by_project");
+    const out: PillarBraceRecord[] = [];
+    idx.openCursor(IDBKeyRange.only(projectId)).onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+      if (cursor) {
+        if (isBraceRecord(cursor.value)) out.push(cursor.value as PillarBraceRecord);
+        cursor.continue();
+      }
+    };
+    tx.oncomplete = () => resolve(out);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * 브레이스 일괄 추가. `addSupports` 와 같은 이유로 add 가 아니라 **put(upsert)**.
+ *   (add 는 키 충돌 시 transaction 전체를 abort 시켜 무관한 레코드까지 날린다 — B-1.)
+ */
+export async function addPillarBraces(
+  braces: PillarBraceRecord[],
+): Promise<void> {
+  if (braces.length === 0) return;
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_SUPPORTS, "readwrite");
+    const store = tx.objectStore(STORE_SUPPORTS);
+    for (const b of braces) {
+      store.put(b);
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+/**
+ * **기둥 삭제 cascade** — 주어진 점 id 중 하나라도 끝에 걸린 브레이스를 지운다.
+ *   리드 확정: "다리 개별 삭제는 불필요, 기둥을 지우면 다리도 사라지면 된다."
+ *   양 끝(`fromPointId`/`toPointId`) 어느 쪽이든 매치하면 지운다 — 한 끝이 사라진
+ *   다리가 허공에 남지 않게 (`deleteSupportsByStl` 의 by_base_stl 취지와 동일).
+ *
+ * @returns 삭제된 브레이스 레코드 (undo 복원용).
+ */
+export async function deletePillarBracesByPointIds(
+  projectId: string,
+  pointIds: readonly string[],
+): Promise<PillarBraceRecord[]> {
+  if (pointIds.length === 0) return [];
+  const targets = new Set(pointIds);
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_SUPPORTS, "readwrite");
+    const idx = tx.objectStore(STORE_SUPPORTS).index("by_project");
+    const removed: PillarBraceRecord[] = [];
+    idx.openCursor(IDBKeyRange.only(projectId)).onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+      if (cursor) {
+        const v = cursor.value as PillarBraceRecord;
+        if (
+          isBraceRecord(v) &&
+          (targets.has(v.fromPointId) || targets.has(v.toPointId))
+        ) {
+          removed.push(v);
+          cursor.delete();
+        }
+        cursor.continue();
+      }
+    };
+    tx.oncomplete = () => resolve(removed);
     tx.onerror = () => reject(tx.error);
   });
 }

@@ -9,6 +9,7 @@ import type { STLFileV2 } from "../../../types/stl";
 import type { SupportPointV2 } from "../../../support/types";
 import type { EditMode } from "../../EditModeControls";
 import type { SceneCtx } from "../scene-refs";
+import { BRACE_MESH_KEY_PREFIX } from "./useBraceMeshSync";
 
 export function useEditModeSync(
   ctx: SceneCtx,
@@ -85,7 +86,12 @@ export function useEditModeSync(
         mesh.addBehavior(drag);
       }
     }
-    for (const sm of ctx.supportMeshMapRef.current.values()) {
+    // ★ S-4b-2d: 같은 맵에 사는 기둥 연결 브레이스는 **절대 pickable 로 만들지
+    //   않는다.** 리드 확정 "다리 개별 삭제는 불필요 — 자동으로만" 이라 클릭
+    //   대상이 아니고, pickable 이 되면 다리를 집어 기둥을 옮기려 드는 오조작이
+    //   난다(브레이스는 `onMoveSupport` 가 알 수 있는 점 id 가 없다).
+    for (const [key, sm] of ctx.supportMeshMapRef.current) {
+      if (key.startsWith(BRACE_MESH_KEY_PREFIX)) continue;
       sm.isPickable = editMode === "support";
     }
 

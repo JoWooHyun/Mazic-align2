@@ -11,6 +11,7 @@ import type { STLFileV2 } from "../../../types/stl";
 import type { SceneCtx } from "../scene-refs";
 import { buildSupportKey } from "../support-keys";
 import { clipBridgeWithManifold } from "../bridge-clip";
+import { BRACE_MESH_KEY_PREFIX } from "./useBraceMeshSync";
 
 /** 재설계(화살촉+수직 기둥) 경로로 갈 점인지. kind 있는 점만 새 경로. */
 function isRedesignPoint(p: SupportPointV2): boolean {
@@ -52,8 +53,14 @@ export function useSupportMeshSync(
     const map = ctx.supportMeshMapRef.current;
 
     // 1) 삭제된 support mesh dispose.
+    //   ★ S-4b-2d: 이 맵에는 기둥 연결 브레이스 메시도 함께 산다(출력물 포함을
+    //     위해 반드시 같은 맵이어야 한다 — useBraceMeshSync 머리 주석). 브레이스
+    //     키는 접두사로 갈리며 **그 소유자는 useBraceMeshSync** 다. 여기서 건너뛰지
+    //     않으면 이 훅이 돌 때마다 "supports 에 없는 id" 로 보고 전부 지워 버려
+    //     다리가 깜빡이다 사라진다.
     const newIds = new Set(supports.map((s) => s.id));
     for (const [id, mesh] of Array.from(map)) {
+      if (id.startsWith(BRACE_MESH_KEY_PREFIX)) continue;
       if (!newIds.has(id)) {
         mesh.dispose();
         map.delete(id);

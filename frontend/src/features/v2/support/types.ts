@@ -224,3 +224,48 @@ export type {
   PreprocessPoint,
   SharedPillarCluster,
 } from "./detect/preprocess-points";
+
+/**
+ * 기둥 연결 브레이스 **저장 레코드** (S-4b-2d 2단계).
+ *
+ * ## 왜 `SupportPointV2` 가 아니라 별도 레코드인가 (설계 확정 — 로드맵 S-4b-2d)
+ * 다리는 **두 기둥에 걸쳐 있다.** 렌더 계층은 `Map<point.id, Mesh>` 를 전제하므로
+ * (`useSupportMeshSync.ts`) 다리를 한쪽 점에 매달면 **상대 기둥의 변화를 rebuild
+ * key 가 못 본다**. 또 `buildSupportKey` 를 고쳐야 해 "키 무회귀" 계약
+ * (`verify-route-plan.mjs` §키 무회귀)에 회귀 위험이 생긴다.
+ * 파생(저장 안 함)도 기각 — 브레이스는 `BeamProbe` 가 필요한데 probe 생성은
+ * 삼각형 추출+격자 인덱스라 비싸고(`redesign-detect-actions.ts` 의 "mesh 당 1회"
+ * 경고), 조립 훅은 params 변화마다 재실행되므로 슬라이더 드래그가 freeze 된다.
+ *
+ * ## 왜 같은 스토어(STORE_SUPPORTS)에 넣는가
+ * `by_project` / `by_stl` 인덱스를 그대로 재사용하면 **cascade 삭제가 공짜**다
+ * (`deleteSupportsByProject` / `deleteSupportsByStl` 가 브레이스까지 지운다).
+ * DB_VERSION 을 올리지 않아 기존 프로젝트에 마이그레이션이 필요 없다.
+ * 이종 레코드를 같은 스토어에 두는 것은 `supports.repo.ts` 의 `isDiscRecord`
+ * 가 이미 쓰는 **기존 선례**다 — 판별 필드(`recordKind`)로 조회에서 걸러낸다.
+ */
+export interface PillarBraceRecord {
+  /** 레코드 판별 필드. 이 값이 있어야 브레이스다 — 조회 필터의 유일한 기준. */
+  recordKind: "pillarBrace";
+  id: string;
+  projectId: string;
+  /** 두 기둥이 딸린 STL. `by_stl` 인덱스로 모델 삭제 cascade 를 탄다. */
+  stlId: string;
+  /** 시작 기둥의 SupportPointV2 id — 그 기둥이 지워지면 이 다리도 지운다. */
+  fromPointId: string;
+  /** 끝 기둥의 SupportPointV2 id — 마찬가지. */
+  toPointId: string;
+  /**
+   * 다리 시작 world 좌표. 좌표 공간은 `coordSpace` 를 따른다.
+   *   기둥 점과 같은 규약으로 **stl-local 로 저장**한다 — 모델을 옮겨도 다리가
+   *   기둥과 함께 따라가야 형상이 유지된다(`routeWaypoints` 와 같은 논지).
+   */
+  from: [number, number, number];
+  /** 다리 끝 좌표 (from 과 같은 공간). */
+  to: [number, number, number];
+  /** 다리 반경 (mm) — 계획 모듈이 정한 값(두 기둥 반경 중 작은 쪽). */
+  radiusMm: number;
+  /** 좌표 공간. 신규 레코드는 항상 'stl-local'. */
+  coordSpace: "stl-local";
+  addedAt: number;
+}

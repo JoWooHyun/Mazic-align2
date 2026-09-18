@@ -11,7 +11,7 @@ import * as stlRepo from "../data/stl-files.repo";
 import * as supportRepo from "../data/supports.repo";
 import type { ProjectV2 } from "../types/project";
 import type { STLFileV2 } from "../types/stl";
-import type { SupportPointV2 } from "../support/types";
+import type { PillarBraceRecord, SupportPointV2 } from "../support/types";
 import { makeZipStore, unzipStore, type ZipEntry } from "./zip-store";
 
 interface ArchiveMetadata {
@@ -20,6 +20,16 @@ interface ArchiveMetadata {
   /** stlId → fileName / addedAt / transform. blob 은 별도 stl/<id>.stl 에. */
   stlFiles: Omit<STLFileV2, "blob">[];
   supports: SupportPointV2[];
+  /**
+   * 기둥 연결(좌굴 방지) 다리 — S-4b-2d.
+   *
+   * ⚠️ **옵셔널**: 이 필드가 없던 시절의 아카이브를 그대로 열 수 있어야 한다
+   *   (version 을 올리지 않는 이유 — 구 아카이브에는 다리가 애초에 없다).
+   *   supports 와 **별도 수집**이 필수다. `listSupportsByProject` 는
+   *   `isForeignRecord` 로 브레이스를 걸러내므로 여기 안 담으면 내보내기에
+   *   **한 건도 안 들어가고, 가져오기 후 다리가 전부 사라진다**(검수 지적).
+   */
+  pillarBraces?: PillarBraceRecord[];
 }
 
 const META = "metadata.json";
@@ -32,12 +42,15 @@ export async function exportProjectArchive(projectId: string): Promise<Blob> {
   if (!project) throw new Error(`프로젝트 없음: ${projectId}`);
   const stlFiles = await stlRepo.listStlFilesByProject(projectId);
   const supports = await supportRepo.listSupportsByProject(projectId);
+  // 브레이스는 같은 스토어에 살지만 listSupportsByProject 가 걸러내므로 따로 받는다.
+  const pillarBraces = await supportRepo.listPillarBracesByProject(projectId);
 
   const meta: ArchiveMetadata = {
     version: 1,
     project,
     stlFiles: stlFiles.map(({ blob: _b, ...rest }) => rest),
     supports,
+    pillarBraces,
   };
 
   const entries: ZipEntry[] = [
@@ -172,6 +185,24 @@ export async function importProjectArchive(
         : undefined,
     }));
   await supportRepo.addSupports(newSupports);
+
+  // 4) 기둥 연결 다리 — 점과 **같은 newId 맵**을 태운다.
+  //   fromPointId/toPointId 가 위에서 remap 된 점 id 와 같은 값을 받아야
+  //   cascade(`deletePillarBracesByPointIds`)가 새 id 로 매치된다. 맵을 공유하지
+  //   않으면 기둥을 지워도 다리가 안 지워지는 **고아 레코드**가 된다.
+  //   구 아카이브에는 이 필드가 없다(옵셔널) — 그 경우 조용히 건너뛴다.
+  const braces = meta.pillarBraces ?? [];
+  if (braces.length > 0) {
+    const newBraces: PillarBraceRecord[] = braces.map((b) => ({
+      ...b,
+      id: newId(b.id),
+      projectId: newProjectId,
+      stlId: newId(b.stlId),
+      fromPointId: newId(b.fromPointId),
+      toPointId: newId(b.toPointId),
+    }));
+    await supportRepo.addPillarBraces(newBraces);
+  }
 
   return { projectId: newProjectId };
 }

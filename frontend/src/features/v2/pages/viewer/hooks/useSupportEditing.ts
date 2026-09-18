@@ -262,6 +262,17 @@ export function useSupportEditing({
       for (const id of cascadeIds) {
         await supportRepo.deleteSupport(id);
       }
+      // ★ S-4b-2d 기둥 연결 cascade — 리드 확정 "다리 개별 삭제는 불필요,
+      //   기둥을 지우면 그 기둥의 다리도 사라지면 된다."
+      //   다리는 **두 기둥에 걸쳐** 있으므로 어느 한쪽이 사라져도 지워야 한다
+      //   (한 끝이 없는 다리는 허공에 뜬 채 출력물에 들어간다).
+      //   삭제된 레코드를 받아 두어야 undo 로 복원할 수 있다.
+      const removedBraces = projectId
+        ? await supportRepo.deletePillarBracesByPointIds(
+            projectId,
+            Array.from(cascadeIds),
+          )
+        : [];
       await refreshSupports();
       if (selectedSupportId && cascadeIds.has(selectedSupportId)) {
         setSelectedSupportId(null);
@@ -270,16 +281,28 @@ export function useSupportEditing({
         label: "remove-support",
         undo: async () => {
           await addSupports(removed);
+          // 기둥이 돌아오면 그 다리도 돌아온다 (cascade 의 역연산).
+          if (removedBraces.length > 0) {
+            await supportRepo.addPillarBraces(removedBraces);
+            await refreshSupports();
+          }
         },
         redo: async () => {
           for (const id of cascadeIds) {
             await supportRepo.deleteSupport(id);
           }
+          if (projectId) {
+            await supportRepo.deletePillarBracesByPointIds(
+              projectId,
+              Array.from(cascadeIds),
+            );
+          }
           await refreshSupports();
         },
       });
     },
-    [supports, addSupports, refreshSupports, selectedSupportId],
+    // 규칙 7 — projectId 는 브레이스 cascade 조회에 쓰이는 반응형 값이라 deps 필수.
+    [projectId, supports, addSupports, refreshSupports, selectedSupportId],
   );
 
   const handleMoveSupport = useCallback(
@@ -424,17 +447,27 @@ export function useSupportEditing({
     if (!projectId) return;
     if (supports.length === 0) return;
     const snapshot: SupportPointV2[] = supports.slice();
+    // ⚠️ 다리도 함께 스냅샷한다. clearAllSupports → deleteSupportsByProject 는
+    //   같은 스토어의 브레이스 레코드까지 지우는데(의도된 cascade), 점만
+    //   되돌리면 **다리는 영구 소실**된다 — 되돌리기를 썼을 뿐인데 출력물이
+    //   달라진다. handleRemoveSupport 가 이미 같은 패턴을 쓰고 있어,
+    //   안 맞추면 한 파일 안에서 비대칭이 된다(검수 지적).
+    const braceSnapshot = await supportRepo.listPillarBracesByProject(projectId);
     await clearAllSupports();
     useUndoStore.getState().push({
       label: "clear-supports",
       undo: async () => {
         await addSupports(snapshot);
+        if (braceSnapshot.length > 0) {
+          await supportRepo.addPillarBraces(braceSnapshot);
+          await refreshSupports();
+        }
       },
       redo: async () => {
         await clearAllSupports();
       },
     });
-  }, [projectId, supports, clearAllSupports, addSupports]);
+  }, [projectId, supports, clearAllSupports, addSupports, refreshSupports]);
 
   return {
     // 상태
