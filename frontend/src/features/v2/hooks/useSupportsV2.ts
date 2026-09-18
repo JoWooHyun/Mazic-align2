@@ -1,26 +1,39 @@
 import { useCallback, useEffect, useState } from "react";
 
 import * as repo from "../data/supports.repo";
-import type { SupportPointV2 } from "../support/types";
+import type { PillarBraceRecord, SupportPointV2 } from "../support/types";
 
 /**
  * 한 프로젝트의 서포트 점 목록 + 일괄 add / 단일·일괄 remove / 전부 clear.
  */
 export function useSupportsV2(projectId: string | undefined) {
   const [supports, setSupports] = useState<SupportPointV2[]>([]);
+  /**
+   * 기둥 연결 브레이스 (S-4b-2d). 서포트 점과 **같은 스토어**에 살지만 조회는
+   *   별도 함수로 가른다 — `SupportPointV2[]` 에 섞이면 조립·export 가 다리를
+   *   기둥으로 세우려 든다(타입 오염). refresh 한 번에 둘 다 읽어 두 목록이
+   *   서로 다른 시점의 DB 를 보는 일이 없게 한다.
+   */
+  const [pillarBraces, setPillarBraces] = useState<PillarBraceRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(Boolean(projectId));
   const [error, setError] = useState<Error | null>(null);
 
   const refresh = useCallback(async () => {
     if (!projectId) {
       setSupports([]);
+      setPillarBraces([]);
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      setSupports(await repo.listSupportsByProject(projectId));
+      const [points, braces] = await Promise.all([
+        repo.listSupportsByProject(projectId),
+        repo.listPillarBracesByProject(projectId),
+      ]);
+      setSupports(points);
+      setPillarBraces(braces);
     } catch (e) {
       setError(e as Error);
     } finally {
@@ -31,6 +44,20 @@ export function useSupportsV2(projectId: string | undefined) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /**
+   * 기둥 연결 브레이스 일괄 추가 (S-4b-2d). 점 저장과 **같은 패턴**.
+   *   삭제 전용 함수는 두지 않는다 — 리드 확정대로 다리는 개별 삭제 대상이
+   *   아니고, 기둥 삭제 cascade 는 `useSupportEditing` 이 repo 를 직접 부른다.
+   */
+  const addPillarBraces = useCallback(
+    async (braces: PillarBraceRecord[]) => {
+      if (braces.length === 0) return;
+      await repo.addPillarBraces(braces);
+      await refresh();
+    },
+    [refresh],
+  );
 
   const addMany = useCallback(
     async (points: SupportPointV2[]) => {
@@ -99,6 +126,8 @@ export function useSupportsV2(projectId: string | undefined) {
 
   return {
     supports,
+    pillarBraces,
+    addPillarBraces,
     loading,
     error,
     refresh,

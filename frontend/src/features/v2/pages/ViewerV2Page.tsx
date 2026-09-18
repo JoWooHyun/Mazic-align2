@@ -59,6 +59,9 @@ const ViewerV2Page: React.FC = () => {
 
   const {
     supports,
+    // S-4b-2d 기둥 연결 브레이스 — 같은 스토어·별도 목록(타입 오염 방지).
+    pillarBraces,
+    addPillarBraces,
     addMany: addSupports,
     removeMany: removeSupports,
     clearAll: clearAllSupports,
@@ -237,6 +240,7 @@ const ViewerV2Page: React.FC = () => {
     layerHeightMm: slicePreview.layerHeightMm,
     addSupports,
     refreshSupports,
+    addPillarBraces,
   });
 
   // 네이티브 열기 + 드래그앤드롭.
@@ -594,6 +598,7 @@ const ViewerV2Page: React.FC = () => {
             gizmoMode={gizmoMode}
             onGizmoCommit={handleCommitTransform}
             supports={supports}
+            pillarBraces={pillarBraces}
             supportParams={supportParams}
             plateWidthMm={printerProfile.buildVolumeMm[0]}
             plateDepthMm={printerProfile.buildVolumeMm[1]}

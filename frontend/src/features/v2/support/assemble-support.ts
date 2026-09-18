@@ -25,13 +25,18 @@ import {
   type Scene,
 } from "@babylonjs/core";
 
-import type { SupportParams, SupportPointV2 } from "./types";
+import type {
+  PillarBraceRecord,
+  SupportParams,
+  SupportPointV2,
+} from "./types";
 import {
   assembleVerticalSupport,
   resolveRedesignBaseY,
   type VerticalSupportSpec,
 } from "./assemble-core";
 import { assembleRoutedSupport, type RoutedSupportSpec } from "./assemble-route";
+import { assemblePillarBraces } from "./assemble-brace";
 import type { Vec3 } from "./assemble-strut";
 import { getSupportParts } from "./parts-cache";
 
@@ -226,4 +231,77 @@ function buildRoutedSpec(
     ...dims,
     route: { kind: "joinPillar", junctionWorld: [wBase.x, wBase.y, wBase.z] },
   };
+}
+
+/**
+ * 기둥 연결 브레이스 묶음 → Babylon Mesh (S-4b-2d 2단계).
+ *   `createRedesignSupportMesh` 와 **같은 좌표 규약**을 쓴다:
+ *     저장(stl-local) → world 로 펴서 조립 → inv(world) 로 로컬화 → parent=stlMesh.
+ *   그래야 모델을 옮기거나 돌려도 다리가 기둥에 붙은 채 따라간다(race 0).
+ *
+ *   ⚠️ 수직 기둥과 달리 **플레이트 고정(resolveRedesignBaseY)을 하지 않는다.**
+ *   다리는 두 기둥 옆면에 걸리는 구조물이라 플레이트와 아무 관계가 없다 —
+ *   Y 를 0 으로 끌면 다리가 바닥까지 늘어져 형상이 무너진다(joinPillar 의
+ *   `baseAnchor:'model'` 함정과 같은 종류).
+ *
+ * @param braces 한 STL 에 속한 브레이스 레코드 묶음(전부 같은 stlId).
+ * @returns 병합 Mesh. 부품 미로드·빈 입력이면 null.
+ */
+export function createPillarBraceMesh(
+  scene: Scene,
+  stlId: string,
+  braces: readonly PillarBraceRecord[],
+  material: StandardMaterial,
+  stlMeshMap?: Map<string, Mesh>,
+): Mesh | null {
+  const parts = getSupportParts();
+  if (!parts || braces.length === 0) return null;
+
+  const stlMesh = stlMeshMap?.get(stlId) ?? null;
+  if (stlMesh) stlMesh.computeWorldMatrix(true);
+  const world = stlMesh ? stlMesh.getWorldMatrix() : null;
+  const toWorld = (p: [number, number, number]): Vec3 => {
+    if (!world) return [p[0], p[1], p[2]];
+    const v = Vector3.TransformCoordinates(new Vector3(p[0], p[1], p[2]), world);
+    return [v.x, v.y, v.z];
+  };
+
+  const geo = assemblePillarBraces(
+    parts,
+    braces.map((b) => ({
+      from: toWorld(b.from),
+      to: toWorld(b.to),
+      radiusMm: b.radiusMm,
+    })),
+  );
+  if (geo.positions.length === 0) return null;
+
+  // world 형상 완성 후 로컬화 (assemble-route 규약 — shift 0).
+  const invWorld = world ? Matrix.Invert(world) : null;
+  const positions = new Float32Array(geo.positions.length);
+  const tmp = new Vector3();
+  for (let i = 0; i < geo.positions.length; i += 3) {
+    tmp.set(geo.positions[i], geo.positions[i + 1], geo.positions[i + 2]);
+    const out = invWorld ? Vector3.TransformCoordinates(tmp, invWorld) : tmp;
+    positions[i] = out.x;
+    positions[i + 1] = out.y;
+    positions[i + 2] = out.z;
+  }
+
+  const mesh = new Mesh(`pillarBrace_${stlId}`, scene);
+  const vd = new VertexData();
+  vd.positions = positions;
+  vd.indices = Array.from(geo.indices);
+  const normals: number[] = [];
+  VertexData.ComputeNormals(positions, vd.indices, normals);
+  vd.normals = normals;
+  vd.applyToMesh(mesh);
+
+  mesh.material = material;
+  // 리드 확정: 다리 개별 선택·삭제는 불필요 — 클릭 대상이 아니다.
+  mesh.isPickable = false;
+  mesh.metadata = { type: "pillarBrace", stlId };
+
+  if (stlMesh) mesh.parent = stlMesh;
+  return mesh;
 }

@@ -10,6 +10,7 @@ import { useSceneRefs } from "./babylon/scene-refs";
 import { useSceneBootstrap } from "./babylon/hooks/useSceneBootstrap";
 import { useFileMeshSync } from "./babylon/hooks/useFileMeshSync";
 import { useSupportMeshSync } from "./babylon/hooks/useSupportMeshSync";
+import { useBraceMeshSync } from "./babylon/hooks/useBraceMeshSync";
 import { useSupportPartsReady } from "../support/hooks/useSupportPartsReady";
 import { useSelectionSync } from "./babylon/hooks/useSelectionSync";
 import { useSlicePreview } from "./babylon/hooks/useSlicePreview";
@@ -28,6 +29,7 @@ import type {
   BabylonSceneHandle,
   BabylonSceneProps,
 } from "./babylon/babylon-scene-types";
+import type { PillarBraceRecord } from "../support/types";
 
 // 공개 타입 re-export — 소비자는 계속 `./BabylonScene` 에서 import 한다.
 export type {
@@ -38,6 +40,9 @@ export type {
   BuildVolumeIssue,
 } from "./babylon/babylon-scene-types";
 
+/** pillarBraces 미지정 시의 고정 빈 배열 — 참조 안정성용(위 #3.6 주석 참고). */
+const EMPTY_BRACES: PillarBraceRecord[] = [];
+
 const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
   function BabylonScene(props, ref) {
     const {
@@ -46,6 +51,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       overhangAngleDeg,
       gizmoMode,
       supports,
+      pillarBraces,
       supportParams,
       plateWidthMm,
       plateDepthMm,
@@ -86,6 +92,17 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       supportPartsReady,
       files,
     ); // #3.5 서포트 mesh diff 동기화
+    // #3.6 기둥 연결 브레이스 mesh 동기화 (S-4b-2d). ★ #3.5 **바로 뒤**에 둔다 —
+    //   두 훅이 같은 맵(supportMeshMapRef)을 쓰고, #3.5 의 "없는 키는 dispose"
+    //   루프가 브레이스 접두사를 건너뛰도록 짝지어져 있다(불변식 1: 훅 순서 고정).
+    //   빈 배열 기본값은 호출마다 새 참조가 되면 effect 가 매 렌더 재실행되므로
+    //   모듈 상수(EMPTY_BRACES)를 쓴다 — rebuild = freeze 불변식.
+    useBraceMeshSync(
+      ctx,
+      pillarBraces ?? EMPTY_BRACES,
+      supportPartsReady,
+      files,
+    );
     useSelectionSync(
       ctx,
       selectedIds,

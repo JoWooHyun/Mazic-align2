@@ -34,6 +34,19 @@ import {
   type RoutePoint,
   type RouteReport,
 } from "../../support/route-plan";
+import {
+  planPillarInterconnect,
+  DEFAULT_INTERCONNECT_H1_MM,
+  DEFAULT_INTERCONNECT_H2_MM,
+  DEFAULT_LINK_DIST_FACTOR,
+  DEFAULT_MAX_BRACES_PER_PILLAR,
+  DEFAULT_MAX_ZIGZAG_STEPS,
+  DEFAULT_MIN_HEIGHT_RATIO,
+  type InterconnectReport,
+  type PillarInput,
+} from "../../support/interconnect-pillars";
+import { DEFAULT_STRUCTURAL_ANGLE_DEG } from "../../support/detect/preprocess-points";
+import type { PillarBraceRecord } from "../../support/types";
 import type { SceneCtx } from "./scene-refs";
 import { getActiveStl } from "./scene-actions";
 
@@ -337,10 +350,17 @@ export function routeAndFinalizePoints(
   ctx: SceneCtx,
   points: SupportPointV2[],
   params: SupportParams,
-): { points: SupportPointV2[]; report: RouteReport | null } {
+): {
+  points: SupportPointV2[];
+  report: RouteReport | null;
+  braces: PillarBraceRecord[];
+  braceReport: InterconnectReport | null;
+} {
   const scene = ctx.sceneRef.current;
   const active = getActiveStl(ctx);
-  if (!scene || !active) return { points, report: null };
+  if (!scene || !active) {
+    return { points, report: null, braces: [], braceReport: null };
+  }
   const { mesh } = active;
   mesh.computeWorldMatrix(true);
 
@@ -370,6 +390,15 @@ export function routeAndFinalizePoints(
   //   routes[i] ↔ deduped[i] 는 1:1 (route-plan 의 순서 계약).
   const toLocal = (w: [number, number, number]) => worldToStlLocal(w, mesh);
   const finalized: SupportPointV2[] = [];
+  /**
+   * 기둥 연결(S-4b-2d) 입력 — **이 루프 안에서** 모은다.
+   *   ⚠️ 루프를 빠져나가면 좌표가 이미 stl-local 로 변환된 뒤라 world 로
+   *   되돌리려면 world matrix 를 한 번 더 곱해야 한다(불필요한 비용 + 왕복
+   *   부동소수 오차). 아래 case 들이 world 값(cx/cy/cz, landingXZ, anchorPoint)
+   *   을 손에 쥐고 있는 바로 이 자리에서 담는 것이 유일하게 싼 지점이다.
+   */
+  const pillarInputs: PillarInput[] = [];
+  const pillarRadiusMm = params.trunkDiameterMm / 2;
   for (let i = 0; i < deduped.length; i++) {
     const src = deduped[i] as RoutePoint & { origin: SupportPointV2 };
     const route = routes[i];
@@ -388,6 +417,15 @@ export function routeAndFinalizePoints(
           coordSpace: "stl-local",
           baseAnchor: "plate",
         });
+        // 기둥 = 접점 → 플레이트 (world).
+        pillarInputs.push({
+          id: p.id,
+          polyline: [
+            [cx, cy, cz],
+            [cx, 0, cz],
+          ],
+          radiusMm: pillarRadiusMm,
+        });
         break;
       }
       case "bent": {
@@ -401,6 +439,17 @@ export function routeAndFinalizePoints(
           baseAnchor: "plate",
           routeKind: "bent",
           routeWaypoints: route.waypoints.map((w) => toLocal(w)),
+        });
+        // 기둥 = 접점 → waypoints → 착지점 (world). 꺾인 구간도 좌굴 대상이라
+        //   경로 전체를 넘긴다(계획 모듈이 경로 Y 범위를 높이로 본다).
+        pillarInputs.push({
+          id: p.id,
+          polyline: [
+            [cx, cy, cz] as [number, number, number],
+            ...route.waypoints,
+            [lx, 0, lz] as [number, number, number],
+          ],
+          radiusMm: pillarRadiusMm,
         });
         break;
       }
@@ -424,6 +473,17 @@ export function routeAndFinalizePoints(
       }
       case "anchor": {
         // base = 모델 표면 앵커 지점. 위와 같은 이유로 'model'.
+        //
+        // ★ 앵커는 **기둥으로 보지 않는다** (S-4b-2d 판단 근거):
+        //   ① 앵커는 플레이트가 아니라 **모델 표면에 얹혀 있다.** 좌굴은 "바닥에
+        //      길게 선 기둥이 옆으로 휘는 것"인데, 앵커는 위·아래 양쪽이 모델에
+        //      물려 있어 그 하중 경로 자체가 없다. 여기에 다리를 걸면 이웃 기둥의
+        //      좌굴 하중을 **모델 표면으로 흘려보내** 오히려 모델을 밀게 된다.
+        //   ② 길이로도 대상이 안 된다 — 앵커 다리는 `DEFAULT_ANCHOR_MAX_LENGTH_MM`
+        //      (=10mm) 로 잘리므로 1차 임계 15mm 를 **구조적으로 넘을 수 없다.**
+        //      즉 "연결이 필요한 쪽"으로는 어차피 뽑히지 않고, 남는 것은 "이웃으로
+        //      선택될 여지"뿐인데 그게 ① 때문에 해로운 경우다.
+        //   (joinPillar 는 기둥이 아니라 기둥에 매달린 가지라 리드 지시대로 제외.)
         finalized.push({
           ...p,
           contact: localContact,
@@ -440,5 +500,52 @@ export function routeAndFinalizePoints(
     }
   }
 
-  return { points: finalized, report };
+  // ── 4) 기둥 연결(좌굴 방지) 계획 — S-4b-2d ─────────────────────────────
+  //   ★ 옵션은 **전부 명시적으로** 넘긴다. 모듈 기본값에 의존하면 S-4d 에서 UI 를
+  //     붙일 때 호출부를 다시 찾아야 하고, `useDetectParamsStore.ts:19-23` 이
+  //     기록한 실패 패턴("상수는 선언됐는데 읽는 데가 없어 값이 모듈에 굳음")이
+  //     반복된다. 반경은 `planClusterRoutes` 호출부와 **같은 출처**(params 유도).
+  //   probe 는 위 :355 에서 이미 만든 것을 재사용한다 — 재생성은 삼각형 추출 +
+  //     격자 인덱스라 비싸다(collision-probe T-2).
+  const { braces: planned, report: braceReport } = planPillarInterconnect(
+    pillarInputs,
+    probe,
+    {
+      structuralAngleDeg: DEFAULT_STRUCTURAL_ANGLE_DEG,
+      h1Mm: DEFAULT_INTERCONNECT_H1_MM,
+      h2Mm: DEFAULT_INTERCONNECT_H2_MM,
+      linkDistFactor: DEFAULT_LINK_DIST_FACTOR,
+      minHeightRatio: DEFAULT_MIN_HEIGHT_RATIO,
+      maxBracesPerPillar: DEFAULT_MAX_BRACES_PER_PILLAR,
+      maxZigzagSteps: DEFAULT_MAX_ZIGZAG_STEPS,
+    },
+  );
+
+  // 저장 레코드로 변환 — 좌표는 기둥 점과 **같은 공간**(stl-local)으로 옮긴다.
+  //   셋이 함께 모델을 따라가야 다리가 기둥에 붙은 채로 유지된다.
+  //   projectId 는 기둥 점에서 그대로 가져온다 — 브레이스는 그 점들이 없으면
+  //   존재할 수 없으므로 별도 인자로 받을 이유가 없고, 인자로 받으면 호출부가
+  //   점과 다른 프로젝트 id 를 넘길 여지가 생긴다.
+  const braceProjectId = finalized[0]?.projectId ?? "";
+  const braces: PillarBraceRecord[] =
+    braceProjectId === ""
+      ? []
+      : planned.map((b, i) => ({
+          recordKind: "pillarBrace" as const,
+          // id 는 페어·단 번호·교차 여부로 결정적으로 만든다 — 같은 입력이면 같은
+          //   id 라 재실행 시 put(upsert)이 중복 레코드를 쌓지 않는다(계획 모듈의
+          //   결정성 계약).
+          id: `brace_${b.fromId}_${b.toId}_${b.step}_${b.cross ? "x" : "z"}_${i}`,
+          projectId: braceProjectId,
+          stlId: active.id,
+          fromPointId: b.fromId,
+          toPointId: b.toId,
+          from: toLocal(b.from),
+          to: toLocal(b.to),
+          radiusMm: b.radiusMm,
+          coordSpace: "stl-local" as const,
+          addedAt: Date.now(),
+        }));
+
+  return { points: finalized, report, braces, braceReport };
 }
