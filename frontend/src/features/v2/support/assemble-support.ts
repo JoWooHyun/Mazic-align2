@@ -29,11 +29,32 @@ import type { SupportParams, SupportPointV2 } from "./types";
 import {
   assembleVerticalSupport,
   resolveRedesignBaseY,
+  usesHeadNormal,
   type VerticalSupportSpec,
 } from "./assemble-core";
 import { assembleRoutedSupport, type RoutedSupportSpec } from "./assemble-route";
 import type { Vec3 } from "./assemble-strut";
 import { getSupportParts } from "./parts-cache";
+
+/**
+ * 저장된 접점 법선(점의 coordSpace 기준) → **world 단위벡터** (S-4e-1).
+ *   stlMesh 가 없으면 저장 좌표가 곧 world 라 정규화만 한다. 길이 0/NaN 이면
+ *   방향을 정할 수 없으므로 undefined → 호출 측이 수직 폴백을 탄다.
+ */
+function toWorldNormal(
+  normal: [number, number, number] | undefined,
+  stlMesh: Mesh | null,
+): Vec3 | undefined {
+  if (!normal) return undefined;
+  let v = new Vector3(normal[0], normal[1], normal[2]);
+  if (stlMesh) {
+    stlMesh.computeWorldMatrix(true);
+    v = Vector3.TransformNormal(v, stlMesh.getWorldMatrix());
+  }
+  const len = v.length();
+  if (!(len > 0) || !Number.isFinite(len)) return undefined;
+  return [v.x / len, v.y / len, v.z / len];
+}
 
 /**
  * 재설계(island/slope) 서포트 점 → 화살촉+수직 기둥 Mesh.
@@ -88,10 +109,28 @@ export function createRedesignSupportMesh(
   const tipDiameterMm =
     point.tipRadius != null ? point.tipRadius * 2 : params.tipDiameterMm;
 
+  // ── S-4e-1: 화살촉 법선 방향 (world) ──────────────────────────────────
+  //   저장된 contactNormal 은 점의 coordSpace(재설계 점은 stl-local) 기준 **원시**
+  //   법선이라, contact 좌표와 같은 행렬 쌍으로 world 로 되돌린다. 방향 벡터이므로
+  //   TransformCoordinates(평행이동 포함)가 아니라 **TransformNormal** 을 쓴다.
+  //   판정은 rebuild key(support-keys `buildSupportKey`)와 **같은 함수**
+  //   `usesHeadNormal` — 재설계 점 + flag on + 법선 있음. 아니면 undefined →
+  //   조립이 종전 수직 경로를 탄다(flag off·옛 점·비재설계 점 무회귀).
+  const headDir = usesHeadNormal(point, params)
+    ? toWorldNormal(point.contactNormal, stlMesh)
+    : undefined;
+
   // ── S-4b-2c: 폴백 경로(bent/anchor/joinPillar) 분기 ─────────────────────
   //   routeKind 미설정/'vertical' 은 **아래 기존 경로 그대로** — 옛 데이터와
   //   1단(수직) 점은 S-4b-1 과 완전히 같은 형상이 나온다(무회귀).
-  const routed = buildRoutedSpec(point, params, tipDiameterMm, toWorld, baseY);
+  const routed = buildRoutedSpec(
+    point,
+    params,
+    tipDiameterMm,
+    toWorld,
+    baseY,
+    headDir,
+  );
 
   // 조립 좌표 → world. 기존(수직) 경로는 로컬 XZ 원점 기준이라 contact XZ 로
   //   평행이동이 필요하고, 폴백 경로(assemble-route)는 **이미 world** 라 0 이다.
@@ -111,6 +150,7 @@ export function createRedesignSupportMesh(
       trunkDiameterMm: params.trunkDiameterMm,
       baseDiameterMm: params.baseDiameterMm,
       baseTransitionMm: params.baseTransitionMm,
+      headDir,
     };
     geo = assembleVerticalSupport(parts, spec);
     shiftX = cx;
@@ -179,6 +219,8 @@ function buildRoutedSpec(
   tipDiameterMm: number,
   toWorld: (p: [number, number, number]) => Vector3,
   plateBaseY: number,
+  /** S-4e-1 — 화살촉 방향(world 원시 법선). undefined 면 종전 수직. */
+  headDir?: Vec3,
 ): RoutedSupportSpec | null {
   const kind = point.routeKind;
   if (!kind || kind === "vertical") return null;
@@ -194,6 +236,7 @@ function buildRoutedSpec(
     trunkDiameterMm: params.trunkDiameterMm,
     baseDiameterMm: params.baseDiameterMm,
     baseTransitionMm: params.baseTransitionMm,
+    headDir,
   };
   const wBase = toWorld(point.base);
 

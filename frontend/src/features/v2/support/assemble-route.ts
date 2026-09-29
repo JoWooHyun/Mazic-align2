@@ -14,7 +14,10 @@
 
 import {
   appendArrowHead,
+  appendArrowHeadDir,
   appendTransformed,
+  saturateHeadDir,
+  HEAD_MAX_TILT_DEG,
   matMul,
   matRotX,
   matScale,
@@ -37,7 +40,7 @@ import {
  *   surfaceY/baseY 대신 **world 좌표**로 접점과 경로를 받는다(위 좌표계 주석).
  */
 export interface RoutedSupportSpec {
-  /** 접점 world 좌표. 화살촉이 여기 수직으로 붙는다. */
+  /** 접점 world 좌표. 화살촉이 여기 붙는다(방향은 headDir). */
   contactWorld: Vec3;
   /** 앞구슬(팁) 지름 = 2×point.tipRadius (없으면 params.tipDiameterMm). */
   tipDiameterMm: number;
@@ -53,6 +56,12 @@ export interface RoutedSupportSpec {
   baseDiameterMm: number;
   /** 바닥 발(원뿔) 높이 (params.baseTransitionMm). bent 에서만 쓴다. */
   baseTransitionMm: number;
+  /**
+   * S-4e-1 — 접점 화살촉이 나가는 방향 (world 단위벡터, **포화 전 원시값**).
+   *   미지정이면 종전대로 수직(−Y). 포화(45°)는 조립이 한 번만 한다.
+   *   경로(꺾임·앵커·합류)는 이 방향으로 옮겨진 **뒷구슬 중심**에서 시작한다.
+   */
+  headDir?: Vec3;
   /** 경로. `route-plan.ts` 의 PointRoute 를 world 좌표로 편 것. */
   route:
     | {
@@ -79,9 +88,9 @@ export interface RoutedSupportSpec {
 /**
  * 라우팅된 점 하나를 조립한다 (설계 4-4 폴백 3종).
  *
- * 공통: 접점 화살촉은 **항상 수직**이다 — S-4b-1 의 표면 스냅이 수직 레이라
- * 접점 법선을 모르고, 설계 4-1 도 접점을 수직으로 둔다. 경로의 꺾임은 화살촉
- * **아래**(뒷구슬 중심)에서 시작한다.
+ * 공통: 경로의 꺾임은 화살촉 **아래**(뒷구슬 중심)에서 시작한다. 화살촉 방향은
+ * S-4e-1 부터 `spec.headDir`(표면 법선, 45° 포화)을 따르며, 미지정이면 종전대로
+ * 수직이다 — 설계 4-1 "접점은 법선을 따라 붙되 수평 45°보다 눕지 못하게".
  *
  * @returns world 좌표계 병합 지오메트리.
  */
@@ -94,30 +103,56 @@ export function assembleRoutedSupport(
   const [cx, cy, cz] = spec.contactWorld;
   const strutR = spec.trunkDiameterMm * 0.5;
 
-  // ── 화살촉 (수직) ──────────────────────────────────────────────────────
-  //   appendArrowHead 는 로컬 XZ 원점 기준이므로, 임시 배열에 담아 XZ 로 옮긴다.
-  const headSpec: Pick<
-    VerticalSupportSpec,
-    "surfaceY" | "tipDiameterMm" | "headBackDiameterMm" | "contactPenetrationMm"
-  > = {
-    surfaceY: cy,
-    tipDiameterMm: spec.tipDiameterMm,
-    headBackDiameterMm: spec.headBackDiameterMm,
-    contactPenetrationMm: spec.contactPenetrationMm,
-  };
-  const headPos: number[] = [];
-  const headIdx: number[] = [];
-  const backCenterY = appendArrowHead(
-    parts,
-    headSpec,
-    spec.headLengthMm,
-    headPos,
-    headIdx,
-  );
-  appendRaw(accPos, accIdx, headPos, headIdx, cx, 0, cz);
-
-  /** 화살촉 아래 = 경로가 시작되는 자리 (world). */
-  const headBottom: Vec3 = [cx, backCenterY, cz];
+  // ── 화살촉 ─────────────────────────────────────────────────────────────
+  //   S-4e-1: headDir 이 있으면 그 방향(45° 포화)으로 기울여 붙이고, 없으면
+  //   **종전 수직 경로 그대로** 탄다(무회귀). 어느 쪽이든 경로는 뒷구슬 중심에서
+  //   시작한다 — 기울면 그 시작점이 접점 XZ 에서 최대 headLen·sin45° ≈ 0.71mm
+  //   비껴난다(assemble-core 의 같은 주석 참고).
+  //   ★ headDir 이 정확히 (0,−1,0)(평평한 밑면) 이면 **종전 분기로 떨어뜨린다**.
+  //     회전 행렬이 항등이라 형상은 같지만, 행렬 곱을 한 번 더 거치면 float32
+  //     마지막 자리가 1e-6mm 급으로 흔들려 positions 바이트가 달라진다 —
+  //     "평평한 밑면은 수정 전과 바이트 동일" 계약을 정확히 지키려면 경로 자체를
+  //     타지 말아야 한다(assemble-core 의 같은 short-circuit 과 짝).
+  const rawDir =
+    spec.headDir &&
+    !(spec.headDir[0] === 0 && spec.headDir[1] === -1 && spec.headDir[2] === 0)
+      ? spec.headDir
+      : undefined;
+  let headBottom: Vec3;
+  if (rawDir) {
+    headBottom = appendArrowHeadDir(
+      parts,
+      spec,
+      spec.headLengthMm,
+      spec.contactWorld,
+      saturateHeadDir(rawDir, HEAD_MAX_TILT_DEG),
+      accPos,
+      accIdx,
+    );
+  } else {
+    //   appendArrowHead 는 로컬 XZ 원점 기준이므로, 임시 배열에 담아 XZ 로 옮긴다.
+    const headSpec: Pick<
+      VerticalSupportSpec,
+      "surfaceY" | "tipDiameterMm" | "headBackDiameterMm" | "contactPenetrationMm"
+    > = {
+      surfaceY: cy,
+      tipDiameterMm: spec.tipDiameterMm,
+      headBackDiameterMm: spec.headBackDiameterMm,
+      contactPenetrationMm: spec.contactPenetrationMm,
+    };
+    const headPos: number[] = [];
+    const headIdx: number[] = [];
+    const backCenterY = appendArrowHead(
+      parts,
+      headSpec,
+      spec.headLengthMm,
+      headPos,
+      headIdx,
+    );
+    appendRaw(accPos, accIdx, headPos, headIdx, cx, 0, cz);
+    /** 화살촉 아래 = 경로가 시작되는 자리 (world). */
+    headBottom = [cx, backCenterY, cz];
+  }
 
   switch (spec.route.kind) {
     case "bent": {
@@ -183,6 +218,10 @@ export function assembleRoutedSupport(
  *
  * 뒤집힌 뒤의 기하: 앞구슬이 앵커 지점 **아래쪽**으로 침투 깊이만큼 파고들고,
  * 뒷구슬이 그 위 headLengthMm 지점에 온다 — 정방향의 정확한 거울상이다.
+ *
+ * ※ S-4e-1 범위 밖: 이쪽은 **수직(뒤집힌) 고정**으로 남긴다. 라우팅(route-plan)이
+ *   앵커 착지면의 법선을 내주지 않아 기울일 근거가 없기 때문이다. 앵커 면 법선을
+ *   경로 결과에 실어 오는 것이 선행 조건.
  */
 function appendInvertedHead(
   parts: SupportPartsSet,

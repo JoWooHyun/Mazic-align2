@@ -22,13 +22,19 @@ export const DEFAULT_SUPPORT_PARAMS: SupportParams = {
   headBackDiameterMm: 1.0,
   headLengthMm: 1.0,
   contactPenetrationMm: 0.2,
+  // S-4e-1: 화살촉을 접점 법선 방향으로 기울인다(설계 4-1). 프루사 기본형과 같은
+  //   모양. false 면 종전 수직 고정 그대로라 언제든 되돌릴 수 있다.
+  //   ★ 기본 off — S-4e-1b(합류 기둥·경사 다리 출발점을 뒷구슬 기준으로 라우팅)
+  //     전까지는 끈다. 켜면 joinPillar 합류부 겹침 부족·bent 첫 다리 45° 초과가
+  //     생길 수 있다(assemble-core `assembleVerticalSupport` 의 알려진 한계 주석).
+  headAlignNormal: false,
 };
 
 /**
  * 각 파라미터의 허용 범위. UI 슬라이더 / 유효성 검사 양쪽에서 쓴다.
  *   ※ 재설계(S-4b) 신규 파라미터(headBackDiameterMm / headLengthMm /
- *     contactPenetrationMm)는 이번 PR 에서 슬라이더를 만들지 않으므로(S-4d 몫)
- *     여기서 제외한다. 기본값(DEFAULT_SUPPORT_PARAMS)으로만 동작한다.
+ *     contactPenetrationMm)와 S-4e-1 의 headAlignNormal(불리언)은 슬라이더를
+ *     만들지 않으므로(S-4d 몫) 여기서 제외한다. 기본값(DEFAULT_SUPPORT_PARAMS)으로만 동작한다.
  */
 export const SUPPORT_PARAM_LIMITS: Record<
   keyof Omit<
@@ -37,6 +43,7 @@ export const SUPPORT_PARAM_LIMITS: Record<
     | "headBackDiameterMm"
     | "headLengthMm"
     | "contactPenetrationMm"
+    | "headAlignNormal"
   >,
   { min: number; max: number; step: number; unit: string; label: string }
 > = {

@@ -10,6 +10,7 @@
 import {
   Color3,
   type AbstractMesh,
+  Matrix,
   MeshBuilder,
   Ray,
   type Scene,
@@ -298,13 +299,21 @@ const SNAP_RAY_MAX_MM = 2.0;
  *   채** 떼어낸 것이다. 라우팅(3단 폴백)은 world 좌표에서 돌아야 하므로 stl-local
  *   변환은 맨 마지막(`routeAndFinalizePoints` 3단계)으로 미룬다.
  *
- * @returns 각 점의 스냅된 world contact ([x, y, z]) — 입력과 같은 순서·길이.
+ * ## S-4e-1 — 히트 **법선**도 함께 낸다
+ * 같은 레이의 히트에서 `getNormal(true)`(world, 정점법선 보간)를 꺼내 화살촉
+ * 방향의 원료로 쓴다. Babylon 의 `getNormal` 은 결과가 레이 방향과 같은 쪽을
+ * 향하면 자동으로 뒤집으므로, 레이가 +Y 인 여기서는 항상 y ≤ 0 — 그대로
+ * "접점에서 서포트 쪽으로 나가는 방향" 이다. 그래도 방어적으로 y > 0 이면
+ * 부호를 반전하고, 길이 0/NaN 이면 법선 없이(수직 폴백) 돌려준다.
+ *
+ * @returns 각 점의 스냅된 world contact 와 world 법선(옵셔널) — 입력과 같은
+ *          순서·길이.
  */
 function snapContactsToSurface(
   scene: Scene,
   mesh: AbstractMesh,
   points: readonly SupportPointV2[],
-): [number, number, number][] {
+): { contact: [number, number, number]; normal?: [number, number, number] }[] {
   const predicate = (m: AbstractMesh) => m === mesh;
   const up = new Vector3(0, 1, 0);
   return points.map((p) => {
@@ -312,8 +321,18 @@ function snapContactsToSurface(
     const origin = new Vector3(cx, cy - SNAP_RAY_MAX_MM * 0.5, cz);
     const ray = new Ray(origin, up, SNAP_RAY_MAX_MM);
     const hit = scene.pickWithRay(ray, predicate);
-    const snappedY = hit?.hit && hit.pickedPoint ? hit.pickedPoint.y : cy;
-    return [cx, snappedY, cz];
+    if (!hit?.hit || !hit.pickedPoint) return { contact: [cx, cy, cz] };
+    const contact: [number, number, number] = [cx, hit.pickedPoint.y, cz];
+    const n = hit.getNormal(true);
+    if (!n) return { contact };
+    const len = Math.hypot(n.x, n.y, n.z);
+    if (!(len > 0) || !Number.isFinite(len)) return { contact };
+    // 서포트 쪽(아래) 방향으로 정렬 — 위 주석의 방어적 부호 처리.
+    const sign = n.y > 0 ? -1 : 1;
+    return {
+      contact,
+      normal: [(n.x / len) * sign, (n.y / len) * sign, (n.z / len) * sign],
+    };
   });
 }
 
@@ -353,12 +372,20 @@ export function routeAndFinalizePoints(
   //   ★ S-4b-2c-f: Babylon 레이캐스트 대신 world 삼각형 배열 + 자체 격자 인덱스.
   //     여기서 mesh 당 **1회만** 추출한다(collision-probe 파일 머리 주석 T-2).
   const probe = makeTriangleBeamProbe(extractWorldTriangles(mesh));
-  const routeInput: (RoutePoint & { origin: SupportPointV2 })[] = points.map(
+  /** 라우팅 입력 + 저장 단계로 넘길 부가 정보(원본 점·스냅 법선). */
+  type RouteInput = RoutePoint & {
+    origin: SupportPointV2;
+    /** S-4e-1 — 표면 스냅 히트 법선(world). 라우팅은 소비하지 않는다. */
+    snapNormal?: [number, number, number];
+  };
+  const routeInput: RouteInput[] = points.map(
     (p, i) => ({
-      contact: snapped[i],
+      contact: snapped[i].contact,
       tipRadius: p.tipRadius,
       kind: p.kind,
       origin: p,
+      // S-4e-1: 화살촉 방향 원료. 라우팅은 쓰지 않고 3) 저장 단계로만 흘린다.
+      snapNormal: snapped[i].normal,
     }),
   );
   const { routes, deduped, report } = planClusterRoutes(routeInput, probe, {
@@ -369,24 +396,50 @@ export function routeAndFinalizePoints(
   // ── 3) 저장 형태 변환 ───────────────────────────────────────────────────
   //   routes[i] ↔ deduped[i] 는 1:1 (route-plan 의 순서 계약).
   const toLocal = (w: [number, number, number]) => worldToStlLocal(w, mesh);
+  /**
+   * S-4e-1 — world 법선 → stl-local 단위벡터. contact 좌표와 **같은 행렬 쌍**
+   *   (world↔inv(world))을 쓰므로 조립 측 `toWorldNormal` 과 정확히 왕복한다.
+   *   방향이라 TransformCoordinates 가 아니라 TransformNormal 이다.
+   *   법선이 없거나 퇴화하면 undefined → 저장 시 필드 자체를 생략한다.
+   *   inv(world) 는 **mesh 당 1회만** 구한다 — 함수 머리에서 computeWorldMatrix
+   *   (true) 로 확정한 뒤 이 함수 안에서 transform 이 바뀌지 않으므로 점마다
+   *   다시 역행렬을 구해도 결과가 같다(성능만 차이).
+   */
+  const invWorld = Matrix.Invert(mesh.getWorldMatrix());
+  const toLocalNormal = (
+    n: [number, number, number] | undefined,
+  ): [number, number, number] | undefined => {
+    if (!n) return undefined;
+    const v = Vector3.TransformNormal(new Vector3(n[0], n[1], n[2]), invWorld);
+    const len = v.length();
+    if (!(len > 0) || !Number.isFinite(len)) return undefined;
+    return [v.x / len, v.y / len, v.z / len];
+  };
   const finalized: SupportPointV2[] = [];
   for (let i = 0; i < deduped.length; i++) {
-    const src = deduped[i] as RoutePoint & { origin: SupportPointV2 };
+    const src = deduped[i] as RouteInput;
     const route = routes[i];
     const p = src.origin;
     const [cx, cy, cz] = src.contact;
     const localContact = toLocal([cx, cy, cz]);
+    // S-4e-1: 화살촉 방향(설계 4-1). **없으면 필드 자체를 생략**한다 —
+    //   undefined 를 명시 대입하면 옛 데이터와 저장 형태가 달라지고 key 도
+    //   흔들릴 수 있다(무회귀).
+    const localNormal = toLocalNormal(src.snapNormal);
+    const normalField = localNormal ? { contactNormal: localNormal } : {};
 
     switch (route.kind) {
       case "vertical": {
-        // ★ S-4b-1 과 **완전히 같은 저장 형태** — routeKind 조차 찍지 않는다.
-        //   찍으면 buildSupportKey 문자열이 달라져 무회귀가 깨진다(수용 6).
+        // ★ S-4b-1 과 같은 저장 형태 + **contactNormal 만 추가**(S-4e-1) —
+        //   routeKind 는 여전히 찍지 않는다. key 는 normal 이 있을 때만 달라진다
+        //   (buildSupportKey 의 조건부 항목 — 수용 4).
         finalized.push({
           ...p,
           contact: localContact,
           base: toLocal([cx, 0, cz]),
           coordSpace: "stl-local",
           baseAnchor: "plate",
+          ...normalField,
         });
         break;
       }
@@ -401,6 +454,7 @@ export function routeAndFinalizePoints(
           baseAnchor: "plate",
           routeKind: "bent",
           routeWaypoints: route.waypoints.map((w) => toLocal(w)),
+          ...normalField,
         });
         break;
       }
@@ -408,9 +462,7 @@ export function routeAndFinalizePoints(
         // base = 기둥 합류점. ★ baseAnchor 는 반드시 'model' —
         //   'plate' 면 resolveRedesignBaseY 가 Y 를 0 으로 강제해 다리가 바닥까지
         //   늘어나며 형상이 무너진다(assemble-support buildRoutedSpec 주석).
-        const pillarSrc = deduped[route.pillarPointIndex] as RoutePoint & {
-          origin: SupportPointV2;
-        };
+        const pillarSrc = deduped[route.pillarPointIndex] as RouteInput;
         finalized.push({
           ...p,
           contact: localContact,
@@ -419,6 +471,7 @@ export function routeAndFinalizePoints(
           baseAnchor: "model",
           routeKind: "joinPillar",
           joinPillarPointId: pillarSrc.origin.id,
+          ...normalField,
         });
         break;
       }
@@ -431,6 +484,7 @@ export function routeAndFinalizePoints(
           coordSpace: "stl-local",
           baseAnchor: "model",
           routeKind: "anchor",
+          ...normalField,
         });
         break;
       }

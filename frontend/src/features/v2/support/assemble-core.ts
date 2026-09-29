@@ -19,6 +19,8 @@
 //   로컬 XZ 원점(0, y, 0) 기준 수직으로 쌓는다. Babylon 래퍼가 이 로컬 형상을
 //   contact/base 방향으로 정렬·이동한다.
 
+import type { SupportParams, SupportPointV2 } from "./types";
+
 /**
  * 빌드플레이트 Y (world). 씬의 플레이트는 항상 여기 있다.
  */
@@ -77,6 +79,13 @@ export function resolveRedesignBaseY(
     : storedBaseWorldY;
 }
 
+/** 조립 좌표계 3D 점/방향 [x, y, z] (mm 또는 단위벡터).
+ *   S-4e-1 에서 assemble-strut.ts 에 있던 정의를 여기로 옮겼다 — 화살촉 방향
+ *   유틸(`saturateHeadDir`/`rotationYToDir`)이 이 파일에 필요한데, strut 이
+ *   core 를 import 하므로 반대 방향 import 는 **순환**이 된다. strut 은 이 타입을
+ *   그대로 재수출하므로 기존 import 경로(`./assemble-strut`)는 무회귀다. */
+export type Vec3 = [number, number, number];
+
 /** 병합 지오메트리 (positions: xyz flat, indices: 삼각형 3개씩). */
 export interface SupportPartsGeometry {
   positions: Float32Array;
@@ -113,6 +122,16 @@ export interface VerticalSupportSpec {
   baseDiameterMm: number;
   /** 바닥 발(원뿔) 높이 = 기둥→바닥 전이 (params.baseTransitionMm). */
   baseTransitionMm: number;
+  /**
+   * S-4e-1 — 화살촉이 접점에서 서포트 쪽으로 나가는 방향 (world 단위벡터,
+   * **포화 전 원시값**). 미지정이거나 정확히 (0,−1,0) 이면 종전 수직 경로를
+   * 그대로 탄다(positions 바이트 동일). 포화(45°)는 조립이 한 번만 한다.
+   *
+   * ⚠️ 이 spec 은 로컬 XZ 원점 기준 조립인데 headDir 만 world 방향이다 —
+   * 호출 측(assemble-support)이 월드 프레임에서 수직 조립하므로 두 축이
+   * 일치하기 때문이다(파일 머리 좌표계 주석 참고).
+   */
+  headDir?: Vec3;
 }
 
 // ── 4×4 어파인 행렬 유틸 (row-major, column-vector 곱: v' = M·v) ──────────
@@ -176,6 +195,213 @@ export function appendTransformed(
   }
   const idx = part.indices;
   for (let i = 0; i < idx.length; i++) accIdx.push(idx[i] + vbase);
+}
+
+/**
+ * 축이 정확히 ±Y 라고 볼 임계 — **수평 성분 크기** h = hypot(d.x, d.z) 기준.
+ *
+ * h 가 이보다 작으면 회전을 항등/180° 로 스냅한다. 스냅이 만드는 방향 오차는
+ * 최대 h 이므로 1e-9 면 10mm 막대에서 끝점 1e-8mm — 허용치(1e-4mm)의 1/10000 이라
+ * 무해하다. (각도로는 6e-8° 미만.)
+ *
+ * ⚠️ 이 임계를 |d.x|,|d.z| **각각**에 걸면 안 된다. 두 성분이 각각 임계 아래여도
+ * 합성 h 는 그 √2 배까지 커질 수 있어 경계가 흐려진다. 반드시 hypot 으로 볼 것.
+ */
+const AXIS_PARALLEL_EPS = 1e-9;
+
+/**
+ * **로컬 +Y 축을 단위벡터 d 로 보내는 회전 행렬** (S-4b-2a 핵심).
+ *
+ * ## 왜 필요한가
+ * 부품(cylinder)은 조립 좌표에서 항상 +Y 로 서 있다(Z-up 부품을 matZupToYup 으로
+ * 세운 결과). 경사 다리는 축이 world Y 가 아니므로, 그 +Y 축을 목표 방향 d 로
+ * 정확히 돌려놓는 회전이 있어야 한다. 스케일만으로는 절대 만들 수 없다 —
+ * 비균일 스케일은 축 방향을 바꾸지 못하고 늘리기만 하기 때문이다(대조군 참고).
+ *
+ * ## 구성 방식 — 로드리게스 회전 (a=+Y → b=d)
+ * 두 단위벡터 a, b 를 잇는 최소 회전은 축 k = a×b, 각 θ = acos(a·b) 의 회전이다.
+ * 로드리게스 공식 R = I + [k]ₓ + [k]ₓ²·(1−c)/s² 를 a=(0,1,0) 로 특수화하면
+ * 삼각함수 호출 없이 d 성분만으로 닫힌 형태가 나온다:
+ *
+ *   k = a×b = (d.z, 0, −d.x),  c = a·b = d.y,  s² = |k|² = d.x² + d.z² = 1 − c²
+ *   → (1−c)/s² = (1−c)/((1−c)(1+c)) = **1/(1+c)** = 1/(1 + d.y)
+ *
+ * 즉 `1/(1 + d.y)` 하나만 있으면 된다(k 계수 = 1). 삼각함수·역삼각함수를 안 써서
+ * 축·각을 따로 정규화할 필요가 없다.
+ *
+ * ## ★ 분모를 (1 + d.y) 로 **직접 계산하지 않는** 이유 (수치 안정성)
+ * d 가 −Y 에 가까우면 d.y ≈ −1 이라 `1 + d.y` 는 **파국적 상쇄**를 일으킨다:
+ * 유효숫자가 통째로 날아가 h≈1e-7 부근에서 이미 상대오차가 100% 에 이르고
+ * (실측: 10mm 막대 끝점이 0.5mm 어긋남), h 가 더 작으면 d.y 가 정확히 −1 로
+ * 반올림되어 분모 0 → **inv = Infinity → 좌표 전체 NaN** 이 된다.
+ *
+ * 그래서 대수적으로 같지만 상쇄가 없는 형태로 바꿔 쓴다. s² = h² = 1 − d.y² 이고
+ * 계수는 (1−c)/s² 였으므로, **1 + d.y 대신 h 와 d.y 로**:
+ *
+ *   1 + d.y = (1 − d.y²)/(1 − d.y) = h²/(1 − d.y)
+ *   → 계수 = 1/(1 + d.y) = **(1 − d.y)/h²**
+ *
+ * `1 − d.y` 는 d.y ≈ −1 일 때 2 에 가까워 상쇄가 없고, h² 는 입력 성분에서 곧장
+ * 오는 값이라 정확하다. 이 형태는 −Y 바로 옆까지 전 구간에서 안정적이며, 남는
+ * 퇴화는 h = 0(정확히 ±Y) 하나뿐이다.
+ *
+ * ## 퇴화 케이스 (반드시 처리)
+ * h = 0 이면 위 계수의 분모가 0 이다. 이때 d 가 −Y 면 a 와 정반대라 "최소 회전축"
+ * 자체가 유일하지 않다(어떤 수평축으로 180° 돌려도 a 가 b 로 간다). 두 갈래를
+ * 따로 박는다:
+ *   · d ≈ +Y  → 회전 불필요, 항등 행렬.
+ *   · d ≈ −Y  → X축 180° 회전을 **하나 골라** 쓴다. 축 대칭인 원기둥·구라 어느
+ *     수평축을 고르든 결과 형상이 같으므로 임의 선택이 안전하다. (스케일 −1 로
+ *     뒤집으면 삼각형 winding 이 반전되므로 금지 — assemble-core matScale 주석.)
+ * 판정은 **h ≤ AXIS_PARALLEL_EPS**. 검증 스크립트가 −Y 근처를 촘촘히 훑어
+ * NaN·오차 폭주가 없음을 지킨다.
+ *
+ * @param d 단위벡터(호출 측이 정규화 보장).
+ * @returns +Y 를 d 로 보내는 4×4 회전 행렬 (row-major, 열벡터 곱).
+ */
+export function rotationYToDir(d: Vec3): Mat4 {
+  const [dx, dy, dz] = d;
+
+  // 퇴화: 축이 ±Y 와 평행 → 로드리게스 분모(1 + dy)가 0 으로 반올림돼 무의미.
+  //   **수평 성분의 합성 크기**로 판정한다(성분별 판정은 위 상수 주석의 ⚠️ 참고).
+  if (Math.hypot(dx, dz) <= AXIS_PARALLEL_EPS) {
+    if (dy >= 0) {
+      // +Y → +Y : 항등.
+      return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    }
+    // +Y → −Y : X축 180°. (Y→−Y, Z→−Z. det=+1 이라 winding 보존.)
+    return [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
+  }
+
+  // 로드리게스(a=+Y 특수화): k=(dz, 0, −dx).
+  //   계수 = 1/(1 + dy) 를 **상쇄 없는 등가식 (1 − dy)/h²** 로 계산한다
+  //   (위 주석 "★ 분모를 …" 절 — −Y 근처 정밀도·NaN 방지의 핵심).
+  const kx = dz;
+  const kz = -dx;
+  const h2 = dx * dx + dz * dz;
+  const inv = (1 - dy) / h2;
+
+  // [k]ₓ (외적 행렬, ky=0):
+  //   [  0   −kz    0 ]
+  //   [ kz    0   −kx ]
+  //   [  0    kx    0 ]
+  // [k]ₓ² :
+  //   [ −kz²      0     kx·kz ]
+  //   [   0   −kx²−kz²    0   ]
+  //   [ kx·kz     0     −kx²  ]
+  const kx2 = kx * kx;
+  const kz2 = kz * kz;
+  const kxz = kx * kz;
+
+  const m00 = 1 - kz2 * inv;
+  const m01 = -kz;
+  const m02 = kxz * inv;
+  const m10 = kz;
+  const m11 = 1 - (kx2 + kz2) * inv;
+  const m12 = -kx;
+  const m20 = kxz * inv;
+  const m21 = kx;
+  const m22 = 1 - kx2 * inv;
+
+  return [
+    m00, m01, m02, 0,
+    m10, m11, m12, 0,
+    m20, m21, m22, 0,
+    0, 0, 0, 1,
+  ];
+}
+
+/**
+ * **화살촉이 눕는 한계각 (deg)** — 설계 4-3 "45° 단일 규칙" 1번 항목.
+ *
+ * 접점이 표면 법선을 따라가되 수직(−Y)에서 이 각을 넘게 눕지는 못한다. 너무
+ * 누우면 접점 자체가 약해지기 때문이다(설계 4-1 "방향"). 설계가 **전 시스템
+ * 단일 각**으로 못 박은 값이라 파라미터로 노출하지 않는다 — 경사 다리·기둥
+ * 연결도 같은 45° 를 쓴다.
+ */
+export const HEAD_MAX_TILT_DEG = 45;
+
+/**
+ * 수평 성분이 0 이라고 볼 임계. 이 아래면 방위를 정의할 수 없어 수직으로 떨어뜨린다.
+ *   (rotationYToDir 의 AXIS_PARALLEL_EPS 와 같은 취지·같은 크기.)
+ */
+const HEAD_HORIZONTAL_EPS = 1e-9;
+
+/**
+ * **화살촉 방향 45° 포화** (설계 4-1 방향 + 4-3 단일 각). **순수 함수**.
+ *
+ * 입력 `dir` 은 접점에서 **서포트 쪽(자유 공간)으로 나가는** 단위벡터다. 평평한
+ * 밑면이면 (0,−1,0) 이고, 이때 결과도 (0,−1,0) 이라 종전 수직 조립과 정확히
+ * 같은 형상이 나온다(무회귀 지점).
+ *
+ * 수직축 −Y 와 dir 이 이루는 극각 θ 가 한계를 넘으면 **수평 방위는 유지한 채
+ * 극각만** 한계로 줄인다:
+ *   h = normalize(dx, 0, dz),  out = h·sin(maxTilt) + (0,−1,0)·cos(maxTilt)
+ * 방위를 유지하는 이유 — 화살촉이 "표면이 향한 쪽"으로 붙는다는 성질은 지키고
+ * 눕는 정도만 잡는 게 설계 의도이기 때문이다.
+ *
+ * 경계 처리:
+ *   · 수평 성분이 ~0 → 방위를 정할 수 없으므로 (0,−1,0). dir 이 +Y(윗면 법선)로
+ *     들어와도 여기서 수직으로 떨어진다.
+ *   · dir.y ≥ 0 (옆면·윗면 법선) → 위 식이 그대로 45° 로 눕혀 준다. 이런 dir 은
+ *     θ ≥ 90° 라 항상 포화 대상이다.
+ *   · 길이 0/NaN → (0,−1,0). 호출 측이 못 걸러도 형상이 NaN 으로 터지지 않게.
+ *
+ * @param dir       접점에서 서포트 쪽으로 나가는 방향(정규화 불필요 — 여기서 함).
+ * @param maxTiltDeg 한계각(deg). 보통 `HEAD_MAX_TILT_DEG`.
+ * @returns 포화된 단위벡터.
+ */
+export function saturateHeadDir(dir: Vec3, maxTiltDeg: number): Vec3 {
+  const down: Vec3 = [0, -1, 0];
+  const len = Math.hypot(dir[0], dir[1], dir[2]);
+  if (!(len > 0) || !Number.isFinite(len)) return down;
+  const dx = dir[0] / len;
+  const dy = dir[1] / len;
+  const dz = dir[2] / len;
+
+  const maxTilt = (maxTiltDeg * Math.PI) / 180;
+  // 극각 θ = −Y 와 dir 의 사이각. cos θ = dir·(0,−1,0) = −dy.
+  const cosTheta = Math.min(1, Math.max(-1, -dy));
+  const theta = Math.acos(cosTheta);
+  if (theta <= maxTilt) return [dx, dy, dz];
+
+  const h = Math.hypot(dx, dz);
+  if (h <= HEAD_HORIZONTAL_EPS) return down; // 방위 불명 → 수직.
+  const s = Math.sin(maxTilt);
+  const c = Math.cos(maxTilt);
+  return [(dx / h) * s, -c, (dz / h) * s];
+}
+
+/**
+ * **이 점의 화살촉을 접점 법선 방향으로 기울이는가** (S-4e-1). **순수 함수**.
+ *
+ * rebuild key(`support-keys.ts` `buildSupportKey` 의 법선 항목)와 조립
+ * (`assemble-support.ts` `createRedesignSupportMesh` 의 headDir 게이트)이 **이 함수
+ * 하나를 같이 부른다**. 두 판정이 갈리면 "형상은 바뀌었는데 key 가 그대로라 재조립
+ * 누락" 또는 "형상은 같은데 key 만 달라져 헛재조립" 이 생기므로 조건을 한곳에 둔다.
+ *
+ * 세 조건이 모두 참일 때만 true:
+ *   1) **재설계 점** — `kind` 가 'island' | 'slope'. 화살촉 조립 경로를 타는 종류가
+ *      정확히 이 둘이다(`useSupportMeshSync.isRedesignPoint` 와 같은 기준).
+ *      kind 'manual'·미지정(trunk/bridge/manual source) 점은 기존 `createSupportMesh`
+ *      경로라 화살촉이 없다. 그 점들도 contactNormal 을 저장하지만(useSupportEditing
+ *      — 시각화 구슬 lift 용) 여기서는 **절대 소비하지 않는다**.
+ *   2) `params.headAlignNormal` 이 켜짐. (옛 저장 params 에 필드가 없으면 falsy → off.)
+ *   3) 저장된 `contactNormal` 이 있음. 옛 데이터는 없으므로 종전 수직 폴백.
+ *
+ * 타입 가드라 true 분기에서 `point.contactNormal` 이 확정 타입으로 좁혀진다.
+ */
+export function usesHeadNormal<
+  P extends Pick<SupportPointV2, "kind" | "contactNormal">,
+>(
+  point: P,
+  params: Pick<SupportParams, "headAlignNormal">,
+): point is P & { contactNormal: [number, number, number] } {
+  return (
+    (point.kind === "island" || point.kind === "slope") &&
+    !!params.headAlignNormal &&
+    point.contactNormal != null
+  );
 }
 
 /**
@@ -255,6 +481,71 @@ export function appendArrowHead(
 }
 
 /**
+ * **법선 방향 화살촉 조립** (S-4e-1, 설계 4-1 "방향") — world 좌표.
+ *
+ * `appendArrowHead` 가 로컬 −Y 로 쌓는 것을 그대로 쓰되, 그 로컬 형상을
+ * `headDir` 로 돌려 접점에 얹는다:
+ *   ① 로컬에서 surfaceY=0 기준으로 정방향 화살촉을 만든다(−Y 로 뻗음).
+ *   ② `rotationYToDir(−headDir)` 로 회전 — +Y 를 −headDir 로 보내므로 로컬의
+ *      **−Y 축이 headDir** 로 간다. headDir=(0,−1,0) 이면 rotationYToDir((0,1,0))
+ *      = 항등이라 **종전 수직 조립과 수치가 정확히 같다**(무회귀).
+ *   ③ 접점 world 좌표로 평행이동.
+ * 회전을 스케일 뒤에 두는 순서 규약은 assembleStrut 과 같다(비균일 스케일이
+ * 회전과 섞이면 단면이 찌그러진다).
+ *
+ * @param headDir      **포화된**(45° 이내) 단위벡터. 포화는 호출 측 책임 —
+ *                     이 함수는 방향을 그대로 믿는다.
+ * @param headLengthMm 화살촉 길이(축소 보정이 끝난 값 — 보정은 호출 측 책임).
+ * @returns 뒷구슬 중심의 **world 좌표**(= 기둥·다리가 시작되는 자리).
+ */
+export function appendArrowHeadDir(
+  parts: SupportPartsSet,
+  spec: Pick<
+    VerticalSupportSpec,
+    "tipDiameterMm" | "headBackDiameterMm" | "contactPenetrationMm"
+  >,
+  headLengthMm: number,
+  contactWorld: Vec3,
+  headDir: Vec3,
+  accPos: number[],
+  accIdx: number[],
+): Vec3 {
+  // ① 로컬(접점 원점, 축 −Y) 화살촉.
+  const localPos: number[] = [];
+  const localIdx: number[] = [];
+  appendArrowHead(
+    parts,
+    { ...spec, surfaceY: 0 },
+    headLengthMm,
+    localPos,
+    localIdx,
+  );
+
+  // ② 로컬 −Y → headDir 회전, ③ 접점으로 이동.
+  const m = matMul(
+    matTranslate(contactWorld[0], contactWorld[1], contactWorld[2]),
+    rotationYToDir([-headDir[0], -headDir[1], -headDir[2]]),
+  );
+  appendTransformed(
+    { positions: new Float32Array(localPos), indices: new Uint32Array(localIdx) },
+    m,
+    accPos,
+    accIdx,
+  );
+
+  // 뒷구슬 중심 = 접점에서 headDir 로 (화살촉 길이 + 앞구슬 반경 − 침투 깊이).
+  //   로컬 backCenterY = (contactPenetration − tipR) − headLen 이고, 로컬 −Y 가
+  //   headDir 이므로 world 이동량은 그 절댓값 = headLen + tipR − contactPenetration.
+  const tipR = spec.tipDiameterMm * 0.5;
+  const d = headLengthMm + tipR - spec.contactPenetrationMm;
+  return [
+    contactWorld[0] + headDir[0] * d,
+    contactWorld[1] + headDir[1] * d,
+    contactWorld[2] + headDir[2] * d,
+  ];
+}
+
+/**
  * 화살촉 수직 서포트 조립 (설계 4-1/4-2). 로컬 XZ 원점 기준 수직(축 = Y).
  *
  * 위(모델 표면)→아래(바닥) 순서, y 좌표는 로컬:
@@ -298,7 +589,48 @@ export function assembleVerticalSupport(
   // ── 화살촉(앞구슬+원뿔+뒷구슬) ─────────────────────────────────────────
   //   S-4b-2c 에서 위 `appendArrowHead` 로 승격 — **로직 무변경**(같은 순서·같은
   //   행렬). 반환값이 종전의 backCenterY 다.
-  const backCenterY = appendArrowHead(parts, spec, headLen, accPos, accIdx);
+  //
+  //   ★ S-4e-1: headDir 이 수직(0,−1,0) 이 아니면 화살촉만 그 방향으로 기울이고
+  //     (`appendArrowHeadDir`) 기둥·발은 **뒷구슬 바로 아래**로 옮겨 세운다.
+  //     프루사 기본형과 같은 배치다 — 헤드가 법선으로 붙고, 그 접합점에서 기둥이
+  //     곧장 수직으로 내려간다(연구 정독 2절 ①PINHEADS).
+  //     headDir 미지정/수직이면 **종전 코드 경로 그대로**라 positions 바이트가
+  //     동일하다(무회귀).
+  //
+  //     ⚠️ 알려진 한계 — 라우팅(route-plan / route-cluster)은 기울임을 모르고
+  //     **접점 XZ 기준**으로 경로를 정해 두었다. 기울이면 조립 쪽 시작점만
+  //     뒷구슬(접점에서 최대 headLen·sin45° ≈ 0.71mm 비껴남)로 옮겨 가므로:
+  //       (a) joinPillar 합류점(junction)은 **옛 접점 XZ 기준**으로 잡힌 좌표라,
+  //           중심점 기둥이 뒷구슬 아래로 옮겨가면 합류 다리 끝이 기둥 축에서
+  //           벗어나 합류부 겹침이 부족해진다(45° 에서 단면의 수 % 수준).
+  //       (b) bent/anchor/joinPillar 의 **첫 다리**는 라우팅이 가정한 접점 XZ 가
+  //           아니라 기울어진 뒷구슬에서 출발한다(assemble-route). 그래서 다리
+  //           각이 45° 를 넘을 수 있고, 그 선분은 충돌 검사를 받지 않았다.
+  //       (c) 그래서 `headAlignNormal` 기본값은 **off** 다(utils/defaults.ts).
+  //     정석 수정(점별 시작점을 라우팅에 반영)은 후속 S-4e-1b 몫이다.
+  let backCenterY: number;
+  let pillarX = 0;
+  let pillarZ = 0;
+  const rawDir = spec.headDir;
+  const tilted =
+    rawDir != null && !(rawDir[0] === 0 && rawDir[1] === -1 && rawDir[2] === 0);
+  if (tilted && rawDir) {
+    const headDir = saturateHeadDir(rawDir, HEAD_MAX_TILT_DEG);
+    const back = appendArrowHeadDir(
+      parts,
+      spec,
+      headLen,
+      [0, spec.surfaceY, 0],
+      headDir,
+      accPos,
+      accIdx,
+    );
+    pillarX = back[0];
+    backCenterY = back[1];
+    pillarZ = back[2];
+  } else {
+    backCenterY = appendArrowHead(parts, spec, headLen, accPos, accIdx);
+  }
 
   // ── 기둥: cylinder ⌀trunk, 뒷구슬 중심(backCenterY) → baseY(플레이트) ─────
   //   cylinder 로컬 Z 0→1 → Y-up 후 Y 0→1. 높이 = backCenterY − baseY.
@@ -312,7 +644,8 @@ export function assembleVerticalSupport(
   appendTransformed(
     parts.cylinder,
     matMul(
-      matTranslate(0, spec.baseY, 0),
+      // S-4e-1: 기울지 않은 경우 pillarX/Z 는 0 이라 종전과 동일한 행렬이다.
+      matTranslate(pillarX, spec.baseY, pillarZ),
       matMul(matScale(trunkD, trunkH, trunkD), matZupToYup()),
     ),
     accPos,
@@ -327,7 +660,7 @@ export function assembleVerticalSupport(
   appendTransformed(
     parts.cone,
     matMul(
-      matTranslate(0, spec.baseY, 0),
+      matTranslate(pillarX, spec.baseY, pillarZ),
       matMul(matScale(baseD, baseTrans, baseD), matZupToYup()),
     ),
     accPos,
