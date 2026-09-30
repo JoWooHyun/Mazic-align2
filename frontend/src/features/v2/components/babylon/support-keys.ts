@@ -1,5 +1,6 @@
 // 서포트 mesh 재생성 판정용 key 빌더. BabylonScene 에서 순수 이동 — 로직 무변경.
 import type { SupportParams, SupportPointV2 } from "../../support/types";
+import { usesHeadNormal } from "../../support/assemble-core";
 
 export function buildBridgeClipKey(
   point: SupportPointV2,
@@ -61,6 +62,15 @@ export function buildSupportKey(
           : "",
       ]
     : [];
+  // S-4e-1: 화살촉 법선 방향도 형상 입력 → key 에 섞는다. 단 **재설계 점 +
+  //   flag on + 법선 있음** 일 때만 배열을 잇는다(routeParts 와 같은 조건부 방식).
+  //   판정은 조립 게이트(assemble-support)와 **같은 함수** `usesHeadNormal` 이다 —
+  //   bridge/manual 점도 contactNormal 을 저장하지만(시각화용) 화살촉이 없으므로
+  //   여기 붙으면 안 된다. 조건 밖이면 아무 항목도 붙지 않아 key 가 종전과 바이트
+  //   단위로 동일하다(무회귀 — 수용 4).
+  const headParts: (string | number)[] = usesHeadNormal(point, params)
+    ? ["hn", ...point.contactNormal.map(f)]
+    : [];
   return [
     point.source,
     // 재설계(island/slope) 점은 화살촉 조립 경로라 kind·tipRadius·새 파라미터가
@@ -83,5 +93,6 @@ export function buildSupportKey(
     // B-18: 재설계 점만 world Y 를 섞는다. undefined 면 "" 라 종전 key 와 동일.
     redesignSurfaceWorldY != null ? redesignSurfaceWorldY.toFixed(3) : "",
     ...routeParts,
+    ...headParts,
   ].join("|");
 }

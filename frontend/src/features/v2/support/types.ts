@@ -62,6 +62,15 @@ export interface SupportParams {
    *   설계 4-1: 앞구슬이 모델 표면을 이만큼 파고든다(안 미끄러지게). 기본 0.2.
    */
   contactPenetrationMm: number;
+
+  /**
+   * 서포트 재설계(S-4e-1) 화살촉을 **접점 법선 방향으로 기울일지** 여부.
+   *   설계 4-1 "접점은 모델 표면이 향한 방향(법선)을 따라 붙되 수평 45°보다 눕지
+   *   못하게 제한" 의 on/off. false 면 종전대로 항상 world 수직(−Y)으로 붙는다.
+   *   재설계(island/slope) 점 전용 — 기존 trunk/bridge/manual 경로 무관.
+   *   UI 슬라이더는 S-4d 몫이라 이번엔 기본값으로만 동작한다.
+   */
+  headAlignNormal: boolean;
 }
 
 export type SupportParamKey = keyof SupportParams;
@@ -105,6 +114,14 @@ export interface SupportPointV2 {
    * 옵셔널 — 옛 데이터는 undefined. 시각화 sphere 를 표면 밖으로
    * lift 하는 데 쓰임. 저장된 contact 좌표 자체는 표면 안쪽 push 된
    * 상태를 유지해서 서포트 메시 cap 이 void 없이 부착된다.
+   *
+   * ## S-4e-1 — 재설계 점도 이 필드를 쓴다
+   * 재설계(island/slope) 점은 라우팅 확정(`routeAndFinalizePoints`) 시 표면
+   * 스냅 레이의 히트 법선을 여기 실어 저장하고, 조립이 그것을 **화살촉 방향**
+   * 으로 소비한다(설계 4-1). 좌표 공간은 점의 `coordSpace` 와 같다(재설계 점은
+   * stl-local). 값은 **원시 법선(45° 포화 전)** — 포화는 조립 시 한 번만 한다.
+   * world 기준으로는 "접점에서 서포트 쪽(자유 공간)" 방향이라 y ≤ 0 이다.
+   * 옛 데이터는 undefined 이며 이때 화살촉은 종전대로 수직 폴백이다.
    */
   contactNormal?: [number, number, number];
   /** Base 위치 normal (Bridge 전용). undefined 면 (0, 1, 0). */

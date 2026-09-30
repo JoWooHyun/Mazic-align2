@@ -22,13 +22,17 @@ import {
   matScale,
   matTranslate,
   matZupToYup,
-  type Mat4,
+  rotationYToDir,
   type SupportPartsGeometry,
   type SupportPartsSet,
+  type Vec3,
 } from "./assemble-core";
 
-/** 조립 좌표계 3D 점 [x, y, z] (mm). */
-export type Vec3 = [number, number, number];
+// S-4e-1: `Vec3` 와 `rotationYToDir` 는 assemble-core 로 옮겼다 — 화살촉 법선
+//   부착이 core 에서 같은 회전 유틸을 쓰는데, core → strut import 는 순환이기
+//   때문이다. 정의는 core 하나뿐이고 여기서는 **그대로 재수출**하므로 기존
+//   import 경로(`./assemble-strut`)와 동작은 변함이 없다(무회귀).
+export { rotationYToDir, type Vec3 } from "./assemble-core";
 
 /**
  * 길이 0 막대로 볼 임계(mm). 이보다 짧으면 축 방향을 정의할 수 없다.
@@ -37,18 +41,6 @@ export type Vec3 = [number, number, number];
  *   보다는 아래라 양쪽에 여유가 있다.
  */
 const MIN_STRUT_LENGTH_MM = 1e-3;
-
-/**
- * 축이 정확히 ±Y 라고 볼 임계 — **수평 성분 크기** h = hypot(d.x, d.z) 기준.
- *
- * h 가 이보다 작으면 회전을 항등/180° 로 스냅한다. 스냅이 만드는 방향 오차는
- * 최대 h 이므로 1e-9 면 10mm 막대에서 끝점 1e-8mm — 허용치(1e-4mm)의 1/10000 이라
- * 무해하다. (각도로는 6e-8° 미만.)
- *
- * ⚠️ 이 임계를 |d.x|,|d.z| **각각**에 걸면 안 된다. 두 성분이 각각 임계 아래여도
- * 합성 h 는 그 √2 배까지 커질 수 있어 경계가 흐려진다. 반드시 hypot 으로 볼 것.
- */
-const AXIS_PARALLEL_EPS = 1e-9;
 
 /** 빈 지오메트리 (길이 0 막대 등 퇴화 입력의 반환값). */
 function emptyGeometry(): SupportPartsGeometry {
@@ -60,108 +52,6 @@ function normalize(v: Vec3): { dir: Vec3; length: number } | null {
   const length = Math.hypot(v[0], v[1], v[2]);
   if (length < MIN_STRUT_LENGTH_MM) return null;
   return { dir: [v[0] / length, v[1] / length, v[2] / length], length };
-}
-
-/**
- * **로컬 +Y 축을 단위벡터 d 로 보내는 회전 행렬** (S-4b-2a 핵심).
- *
- * ## 왜 필요한가
- * 부품(cylinder)은 조립 좌표에서 항상 +Y 로 서 있다(Z-up 부품을 matZupToYup 으로
- * 세운 결과). 경사 다리는 축이 world Y 가 아니므로, 그 +Y 축을 목표 방향 d 로
- * 정확히 돌려놓는 회전이 있어야 한다. 스케일만으로는 절대 만들 수 없다 —
- * 비균일 스케일은 축 방향을 바꾸지 못하고 늘리기만 하기 때문이다(대조군 참고).
- *
- * ## 구성 방식 — 로드리게스 회전 (a=+Y → b=d)
- * 두 단위벡터 a, b 를 잇는 최소 회전은 축 k = a×b, 각 θ = acos(a·b) 의 회전이다.
- * 로드리게스 공식 R = I + [k]ₓ + [k]ₓ²·(1−c)/s² 를 a=(0,1,0) 로 특수화하면
- * 삼각함수 호출 없이 d 성분만으로 닫힌 형태가 나온다:
- *
- *   k = a×b = (d.z, 0, −d.x),  c = a·b = d.y,  s² = |k|² = d.x² + d.z² = 1 − c²
- *   → (1−c)/s² = (1−c)/((1−c)(1+c)) = **1/(1+c)** = 1/(1 + d.y)
- *
- * 즉 `1/(1 + d.y)` 하나만 있으면 된다(k 계수 = 1). 삼각함수·역삼각함수를 안 써서
- * 축·각을 따로 정규화할 필요가 없다.
- *
- * ## ★ 분모를 (1 + d.y) 로 **직접 계산하지 않는** 이유 (수치 안정성)
- * d 가 −Y 에 가까우면 d.y ≈ −1 이라 `1 + d.y` 는 **파국적 상쇄**를 일으킨다:
- * 유효숫자가 통째로 날아가 h≈1e-7 부근에서 이미 상대오차가 100% 에 이르고
- * (실측: 10mm 막대 끝점이 0.5mm 어긋남), h 가 더 작으면 d.y 가 정확히 −1 로
- * 반올림되어 분모 0 → **inv = Infinity → 좌표 전체 NaN** 이 된다.
- *
- * 그래서 대수적으로 같지만 상쇄가 없는 형태로 바꿔 쓴다. s² = h² = 1 − d.y² 이고
- * 계수는 (1−c)/s² 였으므로, **1 + d.y 대신 h 와 d.y 로**:
- *
- *   1 + d.y = (1 − d.y²)/(1 − d.y) = h²/(1 − d.y)
- *   → 계수 = 1/(1 + d.y) = **(1 − d.y)/h²**
- *
- * `1 − d.y` 는 d.y ≈ −1 일 때 2 에 가까워 상쇄가 없고, h² 는 입력 성분에서 곧장
- * 오는 값이라 정확하다. 이 형태는 −Y 바로 옆까지 전 구간에서 안정적이며, 남는
- * 퇴화는 h = 0(정확히 ±Y) 하나뿐이다.
- *
- * ## 퇴화 케이스 (반드시 처리)
- * h = 0 이면 위 계수의 분모가 0 이다. 이때 d 가 −Y 면 a 와 정반대라 "최소 회전축"
- * 자체가 유일하지 않다(어떤 수평축으로 180° 돌려도 a 가 b 로 간다). 두 갈래를
- * 따로 박는다:
- *   · d ≈ +Y  → 회전 불필요, 항등 행렬.
- *   · d ≈ −Y  → X축 180° 회전을 **하나 골라** 쓴다. 축 대칭인 원기둥·구라 어느
- *     수평축을 고르든 결과 형상이 같으므로 임의 선택이 안전하다. (스케일 −1 로
- *     뒤집으면 삼각형 winding 이 반전되므로 금지 — assemble-core matScale 주석.)
- * 판정은 **h ≤ AXIS_PARALLEL_EPS**. 검증 스크립트가 −Y 근처를 촘촘히 훑어
- * NaN·오차 폭주가 없음을 지킨다.
- *
- * @param d 단위벡터(호출 측이 정규화 보장).
- * @returns +Y 를 d 로 보내는 4×4 회전 행렬 (row-major, 열벡터 곱).
- */
-export function rotationYToDir(d: Vec3): Mat4 {
-  const [dx, dy, dz] = d;
-
-  // 퇴화: 축이 ±Y 와 평행 → 로드리게스 분모(1 + dy)가 0 으로 반올림돼 무의미.
-  //   **수평 성분의 합성 크기**로 판정한다(성분별 판정은 위 상수 주석의 ⚠️ 참고).
-  if (Math.hypot(dx, dz) <= AXIS_PARALLEL_EPS) {
-    if (dy >= 0) {
-      // +Y → +Y : 항등.
-      return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-    }
-    // +Y → −Y : X축 180°. (Y→−Y, Z→−Z. det=+1 이라 winding 보존.)
-    return [1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1];
-  }
-
-  // 로드리게스(a=+Y 특수화): k=(dz, 0, −dx).
-  //   계수 = 1/(1 + dy) 를 **상쇄 없는 등가식 (1 − dy)/h²** 로 계산한다
-  //   (위 주석 "★ 분모를 …" 절 — −Y 근처 정밀도·NaN 방지의 핵심).
-  const kx = dz;
-  const kz = -dx;
-  const h2 = dx * dx + dz * dz;
-  const inv = (1 - dy) / h2;
-
-  // [k]ₓ (외적 행렬, ky=0):
-  //   [  0   −kz    0 ]
-  //   [ kz    0   −kx ]
-  //   [  0    kx    0 ]
-  // [k]ₓ² :
-  //   [ −kz²      0     kx·kz ]
-  //   [   0   −kx²−kz²    0   ]
-  //   [ kx·kz     0     −kx²  ]
-  const kx2 = kx * kx;
-  const kz2 = kz * kz;
-  const kxz = kx * kz;
-
-  const m00 = 1 - kz2 * inv;
-  const m01 = -kz;
-  const m02 = kxz * inv;
-  const m10 = kz;
-  const m11 = 1 - (kx2 + kz2) * inv;
-  const m12 = -kx;
-  const m20 = kxz * inv;
-  const m21 = kx;
-  const m22 = 1 - kx2 * inv;
-
-  return [
-    m00, m01, m02, 0,
-    m10, m11, m12, 0,
-    m20, m21, m22, 0,
-    0, 0, 0, 1,
-  ];
 }
 
 /**
