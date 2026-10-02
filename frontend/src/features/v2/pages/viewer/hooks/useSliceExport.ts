@@ -1,4 +1,4 @@
-// 슬라이스 프리뷰 상태 + 마스크 ZIP / CTB / G-code / STL 내보내기 핸들러.
+// 슬라이스 프리뷰 상태 + 마스크 ZIP / G-code / STL 내보내기 핸들러.
 // (ViewerV2Page 에서 추출 — busy 가드·CancelError·downloadBlob·알림 문구 불변.)
 
 import { useCallback, useState } from "react";
@@ -147,76 +147,9 @@ export function useSliceExport({
     confirmIfOutOfBounds, // P-1
   ]);
 
-  // ----- .ctb v4 내보내기 -----
-  const handleExportCtb = useCallback(async () => {
-    const handle = sceneHandleRef.current;
-    if (!handle || files.length === 0) return;
-    if (batchExport.busy) return;
-    if (!confirmIfOutOfBounds()) return; // P-1
-    setBatchExport({ busy: true, done: 0, total: 0 });
-    try {
-      // 씬(Babylon Mesh)은 워커로 못 넘어가므로 world 삼각형 배열로 직렬화해 전달.
-      const meshes = handle.getSliceGeometry();
-      const topY = handle.getSceneTopY();
-      const blob = await sliceBatchService.exportCtb(
-        meshes,
-        {
-          layerHeightMm: slicePreview.layerHeightMm,
-          widthPx: printerProfile.lcdWidthPx,
-          heightPx: printerProfile.lcdHeightPx,
-          plateWidthMm: printerProfile.buildVolumeMm[0],
-          plateDepthMm: printerProfile.buildVolumeMm[1],
-          topY,
-        },
-        {
-          bedSizeZMm: printerProfile.buildVolumeMm[2],
-          // 프로파일에 값이 없으면 undefined → 인코더 기본값 사용 (기존 산출물과 동일).
-          exposureSec: printerProfile.exposureSec,
-          bottomExposureSec: printerProfile.bottomExposureSec,
-          bottomLayerCount: printerProfile.bottomLayerCount,
-          transitionLayerCount: printerProfile.transitionLayerCount,
-          // 리프트/딜레이 — 미지정 시 워커에서 DEFAULT_*(v1) 폴백. CTB 기록과 예상 시간이 같은 값 기준.
-          lightOffDelaySec: printerProfile.lightOffDelaySec,
-          liftDistanceMm: printerProfile.liftDistanceMm,
-          liftSpeedMmS: printerProfile.liftSpeedMmS,
-          retractSpeedMmS: printerProfile.retractSpeedMmS,
-        },
-        (done, total) => setBatchExport({ busy: true, done, total }),
-      );
-      // blob null = 빈 씬(topY<=0) 등으로 슬라이스할 레이어가 없음 (마스크 ZIP 과 동일).
-      if (!blob) {
-        // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-        window.alert("내보낼 레이어가 없습니다. 모델이 빌드 영역 안에 있는지 확인하세요.");
-        return;
-      }
-      const safe = (project?.name ?? "project").replace(
-        /[\\/:*?"<>|]/g,
-        "_",
-      );
-      downloadBlob(blob, `${safe}_v3.ctb`);
-    } catch (e) {
-      // 취소(CancelError)는 조용히, 그 외 오류만 안내 (마스크 ZIP 과 동일 정책).
-      //   취소 판별은 메시지 문자열이 아니라 name 으로 한다(마감 검수 권고).
-      if (e instanceof Error && e.name === "CancelError") return;
-      const msg = e instanceof Error ? e.message : String(e);
-      // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-      window.alert(`.ctb 내보내기에 실패했습니다.\n${msg}`);
-    } finally {
-      setBatchExport({ busy: false, done: 0, total: 0 });
-    }
-  }, [
-    files.length,
-    project?.name,
-    slicePreview.layerHeightMm,
-    batchExport.busy,
-    printerProfile,
-    sceneHandleRef,
-    confirmIfOutOfBounds, // P-1
-  ]);
-
   // ----- FDM G-code 내보내기 (감사 A5 — 워커로 이동) -----
   // 이전엔 SliceSidePanel 이 메인스레드 동기(exportFdmGcode)로 조립해 대형
-  // 모델에서 수십 초 프리즈 + busy 가드 부재였다. 이제 마스크 ZIP/CTB 와 동일한
+  // 모델에서 수십 초 프리즈 + busy 가드 부재였다. 이제 마스크 ZIP 과 동일한
   // 워커 브릿지(진행률/취소/busy 가드)를 재사용한다.
   const handleExportGcode = useCallback(async () => {
     const handle = sceneHandleRef.current;
@@ -228,7 +161,7 @@ export function useSliceExport({
     //
     // ⚠️ layerHeight 를 반드시 넘긴다. 인자를 비우면 DEFAULT_FDM_SETTINGS 의
     //   0.05 로 폴백해, 사용자가 패널에서 고른 두께가 G-code 에 전혀 반영되지
-    //   않는다(마스크 ZIP·CTB 는 넘기는데 G-code 만 빠져 있던 비대칭 — B-37).
+    //   않는다(마스크 ZIP 은 넘기는데 G-code 만 빠져 있던 비대칭 — B-37).
     const input = handle.getFdmSliceInput({
       layerHeight: slicePreview.layerHeightMm,
     });
@@ -257,7 +190,7 @@ export function useSliceExport({
       //   download 속성을 무시한 채 blob URL 로 네비게이션하는 경우가 있다.
       //   그러면 SPA 가 통째로 이탈했다 돌아와 slicePreview 가 초기값으로
       //   리셋된다(= 미리보기 모드가 풀려 메인화면으로 튕김 — B-38).
-      //   .zip/.ctb 가 멀쩡했던 이유도 이것들은 표시 불가 타입이기 때문.
+      //   .zip 이 멀쩡했던 이유도 이것은 표시 불가 타입이기 때문.
       const blob = new Blob([gcode], { type: "application/octet-stream" });
       const safe = (project?.name ?? "project").replace(/[\\/:*?"<>|]/g, "_");
       downloadBlob(blob, `${safe}.gcode`);
@@ -343,7 +276,6 @@ export function useSliceExport({
     sliceYNow,
     layerCount,
     handleExportMasksZip,
-    handleExportCtb,
     handleExportGcode,
     handleExportStl,
   };

@@ -129,7 +129,6 @@ const ViewerV2Page: React.FC = () => {
     sliceYNow,
     layerCount,
     handleExportMasksZip,
-    handleExportCtb,
     handleExportGcode,
     handleExportStl,
   } = useSliceExport({
@@ -795,7 +794,7 @@ const ViewerV2Page: React.FC = () => {
 
         {/*
           1단계에서는 SliceSidePanel 을 그대로 유지한다 — 출력 추정·레이어
-          두께·내보내기(마스크 ZIP / G-code / .ctb)가 전부 여기 있어서 빼면
+          두께·내보내기(마스크 ZIP / G-code)가 전부 여기 있어서 빼면
           기능이 사라진다. 하단 설정 줄로 재배치하는 것은 2단계 과제.
         */}
         {sliceMode && (
@@ -824,7 +823,6 @@ const ViewerV2Page: React.FC = () => {
             }
             onExportMasksZip={() => void handleExportMasksZip()}
             onExportGcode={() => void handleExportGcode()}
-            onExportCtb={() => void handleExportCtb()}
             batchBusy={batchExport.busy}
             batchDone={batchExport.done}
             batchTotal={batchExport.total}

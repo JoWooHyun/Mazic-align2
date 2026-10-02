@@ -3,27 +3,13 @@
  * 배치 슬라이스/출력 Web Worker.
  *
  * 메인스레드에서 world 삼각형 배열을 받아 레이어별로 슬라이스 → rasterize →
- * PNG(ZIP) 또는 CTB 로 인코딩한다. 메인스레드 프리즈를 없애는 것이 목적.
+ * PNG(ZIP)로 인코딩하거나 G-code 로 조립한다. 메인스레드 프리즈를 없애는 것이 목적.
  *
  * 순수 코어(sliceTrianglesAtY / chainSegments / rasterizePolygons /
- * encodeRle1bpp / assembleCtb / buildPngZipEntries)를 그대로 재사용하므로
- * 산출 바이트는 동기 경로와 동일하다. Babylon 은 import 하지 않는다.
+ * buildPngZipEntries)를 그대로 재사용하므로 산출 바이트는 동기 경로와
+ * 동일하다. Babylon 은 import 하지 않는다.
  */
-import {
-  DEFAULT_EXPOSURE_SEC,
-  DEFAULT_BOTTOM_EXPOSURE_SEC,
-  DEFAULT_BOTTOM_LAYER_COUNT,
-  DEFAULT_TRANSITION_LAYER_COUNT,
-  DEFAULT_LIFT_DISTANCE_MM,
-  DEFAULT_LIFT_SPEED_MM_S,
-  DEFAULT_RETRACT_SPEED_MM_S,
-  DEFAULT_LIGHT_OFF_DELAY_SEC,
-} from "../types/printer";
 import { generateFdmGcodeFromTriangles } from "../utils/gcode/fdm-gcode";
-import {
-  assembleCtb,
-  encodeRle1bpp,
-} from "../utils/ctb-encoder";
 import { buildPngZipEntries } from "../utils/slice-batch";
 import {
   chainSegments,
@@ -34,7 +20,6 @@ import { rasterizePolygons, type SliceMask } from "../utils/slice-rasterize";
 import { makeZipStore } from "../utils/zip-store";
 
 import type {
-  CtbRequest,
   GcodeRequest,
   PngZipRequest,
   SliceBatchRequest,
@@ -148,61 +133,6 @@ async function runPngZip(req: PngZipRequest): Promise<void> {
   post({ type: "done", buffer, mime: "application/zip" }, [buffer]);
 }
 
-async function runCtb(req: CtbRequest): Promise<void> {
-  const { meshes, options, ctb } = req;
-  if (options.topY <= 0) {
-    post({ type: "done", buffer: null, mime: "application/octet-stream" });
-    return;
-  }
-  const layerCount = Math.max(
-    1,
-    Math.ceil(options.topY / options.layerHeightMm),
-  );
-
-  // 노광/리프트 기본값은 printer.ts 의 DEFAULT_* 상수로 폴백 — 예상 시간·UI 와 동일 기준.
-  const exposureSec = ctb.exposureSec ?? DEFAULT_EXPOSURE_SEC;
-  const bottomExposureSec = ctb.bottomExposureSec ?? DEFAULT_BOTTOM_EXPOSURE_SEC;
-  const bottomLayers = ctb.bottomLayerCount ?? DEFAULT_BOTTOM_LAYER_COUNT;
-  const transitionLayers =
-    ctb.transitionLayerCount ?? DEFAULT_TRANSITION_LAYER_COUNT;
-  // 리프트/딜레이는 DEFAULT_*(v1) 폴백 — CTB 기록과 예상 시간이 같은 값 기준이 되도록.
-  const lightOffSec = ctb.lightOffDelaySec ?? DEFAULT_LIGHT_OFF_DELAY_SEC;
-  const liftDistanceMm = ctb.liftDistanceMm ?? DEFAULT_LIFT_DISTANCE_MM;
-  const liftSpeedMmS = ctb.liftSpeedMmS ?? DEFAULT_LIFT_SPEED_MM_S;
-  const retractSpeedMmS = ctb.retractSpeedMmS ?? DEFAULT_RETRACT_SPEED_MM_S;
-
-  const reportProgress = makeProgressThrottle();
-  const layerData: Uint8Array[] = [];
-  for (let i = 0; i < layerCount; i++) {
-    const z = (i + 0.5) * options.layerHeightMm;
-    const mask = sliceLayerMask(meshes, z, options);
-    layerData.push(encodeRle1bpp(mask));
-    reportProgress(i + 1, layerCount);
-  }
-
-  const blob = assembleCtb(layerData, layerCount, {
-    layerHeightMm: options.layerHeightMm,
-    resolutionX: options.widthPx,
-    resolutionY: options.heightPx,
-    bedSizeXMm: options.plateWidthMm,
-    bedSizeYMm: options.plateDepthMm,
-    bedSizeZMm: ctb.bedSizeZMm,
-    exposureSec,
-    bottomExposureSec,
-    bottomLayers,
-    transitionLayers,
-    lightOffSec,
-    liftDistanceMm,
-    liftSpeedMmS,
-    retractSpeedMmS,
-  });
-  const buffer = await blob.arrayBuffer();
-  post(
-    { type: "done", buffer, mime: "application/octet-stream" },
-    [buffer],
-  );
-}
-
 /**
  * FDM G-code 조립 (감사 A5 — 메인스레드 프리즈 해소).
  *
@@ -235,8 +165,6 @@ ctx.addEventListener(
     try {
       if (req.kind === "pngzip") {
         await runPngZip(req);
-      } else if (req.kind === "ctb") {
-        await runCtb(req);
       } else {
         runGcode(req);
       }

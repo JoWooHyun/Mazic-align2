@@ -8,7 +8,6 @@ import SliceBatchWorker from "../workers/slice-batch.worker?worker";
 
 import type { FdmSettings } from "./gcode/types";
 import type {
-  CtbRequest,
   GcodeRequest,
   PngZipRequest,
   SliceBatchRequest,
@@ -70,21 +69,10 @@ class SliceBatchService {
     return this.run(req, transfersOf(meshes), onProgress);
   }
 
-  /** CTB 내보내기. 빈 씬(topY<=0)이면 null. */
-  exportCtb(
-    meshes: WorkerMeshGeometry[],
-    options: WorkerSliceOptions,
-    ctb: CtbRequest["ctb"],
-    onProgress?: BatchProgress,
-  ): Promise<Blob | null> {
-    const req: CtbRequest = { kind: "ctb", meshes, options, ctb };
-    return this.run(req, transfersOf(meshes), onProgress);
-  }
-
   /**
    * FDM G-code 내보내기 (감사 A5 — 메인스레드 프리즈 해소).
    * 대상 mesh 가 없거나 슬라이스 범위(range.yMax<=yMin)가 비면 null.
-   * 진행률·취소는 PNG-ZIP/CTB 경로와 동일 인프라(onProgress / cancel) 재사용.
+   * 진행률·취소는 PNG-ZIP 경로와 동일 인프라(onProgress / cancel) 재사용.
    */
   exportGcode(
     meshes: WorkerMeshGeometry[],
@@ -98,11 +86,11 @@ class SliceBatchService {
 
   /**
    * 워커 요청을 실행하고 종료 응답(done / gcode-done)을 결과로 resolve 한다.
-   * PNG-ZIP/CTB 는 Blob|null, G-code 는 string|null 을 돌려주므로 반환 타입은
+   * PNG-ZIP 은 Blob|null, G-code 는 string|null 을 돌려주므로 반환 타입은
    * 요청 종류에서 추론한다(오버로드).
    */
   private run(
-    req: PngZipRequest | CtbRequest,
+    req: PngZipRequest,
     transfer: Transferable[],
     onProgress?: BatchProgress,
   ): Promise<Blob | null>;

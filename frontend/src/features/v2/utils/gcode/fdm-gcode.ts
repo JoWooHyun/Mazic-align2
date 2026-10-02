@@ -45,7 +45,7 @@
  *   ※ 이 수정으로 G-code 산출물이 의도적으로 달라진다(첫 층 추가 + 전체
  *      레이어 Z 가 layerHeight 만큼 하향). 회귀가 아니라 v1 과의 정합을
  *      회복하는 의도적 변경이다.
- *   ※ DLP/CTB 경로((i + 0.5) 중앙 샘플링)는 별개 규약이므로 여기서 건드리지
+ *   ※ DLP 마스크 경로((i + 0.5) 중앙 샘플링)는 별개 규약이므로 여기서 건드리지
  *      않는다.
  */
 import { chainSegments, sliceTrianglesAtY } from '../slice-geometry';

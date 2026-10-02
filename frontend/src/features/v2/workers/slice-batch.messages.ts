@@ -3,7 +3,7 @@
  *
  * 씬(Babylon Mesh)은 워커로 못 넘어가므로 메인이 world 삼각형 배열
  * (Float32Array, 삼각형당 9 float)을 직렬화해 넘긴다. 워커는 이 배열만으로
- * 레이어 루프 + rasterize + PNG/CTB 인코딩 + ZIP 조립 또는 G-code 조립을
+ * 레이어 루프 + rasterize + PNG 인코딩 + ZIP 조립 또는 G-code 조립을
  * 수행한다.
  *
  * FdmSettings 는 gcode/types.ts 의 순수 타입(Babylon 무의존)이라 워커
@@ -28,7 +28,7 @@ export interface WorkerSliceOptions {
   plateDepthMm: number;
   /** 씬 최상단 Y (mm). 레이어 수 = ceil(topY / layerHeightMm). */
   topY: number;
-  /** 노광 파라미터 (선택). PNG-ZIP manifest / CTB layer table 노광 계산용. */
+  /** 노광 파라미터 (선택). PNG-ZIP manifest 노광 계산용. */
   exposure?: {
     bottomLayerCount: number;
     transitionLayerCount: number;
@@ -44,28 +44,6 @@ export interface PngZipRequest {
   options: WorkerSliceOptions;
 }
 
-/** CTB 산출 요청. */
-export interface CtbRequest {
-  kind: "ctb";
-  meshes: WorkerMeshGeometry[];
-  options: WorkerSliceOptions;
-  /** CTB 전용 파라미터 (미지정 필드는 워커에서 기존 인코더 기본값 적용). */
-  ctb: {
-    bedSizeZMm: number;
-    exposureSec?: number;
-    bottomExposureSec?: number;
-    bottomLayerCount?: number;
-    transitionLayerCount?: number;
-    lightOffDelaySec?: number;
-    /** 리프트 거리 (mm). 미지정 시 워커에서 DEFAULT_* 폴백. */
-    liftDistanceMm?: number;
-    /** 리프트 속도 (mm/s). 미지정 시 워커에서 DEFAULT_* 폴백. */
-    liftSpeedMmS?: number;
-    /** 하강 속도 (mm/s). 미지정 시 워커에서 DEFAULT_* 폴백. */
-    retractSpeedMmS?: number;
-  };
-}
-
 /** FDM G-code 산출 요청. */
 export interface GcodeRequest {
   kind: "gcode";
@@ -77,7 +55,7 @@ export interface GcodeRequest {
   range: { yMin: number; yMax: number };
 }
 
-export type SliceBatchRequest = PngZipRequest | CtbRequest | GcodeRequest;
+export type SliceBatchRequest = PngZipRequest | GcodeRequest;
 
 /** 진행률 알림 (done / total 레이어). */
 export interface WorkerProgress {
@@ -86,10 +64,10 @@ export interface WorkerProgress {
   total: number;
 }
 
-/** 완료 — 산출 바이너리 (ArrayBuffer, transferable). PNG-ZIP / CTB 경로. */
+/** 완료 — 산출 바이너리 (ArrayBuffer, transferable). PNG-ZIP 경로. */
 export interface WorkerDone {
   type: "done";
-  /** 산출물 바이트. PNG-ZIP 또는 CTB. topY<=0(빈 씬)이면 null. */
+  /** 산출물 바이트. PNG-ZIP. topY<=0(빈 씬)이면 null. */
   buffer: ArrayBuffer | null;
   /** Blob 재조립용 MIME. */
   mime: string;
