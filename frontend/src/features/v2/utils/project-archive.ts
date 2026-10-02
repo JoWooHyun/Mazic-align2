@@ -97,7 +97,8 @@ export async function importProjectArchive(
   for (const e of entries) {
     if (!e.name.startsWith("stl/")) continue;
     const id = e.name.replace(/^stl\//, "").replace(/\.stl$/, "");
-    stlBlobByOldId.set(id, new Blob([e.data], { type: "model/stl" }));
+    // TS 5.7+ lib 의 Uint8Array<ArrayBufferLike> 와 BlobPart 불일치 — 타입 단언만, 런타임 동일.
+    stlBlobByOldId.set(id, new Blob([e.data as BlobPart], { type: "model/stl" }));
   }
 
   // id remap (new mode 만).

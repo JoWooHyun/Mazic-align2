@@ -28,7 +28,7 @@ argument-hint: <작업 내용 또는 통합로드맵 항목 번호>
 `coder` 서브에이전트에게 계획 전체(파일 목록, 변경 내용, 수용 기준)를 전달하여 구현시킵니다.
 계획을 요약하지 말고 그대로 전달하세요. 함께 전달할 것:
 - 작업 브랜치/worktree 와 기준 커밋 — "시작 시 `origin/integrate/v2-mainline` 기준인지 확인, 아니면 reset"
-- 완료 전 검증 명령(`npx tsc --noEmit` / `npm run lint` / `npx tsx scripts/verify-*.mjs` 전부 exit 0 / `npm run build`)과 기준선(tsc 12 / lint 34)
+- 완료 전 검증 명령(`npx tsc --noEmit` / `npm run lint` / `npx tsx scripts/verify-*.mjs` 전부 exit 0 / `npm run build`)과 기준선(tsc 0 / lint 34)
 
 ## 3단계: 검수
 

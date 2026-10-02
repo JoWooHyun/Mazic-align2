@@ -26,7 +26,8 @@ import type {
 import type { STLFileV2 } from "../../../types/stl";
 
 type Vec3 = [number, number, number];
-type Cps3 = [Vec3, Vec3, Vec3];
+// 변곡점은 추가·삭제·직선복원으로 길이가 바뀐다 — 튜플 3 이 아님.
+type Cps = Vec3[];
 
 interface PendingBridge {
   stlId: string;
@@ -54,7 +55,7 @@ interface UseSupportEditingArgs {
   followAttachedChildren: (
     parentId: string,
     parentBase: Vec3,
-    parentCps: Cps3 | undefined,
+    parentCps: Cps | undefined,
     parentContact: Vec3,
   ) => Promise<void>;
   setCtxMenu: React.Dispatch<
