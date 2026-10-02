@@ -38,10 +38,10 @@ cd frontend && npm run build      # vite build
 ```
 
 ```
-cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-02 기준 25종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-02 기준 26종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
 ```
 
-- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/2 기준 25종)가 상시 PASS여야 한다
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/2 기준 26종)가 상시 PASS여야 한다
   (**Node 20.6 이상** — `verify-head-normal.mjs` 가 `node:module` register 로더 훅을 쓴다)
   (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
   확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
