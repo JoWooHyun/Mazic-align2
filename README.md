@@ -13,7 +13,7 @@ ZIP 압축 해제 → `start-dev.bat` 더블클릭 한 번으로 바로 사용 �
 현재 저장소에는 구버전(v1)과 신버전(v2) 화면이 함께 들어 있습니다.
 
 - **v2 (`frontend/src/features/v2`) — 현재 메인라인.** 모든 신규 작업은 v2에서 진행합니다.
-  IndexedDB 기반 로컬 격리 작업 공간, undo, 프린터 프로파일, ctb 지원.
+  IndexedDB 기반 로컬 격리 작업 공간, undo, 프린터 프로파일, 마스크 ZIP·G-code 출력(자체 프린터용 `.zip`).
   루트(`/`) 접속 시 자동으로 `/v2/projects` 로 이동합니다.
 - **v1 (`frontend/src/pages`, `frontend/src/components`) — 동결(freeze).**
   ADR-2 결정에 따라 v1은 유지보수만 하고 신규 기능을 추가하지 않습니다.

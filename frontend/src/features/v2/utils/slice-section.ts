@@ -24,7 +24,7 @@ export type { SlicePolygon, SliceSegment };
  * Babylon STL 로더의 Y/Z 스왑(반사)으로 뒤집힌 모델 메시와 정상 감김인 조립
  * 서포트가 섞이면 겹친 부위의 nonzero 감김수가 0 이 되어 마스크에 검은 틈이
  * 생기기 때문. world 변환에 음수 스케일이 섞인 경우도 여기서 함께 정규화된다.
- * 이 함수가 프리뷰·ZIP/CTB 워커·FDM gcode 로 가는 삼각형의 **단일 관문**이다.
+ * 이 함수가 프리뷰·ZIP 워커·FDM gcode 로 가는 삼각형의 **단일 관문**이다.
  */
 export function extractWorldTriangles(mesh: Mesh): Float32Array {
   const positions = mesh.getVerticesData(VertexBuffer.PositionKind);

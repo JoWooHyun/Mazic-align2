@@ -41,7 +41,6 @@ interface Props {
 
   onExportMasksZip: () => void;
   onExportGcode: () => void;
-  onExportCtb: () => void;
   batchBusy: boolean;
   batchDone: number;
   batchTotal: number;
@@ -77,7 +76,6 @@ const SliceSidePanel: React.FC<Props> = ({
   hideMaskPreview = false,
   onExportMasksZip,
   onExportGcode,
-  onExportCtb,
   batchBusy,
   batchDone,
   batchTotal,
@@ -99,8 +97,8 @@ const SliceSidePanel: React.FC<Props> = ({
   const liftMm = useSupportParamsStore((st) => st.params.liftMm);
 
   // G-code 내보내기는 감사 A5 로 워커 경로로 이동했다. 조립·다운로드·에러
-  // 처리는 ViewerV2Page 의 handleExportGcode(onExportGcode)가 마스크 ZIP/CTB
-  // 와 동일한 워커 브릿지(진행률/취소/busy 가드)로 처리한다.
+  // 처리는 ViewerV2Page 의 handleExportGcode(onExportGcode)가 마스크 ZIP
+  // 과 동일한 워커 브릿지(진행률/취소/busy 가드)로 처리한다.
 
   // 출력 시간·레진 추정. modelCount / layerCount / sceneTopY 가 바뀔
   // 때만 다시 계산. mesh transform 이 바뀌면 sceneTopY 가 함께 갱신
@@ -288,14 +286,6 @@ const SliceSidePanel: React.FC<Props> = ({
                 className="px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 G-code 내보내기
-              </button>
-              <button
-                onClick={onExportCtb}
-                disabled
-                title="ChiTuBox 강제 종료 — spec 재검토 중"
-                className="px-3 py-2 text-sm border border-gray-300 text-gray-400 rounded cursor-not-allowed"
-              >
-                .ctb (검증 중)
               </button>
             </div>
           )}

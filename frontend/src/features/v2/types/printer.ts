@@ -17,7 +17,7 @@ export interface PrinterProfileV2 {
   pixelPitchUm: number;
   buildVolumeMm: [number, number, number];
 
-  // ---- 노광 설정 (모두 선택 — 미지정 시 인코더 기본값 사용, 기존 프로파일 하위 호환) ----
+  // ---- 노광 설정 (모두 선택 — 미지정 시 아래 DEFAULT_* 폴백, 기존 프로파일 하위 호환) ----
   /** 일반 레이어 노광 시간 (초). */
   exposureSec?: number;
   /** 바닥 레이어 노광 시간 (초). */
@@ -43,7 +43,7 @@ export interface PrinterProfileV2 {
 
 /**
  * 노광 기본값 — 프로파일/옵션에 노광 값이 없을 때 폴백에 사용.
- * 인코더(ctb-encoder)·워커·예상 시간(print-time)·UI(SliceSidePanel)·
+ * 마스크 ZIP manifest(profile-exposure)·예상 시간(print-time)·UI(SliceSidePanel)·
  * 프로파일 편집(PrinterProfileDialog)이 모두 이 상수를 참조해 값이 갈라지지 않도록 한다.
  */
 export const DEFAULT_EXPOSURE_SEC = 2.5;
@@ -62,8 +62,9 @@ export const DEFAULT_LIGHT_OFF_DELAY_SEC = 1.0;
 
 /**
  * 프로파일 입력 한계 (다이얼로그 검증용). 하한은 저장 시 sanitize 와 별개로
- * 저장 자체를 막는 기준 — 특히 리프트 속도 0 은 CTB 에 0 mm/min 이 기록돼
- * 실기에서 플레이트가 안 올라가는 파일이 된다 (검수_20260915 V-9).
+ * 저장 자체를 막는 기준 — 특히 리프트 속도 0 은 실기에서 플레이트가 안
+ * 올라가는 설정이다 (검수_20260915 V-9. 원래는 치투박스 포맷 기록값 기준으로
+ * 도입했다 — 그 포맷은 2026-09-29 폐기됐지만 입력 보호로 유지).
  *
  * 주의: 여기는 "입력 범위"만 정의한다. 노광·리프트의 **기본값**은 위의
  * DEFAULT_* 하나만이 단일 소스이며, 이 상수는 기본값을 대체하지 않는다.

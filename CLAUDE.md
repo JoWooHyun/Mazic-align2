@@ -52,10 +52,10 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 | `support/` | 서포트 구조물 (trunk/브릿지, 파라미터, 자동 생성) | 유승제 |
 | `utils/dental/` | **지현규 알고리즘**: `margin-detect.ts`(🔒잠금), `island-detection.ts`, `dental-support.ts`, `paint-mask.ts` | 지현규 — 로직 변경 시 컨펌 |
 | `utils/gcode/` | FDM G-code (2노즐 하이브리드 대비) | 조우현 이식분 |
-| `utils/slice-*` + `workers/` | 배치 슬라이스 (마스크/CTB, 워커) | 산출물 바이트 변경 금지 원칙 |
-| `utils/{exposure,print-time,ctb-encoder,mask-png}.ts` | 노광 보간, 시간 추정, 출력 포맷 | 기본값 단일 소스 유지 |
+| `utils/slice-*` + `workers/` | 배치 슬라이스 (마스크 ZIP·G-code, 워커) | 산출물 바이트 변경 금지 원칙 |
+| `utils/{exposure,print-time,mask-png}.ts` | 노광 보간, 시간 추정, 마스크 PNG | 기본값 단일 소스 유지 |
 | `data/*.repo.ts` + `data/db.ts` | IndexedDB 계층 | 스키마 변경은 협의 |
-| `types/printer.ts` | 프린터 프로파일 (노광 4종 + 리프트 4종, DEFAULT_* + PROFILE_FIELD_LIMITS) | 값 변경은 CTB 기록값 변경 — 규칙 5 |
+| `types/printer.ts` | 프린터 프로파일 (노광 4종 + 리프트 4종, DEFAULT_* + PROFILE_FIELD_LIMITS) | 값 변경은 마스크 ZIP manifest 노광값·예상 시간 변경 — 규칙 5·6 |
 | `utils/sample-models.ts` | 예제 모델(20mm 큐브·구) 바이너리 STL 코드 생성 | 비등방 도형 추가 시 Y-up 전제 재검토 |
 | `components/DentalPanel.tsx` 등 | 우측 패널 UI들 | |
 
@@ -67,10 +67,10 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 2. **씬은 handle 경유** — 컴포넌트가 mesh에 직접 접근하지 않는다. 새 기능은 `BabylonSceneHandle` 메서드로 노출 (exportStl/getSliceMask 패턴).
 3. **마진 잠금**: `utils/dental/margin-detect.ts`의 `MARGIN_LOCK` 상수·로직 변경 전 지현규 컨펌. reviewer가 위반 시 FAIL 처리.
 4. **painted 계약**: margin 입력은 브러쉬 painted만 (`paint-mask.ts`) — floodfill(autoFill) 결과는 별도 집합, 절대 혼입 금지.
-5. **산출물 보존**: 슬라이스 마스크 PNG/CTB 바이트가 변하는 수정은 의도적일 때만 — PR에 before/after 명시.
+5. **산출물 보존**: 슬라이스 마스크 PNG·ZIP·G-code 바이트가 변하는 수정은 의도적일 때만 — PR에 before/after 명시.
 6. **기본값 단일 소스**: 노광/리프트 폴백은 `types/printer.ts`의 DEFAULT_* 하나만 — 화면 추정과 파일 기록이 항상 같은 값.
 7. **useCallback deps**: `printerProfile` 등 반응형 값 참조 시 deps 누락 주의 (stale closure — 반복 사고 유형).
-8. 단위: 길이 mm, 시간 s(속도 mm/s — CTB 기록 시 mm/min 환산), 온도 ℃. UI 레이블에 단위 명시.
+8. 단위: 길이 mm, 시간 s(속도 mm/s — G-code F 는 mm/min 환산), 온도 ℃. UI 레이블에 단위 명시.
 9. 주석/커밋 한국어, 식별자 영어. 새 코드에서 새 tsc 에러·lint 경고 금지.
 
 ## 알려진 이슈 (수정 대상 아님 — 별도 정리에서만)

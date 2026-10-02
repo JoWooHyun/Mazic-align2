@@ -15,7 +15,7 @@ interface SliceMaskPreviewProps {
  * 슬라이스 평면의 1bpp 마스크를 canvas 로 미리보기.
  *
  * 흰색 = 모델/서포트가 있는 영역 (LCD 가 빛을 막을 곳), 검정 = 빈
- * 곳 (빛이 통과). 실제 .ctb 의 비트맵 portrait 도 같은 색 매핑.
+ * 곳 (빛이 통과). 내보내는 마스크 ZIP 의 레이어 PNG 도 같은 색 매핑.
  */
 const SliceMaskPreview: React.FC<SliceMaskPreviewProps> = ({
   sceneHandleRef,

@@ -7,7 +7,7 @@
 //   B-37. 레이어 두께 미반영 (조용한 결함 — 산출물이 틀림)
 //     handleExportGcode 가 handle.getFdmSliceInput() 을 **인자 없이** 불렀다.
 //     그러면 DEFAULT_FDM_SETTINGS.layerHeight(0.05) 로 폴백해, 사용자가 패널에서
-//     고른 두께가 G-code 에 전혀 반영되지 않는다. 마스크 ZIP·CTB 는 제대로
+//     고른 두께가 G-code 에 전혀 반영되지 않는다. 마스크 ZIP 은 제대로
 //     넘기는데 G-code 만 빠져 있던 비대칭. 화면 추정과 파일 내용이 어긋나므로
 //     규칙 6(기본값 단일 소스)의 정신에 정면으로 위배된다.
 //
@@ -16,7 +16,7 @@
 //     인라인 표시 가능한 타입(text/plain)이면 download 속성이 무시되고 blob URL
 //     로 네비게이션하는 경우가 있다. 그러면 SPA 가 통째로 이탈했다 돌아와
 //     useState 인 slicePreview 가 초기값 {on:false} 로 리셋된다 = 미리보기가 풀림.
-//     .zip(application/zip) · .ctb(application/octet-stream) 는 표시 불가 타입이라
+//     .zip(application/zip) 은 표시 불가 타입이라
 //     항상 다운로드로 처리됐다 — 한쪽만 튕긴 비대칭을 설명하는 유일한 차이.
 //
 //   검사 항목:
@@ -25,7 +25,7 @@
 //     (c) **대조군 A** — 인자를 비우면(구 구현) 두께가 무엇이든 0.05 로 고정되는 것을
 //         증명. 0.05 를 고른 경우엔 우연히 맞으므로 "조용한 결함"임도 함께 보인다
 //     (d) partial 병합이 layerHeight 만 덮고 나머지 기본값을 보존하는가
-//     (e) 다운로드 MIME 이 인라인 표시 불가 타입인가 (G-code / ZIP / CTB 전부)
+//     (e) 다운로드 MIME 이 인라인 표시 불가 타입인가 (G-code / ZIP 전부)
 //     (f) **대조군 B** — text/plain 이 인라인 표시 가능 타입으로 분류되는 것을 증명
 //         (즉 이 검사가 통과만 하는 검사가 아님)
 //     (g) 소스 배선 검사 — useSliceExport.ts 가 실제로 layerHeight 를 넘기고,
@@ -130,7 +130,6 @@ console.log("\n=== (e) 다운로드 MIME 이 인라인 표시 불가 타입인�
 const DOWNLOAD_MIMES = {
   "G-code (수정 후)": "application/octet-stream",
   "마스크 ZIP": "application/zip",
-  CTB: "application/octet-stream",
 };
 for (const [label, mime] of Object.entries(DOWNLOAD_MIMES)) {
   assert(
