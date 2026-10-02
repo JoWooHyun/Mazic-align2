@@ -4,9 +4,17 @@ Top-down 레진 프린터용 하이브리드 슬라이서 (최종 목표: 2노�
 현재: **v2 아키텍처** (React + Babylon + IndexedDB, 백엔드 불요). 기준 브랜치 = `integrate/v2-mainline` (기본 브랜치).
 `main`은 구 v1 — 통합 완료 후 교체 예정 (로드맵 Step 3-4).
 
+**현재 우선순위 (2026-10 기준)**: **11월 초 외부 데모.** 서포트 고도화는 뒤로, 기본기·사고 방지 우선.
+출력물은 자체 프린터(Task0)가 읽는 **`.zip` 하나** — CTB 완전 폐기(리드 결정 2026-09-28~29, 코드 제거 PR #105).
+AI 체제: 2026-09-23~ Opus 5.5 시험(계획·구현·검수 전부).
+
 ## 필수 참고 문서
 
-- `docs/통합로드맵.md` — **진행 상태의 단일 진실.** 작업 시작 전 체크박스 확인, 완료 시 갱신.
+- `docs/인수인계_*.md` 중 **최신 날짜** — 새 세션 시작점 (지금 상태·리드 할 일·AI 다음 작업 순서)
+- `docs/통합로드맵.md` — **진행 상태의 단일 진실.** 작업 시작 전 체크박스 확인, 완료 시 갱신. 최상단 "0. 11월 데모" 절이 현재 일정
+- `docs/계획_11월데모_20260923.md` §0 — 데모 6주 일정 정본 (CTB 폐기·`.zip` 경로 Z1~Z5)
+- `.zip` 경로 작업 시: **규격 정본 = Task0 리포 `docs/Task0_Gcode_규격서_초안.md`** (이 리포 밖, 리드 PC `Documents\Task0\docs\`),
+  구현 계획 `docs/계획_Task0규격적용_20260918.md`, 협의 기록 `docs/제안_Task0협의_20260929.md`(Task0 사본과 동기화 — `docs/WORKFLOW.md` §7)
 - `docs/WORKFLOW.md` — 팀 개발 흐름, AI 사이클, PR 규칙(머지=조우현), 검증 체크리스트
 - `docs/아키텍처결정_20260707.md` — v2 메인라인/IndexedDB/서포트 분담 결정과 근거
 - `docs/references/feedback_margin_algorithm_lock.md` — **마진 알고리즘 잠금 규약. 변경 전 지현규 컨펌 필수.**
@@ -24,7 +32,8 @@ Top-down 레진 프린터용 하이브리드 슬라이서 (최종 목표: 2노�
 ```
 start-dev.bat 더블클릭            # 설치+기동+브라우저 자동 (팀 표준)
 cd frontend && npm run dev        # 수동 (→ http://localhost:5173/v2)
-cd frontend && npm run lint       # ESLint (기존 40건은 알려진 이슈, 새 코드만 clean)
+cd frontend && npm run lint       # ESLint (기존 34건은 알려진 이슈, 새 코드만 clean)
+cd frontend && npx tsc --noEmit   # 타입 검사 (기존 12건은 알려진 이슈)
 cd frontend && npm run build      # vite build
 ```
 
@@ -45,13 +54,13 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 
 | 경로 | 역할 | 담당/주의 |
 |---|---|---|
-| `pages/ViewerV2Page.tsx` | 전체 통합 골격 (640줄): 공유 상태 + 훅 조립 + JSX 골격 | 공용 — useCallback deps 주의 |
-| `pages/viewer/` | ViewerV2Page의 분리 조각: `hooks/`(서포트 편집·dental·내보내기 등 9개), `components/`(헤더·오버레이·사이드패널 5개), `utils/` | 구조도: `docs/리팩토링_LLM구조_20260720.md` |
-| `components/BabylonScene.tsx` | **씬 본체** (114줄): SceneCtx + 훅 호출(순서 고정) + 핸들 조립. 편집모드 select/support/dental-brush, handle 패턴 | 유승제 설계 — 구조 변경 시 리뷰 지정 |
-| `components/babylon/` | 씬 기능 조각: 훅 9개(bootstrap·mesh동기화·brush 등), 핸들 빌더 5개, dental/bridge 액션. **훅 호출 순서·dispose 순서 불변식 있음** | 변경 전 `docs/리팩토링_LLM구조_20260720.md` §5 필독 |
-| `support/` | 서포트 구조물 (trunk/브릿지, 파라미터, 자동 생성) | 유승제 |
-| `utils/dental/` | **지현규 알고리즘**: `margin-detect.ts`(🔒잠금), `island-detection.ts`, `dental-support.ts`, `paint-mask.ts` | 지현규 — 로직 변경 시 컨펌 |
-| `utils/gcode/` | FDM G-code (2노즐 하이브리드 대비) | 조우현 이식분 |
+| `pages/ViewerV2Page.tsx` | 전체 통합 골격 (907줄 — 7/20 분리 직후 640에서 다시 불어남): 공유 상태 + 훅 조립 + JSX 골격 | 공용 — useCallback deps 주의. **새 기능은 여기 말고 `viewer/` 하위 훅·컴포넌트로** |
+| `pages/viewer/` | ViewerV2Page의 분리 조각: `hooks/`(서포트 편집·dental·내보내기 등 8개 + types), `components/`(헤더·오버레이·사이드패널·슬라이스 모드 8개), `utils/`(4개) | 구조도: `docs/리팩토링_LLM구조_20260720.md` |
+| `components/BabylonScene.tsx` | **씬 본체** (158줄): SceneCtx + 훅 호출(순서 고정) + 핸들 조립. 편집모드 select/support/dental-brush, handle 패턴 | 유승제 설계 — 구조 변경 시 리뷰 지정 |
+| `components/babylon/` | 씬 기능 조각: `hooks/`(use* 10개 + setup-gizmos·setup-pointer-handlers·dispose-scene), `handle/` 빌더 6개, dental/bridge/재설계 액션. **훅 호출 순서·dispose 순서 불변식 있음** | 변경 전 `docs/리팩토링_LLM구조_20260720.md` §5 필독 |
+| `support/` | 서포트 구조물 (재설계 경로: 검출→라우팅→부품 조립, 레거시 trunk/브릿지, 파라미터, 자동 생성) | **조우현**(2026-08-05 유승제→이관, AI dev-cycle로 진행) |
+| `utils/dental/` | **지현규 알고리즘**: `margin-detect.ts`(🔒잠금), `margin-guard.ts`(🔒상수 잠금 — 원본 1:1 이식), `island-detection.ts`, `dental-support.ts`, `paint-mask.ts` | 지현규 — 로직 변경 시 컨펌 |
+| `utils/gcode/` | FDM G-code (2노즐 하이브리드 대비). Task0 플레이버는 **별도 writer 로 추가 예정**(Z1) | 조우현 이식분 — 기존 marlin 출력 바이트 보존 |
 | `utils/slice-*` + `workers/` | 배치 슬라이스 (마스크 ZIP·G-code, 워커) | 산출물 바이트 변경 금지 원칙 |
 | `utils/{exposure,print-time,mask-png}.ts` | 노광 보간, 시간 추정, 마스크 PNG | 기본값 단일 소스 유지 |
 | `data/*.repo.ts` + `data/db.ts` | IndexedDB 계층 | 스키마 변경은 협의 |
@@ -65,7 +74,7 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 
 1. **데이터는 repo 경유** — 컴포넌트에서 IndexedDB 직접 접근 금지 (가역성 조건, ADR-2).
 2. **씬은 handle 경유** — 컴포넌트가 mesh에 직접 접근하지 않는다. 새 기능은 `BabylonSceneHandle` 메서드로 노출 (exportStl/getSliceMask 패턴).
-3. **마진 잠금**: `utils/dental/margin-detect.ts`의 `MARGIN_LOCK` 상수·로직 변경 전 지현규 컨펌. reviewer가 위반 시 FAIL 처리.
+3. **마진 잠금**: `utils/dental/margin-detect.ts`의 `MARGIN_LOCK` 상수·로직, `margin-guard.ts`의 `MARGIN_GUARD_LOCK`(MARGIN_GUARD 0.5mm·MAX_PUSH 30회)·판정 로직 변경 전 지현규 컨펌. reviewer가 위반 시 FAIL 처리.
 4. **painted 계약**: margin 입력은 브러쉬 painted만 (`paint-mask.ts`) — floodfill(autoFill) 결과는 별도 집합, 절대 혼입 금지.
 5. **산출물 보존**: 슬라이스 마스크 PNG·ZIP·G-code 바이트가 변하는 수정은 의도적일 때만 — PR에 before/after 명시.
 6. **기본값 단일 소스**: 노광/리프트 폴백은 `types/printer.ts`의 DEFAULT_* 하나만 — 화면 추정과 파일 기록이 항상 같은 값.
@@ -75,13 +84,14 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 
 ## 알려진 이슈 (수정 대상 아님 — 별도 정리에서만)
 
-- tsc 12건: useBridgeControlPoints 5(Cps 튜플 — 구 ViewerV2Page), zip-store 4, useTransformCommit·auto-generate·project-archive 각 1 (2026-09-15 재집계. setup-gizmos undoLift 건은 R-1로 해소 — PR #59)
-- lint 34건: exhaustive-deps·no-explicit-any 등 (2026-09-15 재집계 — 24 errors, 10 warnings)
+- tsc 12건: useBridgeControlPoints 5(Cps 튜플 — 구 ViewerV2Page), zip-store 4, useTransformCommit·auto-generate·project-archive 각 1 (2026-09-15 재집계, 10-02 재실측 동일. setup-gizmos undoLift 건은 R-1로 해소 — PR #59). 전부 v2 타입 문제 — 0으로 만드는 정리가 로드맵 0절 1주차에 있다
+- lint 34건: exhaustive-deps·no-explicit-any 등 (2026-09-15 재집계, 10-02 재실측 동일 — 24 errors, 10 warnings. v1 25 + v2 8 + 공용 1)
 - 이 때문에 작업을 중단하지 말 것. 단 **새 코드에서 추가 금지.**
 
 ## Git / PR
 
-- 기본 브랜치 `integrate/v2-mainline`. `feat/<이름>` → PR → **조우현 머지(=최종 승인)**.
+- 기본 브랜치 `integrate/v2-mainline`. `feat/<이름>` → PR → **조우현 머지(=최종 승인)**. **머지 후 브랜치 바로 삭제.**
+- 에이전트 worktree 가 v1 초기 커밋(d6b58bd)에서 시작한 사고가 두 번 있었다 — 작업 시작 시 `origin/integrate/v2-mainline` 기준인지 확인(아니면 reset).
 - PR 본문 필수: 변경 요약, AI 검수 이력(FAIL→수정 포함), **"조우현 확인 포인트"**(비개발자 실행 체크리스트).
 - BabylonScene 구조·IndexedDB 스키마·마진 로직 등 설계 변경은 해당 담당자(유승제/지현규) 리뷰 지정.
 - 커밋: `feat:`/`fix:`/`docs:`/`chore:` + 한국어 요약. AI 작업은 `/dev-cycle` (계획→구현→검수→PR).
