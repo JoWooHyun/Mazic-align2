@@ -33,7 +33,7 @@ AI 체제: 2026-09-23~ Opus 5.5 시험(계획·구현·검수 전부).
 start-dev.bat 더블클릭            # 설치+기동+브라우저 자동 (팀 표준)
 cd frontend && npm run dev        # 수동 (→ http://localhost:5173/v2)
 cd frontend && npm run lint       # ESLint (기존 34건은 알려진 이슈, 새 코드만 clean)
-cd frontend && npx tsc --noEmit   # 타입 검사 (기존 12건은 알려진 이슈)
+cd frontend && npx tsc --noEmit   # 타입 검사 — 0건 유지 (2026-10-02 정리)
 cd frontend && npm run build      # vite build
 ```
 
@@ -84,7 +84,7 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 
 ## 알려진 이슈 (수정 대상 아님 — 별도 정리에서만)
 
-- tsc 12건: useBridgeControlPoints 5(Cps 튜플 — 구 ViewerV2Page), zip-store 4, useTransformCommit·auto-generate·project-archive 각 1 (2026-09-15 재집계, 10-02 재실측 동일. setup-gizmos undoLift 건은 R-1로 해소 — PR #59). 전부 v2 타입 문제 — 0으로 만드는 정리가 로드맵 0절 1주차에 있다
+- tsc **0건** (2026-10-02 정리 — 12건이 전부 v2 타입 표기 문제였고 타입만 고쳐 build 산출물 바이트 동일). **이제 새 tsc 에러는 1건도 허용 안 됨**
 - lint 34건: exhaustive-deps·no-explicit-any 등 (2026-09-15 재집계, 10-02 재실측 동일 — 24 errors, 10 warnings. v1 25 + v2 8 + 공용 1)
 - 이 때문에 작업을 중단하지 말 것. 단 **새 코드에서 추가 금지.**
 

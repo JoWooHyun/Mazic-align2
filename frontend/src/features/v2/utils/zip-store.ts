@@ -34,7 +34,8 @@ export interface ZipEntry {
 
 export function makeZipStore(entries: ZipEntry[]): Blob {
   const chunks: BlobPart[] = [];
-  const central: Uint8Array[] = [];
+  // 전부 new Uint8Array(n) 로 만든 ArrayBuffer 기반 — TS 5.7+ lib 에서 BlobPart 로 받도록 타입만 명시.
+  const central: Uint8Array<ArrayBuffer>[] = [];
   let offset = 0;
 
   for (const f of entries) {
@@ -58,7 +59,8 @@ export function makeZipStore(entries: ZipEntry[]): Blob {
     lh.set(nameBytes, 30);
 
     chunks.push(lh);
-    chunks.push(f.data);
+    // TS 5.7+ lib 의 Uint8Array<ArrayBufferLike> 와 BlobPart 불일치 — 타입 단언만, 런타임 동일.
+    chunks.push(f.data as BlobPart);
 
     // Central directory record
     const cd = new Uint8Array(46 + nameBytes.length);

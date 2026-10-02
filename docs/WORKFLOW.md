@@ -83,7 +83,7 @@ Claude Code에서 `/dev-cycle <작업 내용>` 실행 시 다음 루프가 돈�
 
 ### 4-1. 자동(헤드리스) — PR 전 필수
 
-1. `cd frontend && npx tsc --noEmit` — 알려진 12건 외 **새 에러 0**
+1. `cd frontend && npx tsc --noEmit` — **0건**(2026-10-02 정리 후 기준선 0)
 2. `npm run lint` — 알려진 34건 외 **새 경고 0**
 3. `npx tsx scripts/verify-<이름>.mjs` **전부** exit code 0 (10/2 기준 24종 — `ls scripts/verify-*.mjs`).
    plain `node` 금지(확장자 없는 TS import 오탐), 판정은 출력 문자열이 아니라 **exit code**. Node 20.6 이상.

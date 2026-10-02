@@ -1,4 +1,4 @@
-import { Mesh, Ray, Scene, Vector3 } from "@babylonjs/core";
+import { type AbstractMesh, Mesh, Ray, Scene, Vector3 } from "@babylonjs/core";
 
 import type { SupportParams, SupportPointV2 } from "../types";
 
@@ -62,9 +62,10 @@ export function autoGenerateSupportPoints(
       const origin = new Vector3(x, yBelow, z);
       const ray = new Ray(origin, direction, rayLen);
 
+      // pickWithRay 술어 시그니처(AbstractMesh)에 맞춘 타입 단언 — predicate 는 unknown 을 받으므로 런타임 동일.
       const info = scene.pickWithRay(
         ray,
-        predicate as (m: Mesh) => boolean,
+        predicate as (m: AbstractMesh) => boolean,
       );
       if (!info?.hit || !info.pickedPoint) continue;
 
