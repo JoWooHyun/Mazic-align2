@@ -4,7 +4,7 @@ v2는 **프론트엔드만으로 완결**됩니다. 별도 백엔드 서버가 �
 
 ## 사전 요구사항
 
-- Node.js 18 이상 — https://nodejs.org/ (LTS 버전 권장)
+- Node.js 20.6 이상 — https://nodejs.org/ (22 LTS 권장. 헤드리스 검증 스크립트가 20.6+ 기능을 쓴다)
 - npm (Node.js 설치 시 자동 포함)
 - Windows 10 / 11
 
