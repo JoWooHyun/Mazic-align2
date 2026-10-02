@@ -60,6 +60,11 @@ interface UseSupportEditingArgs {
   setCtxMenu: React.Dispatch<
     React.SetStateAction<{ x: number; y: number } | null>
   >;
+  /**
+   * 편집 잠금 (= 슬라이스 미리보기 중). true 면 삭제·복제·우클릭 메뉴 열기를
+   * 무시한다 — 신규 7.
+   */
+  editLocked: boolean;
 }
 
 export function useSupportEditing({
@@ -80,6 +85,7 @@ export function useSupportEditing({
   updateTransform,
   followAttachedChildren,
   setCtxMenu,
+  editLocked,
 }: UseSupportEditingArgs) {
   const [bridgeMode, setBridgeMode] = useState(false);
   const [pendingBridge, setPendingBridge] = useState<PendingBridge | null>(
@@ -331,6 +337,9 @@ export function useSupportEditing({
   });
 
   const handleDeleteSelectedSupport = useCallback(() => {
+    // 미리보기 중에는 확인 없이 모델·서포트가 지워지지 않게 막는다 — 신규 7.
+    //   Delete 키·컨텍스트 메뉴 "삭제"·패널 삭제 버튼의 공통 관문.
+    if (editLocked) return;
     // Support 모드: 변곡점 > 서포트 순으로 제거.
     if (editMode === "support") {
       if (selectedCp) {
@@ -356,6 +365,7 @@ export function useSupportEditing({
       })();
     }
   }, [
+    editLocked,
     editMode,
     selectedSupportId,
     selectedCp,
@@ -372,6 +382,7 @@ export function useSupportEditing({
   //   소스는 클립보드가 아니라 현재 선택이다 — 사용자 Ctrl+C 클립보드는 건드리지 않는다.
   //   원본에서 XZ +5mm 오프셋해 겹침을 피한다 (자동배치는 건드리지 않음).
   const handleDuplicateSelected = useCallback(async () => {
+    if (editLocked) return; // 미리보기 중 복제 금지 — 신규 7.
     if (selectedIds.size === 0) return;
     const sources = files.filter((f) => selectedIds.has(f.id));
     const newIds: string[] = [];
@@ -390,7 +401,7 @@ export function useSupportEditing({
       newIds.push(created.id);
     }
     setSelectedIds(new Set(newIds));
-  }, [files, selectedIds, addStlFile, updateTransform, setSelectedIds]);
+  }, [editLocked, files, selectedIds, addStlFile, updateTransform, setSelectedIds]);
 
   // ----- 우클릭 컨텍스트 메뉴 (P5) -----
   //   프루사와 동일하게 짧은 우클릭=메뉴, 우드래그=팬 으로 구분한다.
@@ -409,6 +420,8 @@ export function useSupportEditing({
       if (e.button !== 2) return;
       const start = rightDownRef.current;
       rightDownRef.current = null;
+      // 미리보기 중에는 컨텍스트 메뉴(삭제/복제)를 열지 않는다 — 신규 7.
+      if (editLocked) return;
       if (!start) return;
       const moved = Math.hypot(e.clientX - start.x, e.clientY - start.y);
       // 이동량이 크면 우드래그(팬) 로 간주 — 메뉴를 열지 않는다.
@@ -417,7 +430,7 @@ export function useSupportEditing({
       if (editMode !== "select" || selectedIds.size === 0) return;
       setCtxMenu({ x: e.clientX, y: e.clientY });
     },
-    [editMode, selectedIds, setCtxMenu],
+    [editLocked, editMode, selectedIds, setCtxMenu],
   );
 
   const handleClearAllSupports = useCallback(async () => {

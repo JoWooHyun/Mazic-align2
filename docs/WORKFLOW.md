@@ -85,7 +85,7 @@ Claude Code에서 `/dev-cycle <작업 내용>` 실행 시 다음 루프가 돈�
 
 1. `cd frontend && npx tsc --noEmit` — 알려진 12건 외 **새 에러 0**
 2. `npm run lint` — 알려진 34건 외 **새 경고 0**
-3. `npx tsx scripts/verify-<이름>.mjs` **전부** exit code 0 (10/2 기준 23종 — `ls scripts/verify-*.mjs`).
+3. `npx tsx scripts/verify-<이름>.mjs` **전부** exit code 0 (10/2 기준 24종 — `ls scripts/verify-*.mjs`).
    plain `node` 금지(확장자 없는 TS import 오탐), 판정은 출력 문자열이 아니라 **exit code**. Node 20.6 이상.
 4. `npm run build` 성공
 5. 산출물(마스크 PNG·ZIP·G-code) 바이트가 바뀌는 수정이면 PR 에 before/after(SHA-256 또는 차이 설명) — CLAUDE.md 규칙 5
@@ -100,7 +100,7 @@ Claude Code에서 `/dev-cycle <작업 내용>` 실행 시 다음 루프가 돈�
    수동 서포트·브릿지 편집 → undo. Dental 탭 "서포트 생성(재설계)" → 목록→다시 열어도 제자리
 4. **Dental(지현규)**: 브러쉬 색칠(주황) → 마진 찾기(초록 라인, 회전 추종) → 마진 안 더블클릭 채움 → 아일랜드 검출(마젠타)
 5. **슬라이스 미리보기**(별도 화면 모드): 진입·"뒤로" 시 모델·시점 유지, 층 슬라이더·단면, 부피/무게/예상 시간, 미리보기 중 편집 잠금
-   (⚠️ 2026-10-02 현재 미리보기 중에도 Delete·Ctrl+X/V 가 살아 있다 — 종합 §4-2 신규 7, undo 묶음에서 수정 예정. 확인할 때 누르지 말 것)
+   — 미리보기 중 Delete·Ctrl+X/V·Ctrl+Z/Y·우클릭 메뉴는 무반응이어야 정상(undo 묶음, 종합 §4-2 신규 7)
 6. **내보내기**: 마스크 ZIP(`manifest.json` + 층 PNG, 진행률 + **내보내는 중 3D 뷰 조작이 끊기지 않아야 함**, 취소), G-code, STL.
    CTB 는 폐기 — 버튼이 없어야 정상. Task0 `.zip` 은 구현(2주차) 후 이 항목에 추가
 7. **프로파일**: 노광·리프트 값 수정 저장 → 예상 시간 즉시 갱신 → 내보낸 파일에 반영

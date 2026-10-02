@@ -97,15 +97,6 @@ const ViewerV2Page: React.FC = () => {
   useShortcutsListener();
 
   // ----- 기능별 훅 조립 -----
-  // 파일 선택/클립보드/undo·redo 단축키.
-  useClipboardActions({
-    files,
-    selectedIds,
-    setSelectedIds,
-    addStlFile,
-    removeStlFile,
-  });
-
   // 뷰 프리셋·줌·도구 단축키 (zoomFit 은 컨텍스트 메뉴 재사용).
   const { zoomFit } = useViewerShortcuts({
     sceneHandleRef,
@@ -139,6 +130,19 @@ const ViewerV2Page: React.FC = () => {
     sceneHandleRef,
     // P-1: 출력영역을 벗어난 모델이 있으면 내보내기 전에 확인을 받는다.
     volumeIssues,
+  });
+
+  // 파일 선택/클립보드/undo·redo 단축키.
+  //   미리보기 중 편집 키 잠금(slicePreview.on) 때문에 useSliceExport 뒤에 둔다.
+  useClipboardActions({
+    projectId,
+    files,
+    selectedIds,
+    setSelectedIds,
+    addStlFile,
+    removeStlFile,
+    refreshSupports,
+    editLocked: slicePreview.on,
   });
 
   // 서포트 구성 요약 (C-4). 저장된 점 목록에서 매번 파생 — 별도 상태를 두지
@@ -226,6 +230,7 @@ const ViewerV2Page: React.FC = () => {
     updateTransform,
     followAttachedChildren,
     setCtxMenu,
+    editLocked: slicePreview.on,
   });
 
   // Dental 색칠/마진/아일랜드/검출→서포트 상태·핸들러.
