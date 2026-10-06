@@ -7,18 +7,47 @@
 import SliceBatchWorker from "../workers/slice-batch.worker?worker";
 
 import type { FdmSettings } from "./gcode/types";
-import type { Task0ExportResult } from "./task0/task0-export";
+import type {
+  Task0ExportParserCheck,
+  Task0ExportResult,
+  Task0ExportSummary,
+  Task0JobStage,
+  Task0JobZipExportResult,
+  Task0JobZipSummary,
+} from "./task0/task0-export";
 import type {
   GcodeRequest,
   PngZipRequest,
   SliceBatchRequest,
   SliceBatchResponse,
   Task0GcodeRequest,
+  Task0JobZipRequest,
   WorkerMeshGeometry,
   WorkerSliceOptions,
 } from "../workers/slice-batch.messages";
 
-export type BatchProgress = (done: number, total: number) => void;
+/**
+ * 진행률 콜백. stage 는 Task0 job.zip 만 넘긴다(G-code 생성 / 층 이미지 / 묶기·검사 — 단계마다 done/total 을 새로 센다).
+ * 다른 경로는 (done, total) 만 — 기존 호출부는 그대로.
+ */
+export type BatchProgress = (
+  done: number,
+  total: number,
+  stage?: Task0JobStage,
+) => void;
+
+/**
+ * Task0 job.zip 내보내기 결과 (Z3) — 통과면 zip 을 Blob(application/zip)으로, 막혔으면 워커 결과(이유) 그대로.
+ */
+export type Task0JobZipOutcome =
+  | {
+      ok: true;
+      blob: Blob;
+      summary: Task0ExportSummary;
+      job: Task0JobZipSummary;
+      parser: Task0ExportParserCheck[];
+    }
+  | Extract<Task0JobZipExportResult, { ok: false }>;
 
 /**
  * 사용자 취소(worker terminate)로 인한 reject 를 나타내는 에러.
@@ -101,7 +130,29 @@ class SliceBatchService {
   }
 
   /**
-   * 워커 요청을 실행하고 종료 응답(done / gcode-done / task0-done)을 결과로 resolve 한다.
+   * Task0 job.zip 내보내기 (Z3). 워커에서 run.gcode(위와 같은 검사) → 층 마스크 PNG → manifest·exposure·preview →
+   * zip → 자기 검사까지 한다. 통과면 zip 을 Blob(application/zip)으로, 막혔으면 이유를 resolve 한다(reject 아님).
+   * 진행률은 단계(stage)와 함께, 취소는 다른 경로와 같은 cancel(worker terminate).
+   */
+  async exportTask0JobZip(
+    meshes: WorkerMeshGeometry[],
+    input: Omit<Task0JobZipRequest, "kind" | "meshes">,
+    onProgress?: BatchProgress,
+  ): Promise<Task0JobZipOutcome> {
+    const req: Task0JobZipRequest = { kind: "task0-jobzip", meshes, ...input };
+    const r = await this.run(req, transfersOf(meshes), onProgress);
+    if (!r.ok) return r;
+    return {
+      ok: true,
+      blob: new Blob([r.zip], { type: "application/zip" }),
+      summary: r.summary,
+      job: r.job,
+      parser: r.parser,
+    };
+  }
+
+  /**
+   * 워커 요청을 실행하고 종료 응답(done / gcode-done / task0-done / task0-job-done)을 결과로 resolve 한다.
    * PNG-ZIP 은 Blob|null, G-code 는 string|null, Task0 는 Task0ExportResult 를 돌려주므로
    * 반환 타입은 요청 종류에서 추론한다(오버로드).
    */
@@ -121,10 +172,17 @@ class SliceBatchService {
     onProgress?: BatchProgress,
   ): Promise<Task0ExportResult>;
   private run(
+    req: Task0JobZipRequest,
+    transfer: Transferable[],
+    onProgress?: BatchProgress,
+  ): Promise<Task0JobZipExportResult>;
+  private run(
     req: SliceBatchRequest,
     transfer: Transferable[],
     onProgress?: BatchProgress,
-  ): Promise<Blob | string | Task0ExportResult | null> {
+  ): Promise<
+    Blob | string | Task0ExportResult | Task0JobZipExportResult | null
+  > {
     return new Promise((resolve, reject) => {
       this.terminate(); // 이전 작업이 남아 있으면 정리(고아 Promise reject 포함).
       const worker = new SliceBatchWorker();
@@ -135,7 +193,7 @@ class SliceBatchService {
         const msg = e.data;
         switch (msg.type) {
           case "progress":
-            onProgress?.(msg.done, msg.total);
+            onProgress?.(msg.done, msg.total, msg.stage);
             break;
           case "done":
             // 정상 완료 — terminate 가 이 Promise 를 reject 하지 않도록 먼저 클리어.
@@ -153,6 +211,11 @@ class SliceBatchService {
             resolve(msg.gcode);
             break;
           case "task0-done":
+            this.pendingReject = null;
+            this.terminate();
+            resolve(msg.result);
+            break;
+          case "task0-job-done":
             this.pendingReject = null;
             this.terminate();
             resolve(msg.result);

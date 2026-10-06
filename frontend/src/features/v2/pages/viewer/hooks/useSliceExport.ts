@@ -1,7 +1,7 @@
-// 슬라이스 프리뷰 상태 + 마스크 ZIP / G-code / STL / Task0 G-code 내보내기 핸들러.
+// 슬라이스 프리뷰 상태 + 마스크 ZIP / G-code / STL / Task0 job.zip·G-code 내보내기 핸들러.
 // (ViewerV2Page 에서 추출 — busy 가드·CancelError·downloadBlob·알림 문구 불변.)
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { STLFileV2 } from "../../../types/stl";
 import type { ProjectV2 } from "../../../types/project";
@@ -12,13 +12,19 @@ import type {
 } from "../../../components/BabylonScene";
 import { downloadBlob } from "../../../utils/stl-export";
 import { sliceBatchService } from "../../../utils/slice-batch-service";
-import type { Task0ExportReport } from "../../../utils/task0/task0-export";
+import {
+  TASK0_APP_JOB_GENERATOR,
+  type Task0ExportReport,
+  type Task0JobStage,
+} from "../../../utils/task0/task0-export";
 import {
   isTask0Profile,
+  task0PrintableFrameForProfile,
+  task0RasterFrameForProfile,
   task0WriterOptionsForProfile,
 } from "../../../utils/task0/task0-profile";
 import { profileExposure } from "../utils/profile-exposure";
-import { layerCountFor } from "../utils/layer-count";
+import { previewLayerCount } from "../utils/layer-count";
 
 /** 확인 다이얼로그 줄바꿈. */
 const NL = String.fromCharCode(10);
@@ -57,12 +63,35 @@ export function useSliceExport({
     busy: boolean;
     done: number;
     total: number;
+    /** 진행 단계 — Task0 job.zip 만 (G-code 생성 / 층 이미지 / 묶기·검사). 다른 내보내기는 없음 */
+    stage?: Task0JobStage;
   }>({ busy: false, done: 0, total: 0 });
   const [task0Report, setTask0Report] = useState<Task0ExportReport | null>(
     null,
   );
 
-  const layerCount = layerCountFor(sceneTopY, slicePreview.layerHeightMm);
+  // 마지막 Task0 결과는 그때의 입력(모델·서포트·프로파일·층두께)에만 맞다 (Z2 인계) — 입력이 바뀌거나 슬라이스 화면을
+  //   나가면 지운다. 모델·서포트 편집은 슬라이스 화면 밖에서만 되므로(편집 잠금) 화면을 나갈 때 지우면 서포트만 옮긴
+  //   경우(개수 그대로)도 덮인다. 내보내기 도중 입력이 바뀌면 끝난 결과를 화면에 올리지 않는다(epoch 비교 — 파일·알림은
+  //   그대로 나가고, 패널 요약만 생략).
+  const task0ReportEpochRef = useRef(0);
+  useEffect(() => {
+    task0ReportEpochRef.current += 1;
+    setTask0Report(null);
+  }, [
+    files,
+    supportsLength,
+    printerProfile,
+    slicePreview.layerHeightMm,
+    slicePreview.on,
+  ]);
+
+  // Task0 프로파일이면 job.zip·run.gcode 와 같은 정규화 topY 로 센다(Z3) — 기존 프로파일은 종전 식 그대로.
+  const layerCount = previewLayerCount(
+    sceneTopY,
+    slicePreview.layerHeightMm,
+    printerProfile,
+  );
   // sliceY = (layerIdx + 0.5) × layerHeight — 레이어 중심을 픽업.
   //   ⚠️ layerIdx 를 **반드시 클램프**한다: 층높이를 키우면 layerCount 가 줄어
   //   기존 layerIdx 가 범위를 벗어나고, 그러면 단면이 모델 위 허공을 가리켜
@@ -280,7 +309,111 @@ export function useSliceExport({
     downloadBlob(blob, fileName);
   }, [files.length, project?.name, supportsLength, sceneHandleRef]);
 
-  // ----- Task0 G-code(run.gcode) 내보내기 (Z2) -----
+  /**
+   * Task0 출력 가능 영역 차단 (Z3) — 벗어난 항목(모델·서포트)이 있으면 확인이 아니라 이유를 알리고 **막는다**.
+   *
+   * 기존 프로파일의 P-1(confirmIfOutOfBounds)은 "일부를 잘라 뽑는 사용" 을 허락하지만 Task0 에는 그런 출력이 없다 —
+   * 투사 밖은 노광되지 않고, 노즐 범위(Y 85) 밖 이동은 Task0(Klipper)가 거부한다. 코어(task0-export 1-b)도 writer 전에
+   * 같은 영역으로 막으므로 여기는 워커를 띄우기 전에 화면이 이미 아는 이유를 바로 알리는 몫이다.
+   * (confirmIfOutOfBounds 는 그대로 — Task0 두 핸들러는 그것을 부르지 않는다.)
+   * @returns 막았으면 true.
+   */
+  const alertIfOutOfTask0Area = useCallback((): boolean => {
+    if (!volumeIssues || volumeIssues.length === 0) return false;
+    const names = volumeIssues
+      .slice(0, 3)
+      .map((it) => `· ${it.fileName} — ${it.message}`)
+      .join(NL);
+    const more =
+      volumeIssues.length > 3 ? `${NL}· 외 ${volumeIssues.length - 3}개` : "";
+    window.alert(
+      `⚠️ Task0 출력 가능 영역을 벗어난 항목(모델·서포트)이 ${volumeIssues.length}건 있어 내보낼 수 없습니다.${NL}` +
+        `영역 안으로 옮긴 뒤 다시 내보내세요(투사 밖은 노광되지 않고, 노즐 범위 밖 이동은 Task0 가 거부합니다).${NL}${NL}` +
+        `${names}${more}`,
+    );
+    return true;
+  }, [volumeIssues]);
+
+  // ----- Task0 job.zip 내보내기 (Z3) — Task0 프로파일의 주 내보내기 -----
+  // run.gcode(Z2 와 같은 검사) + 층 마스크 PNG(투사 프레임) + manifest·exposure·preview 를 워커에서 만들고 자기 검사까지
+  // 한다(utils/task0/task0-export.ts runTask0JobZipExport). 마스크 ZIP 과 같은 mesh 집합(STL + 서포트)·같은 topY 를 넘겨
+  // writer 와 층 마스크가 같은 단면에서 나온다(계획서 §4 Z3). 막히면 파일 없이 이유만(reject 아님).
+  // 진행률은 단계와 함께(G-code 생성 → 층 이미지 → 묶기·검사), 취소·busy 는 다른 내보내기와 같은 인프라.
+  // ⚠️ handleExportStl 뒤·handleExportTask0Gcode 앞에 둔다 — verify-task0-export 가 handleExportTask0Gcode ~ return 구간의
+  //   deps 를, verify-gcode-export-params 가 handleExportGcode ~ handleExportStl 구간을 잘라 검사한다.
+  const handleExportTask0JobZip = useCallback(async () => {
+    const handle = sceneHandleRef.current;
+    if (!handle || files.length === 0) return;
+    if (batchExport.busy) return;
+    if (!isTask0Profile(printerProfile)) return; // 버튼은 Task0 프로파일에서만 보인다
+    if (alertIfOutOfTask0Area()) return; // Task0 는 출력 가능 영역 밖이면 막는다 (confirm 아님)
+    const epoch = task0ReportEpochRef.current;
+    setBatchExport({ busy: true, done: 0, total: 0 });
+    setTask0Report(null);
+    try {
+      const meshes = handle.getSliceGeometry();
+      const topY = handle.getSceneTopY();
+      const layerHeightMm = slicePreview.layerHeightMm;
+      const result = await sliceBatchService.exportTask0JobZip(
+        meshes,
+        {
+          topY,
+          layerHeightMm,
+          writer: task0WriterOptionsForProfile(printerProfile),
+          // manifest·exposure.json 노광 — 프로파일에 노광 값이 없으면 DEFAULT_* (규칙 6).
+          exposure: profileExposure(printerProfile),
+          frame: task0RasterFrameForProfile(printerProfile),
+          printable: task0PrintableFrameForProfile(printerProfile),
+          generator: TASK0_APP_JOB_GENERATOR,
+        },
+        (done, total, stage) =>
+          setBatchExport({ busy: true, done, total, stage }),
+      );
+      const sameInputs = task0ReportEpochRef.current === epoch;
+      if (!result.ok) {
+        // 파일을 만들지 않았다 — 어느 층이 왜 막혔는지 알린다.
+        if (sameInputs) {
+          setTask0Report({ ok: false, kind: "jobzip", issues: result.issues });
+        }
+        window.alert(
+          `Task0 job.zip 을 내보내지 않았습니다.${NL}${NL}` +
+            result.issues.map((s) => `· ${s}`).join(NL),
+        );
+        return;
+      }
+      const safe = (project?.name ?? "project").replace(/[\\/:*?"<>|]/g, "_");
+      const lh = layerHeightMm.toFixed(3).replace(".", "_");
+      const fileName = `${safe}_task0_${lh}mm.job.zip`;
+      downloadBlob(result.blob, fileName);
+      if (sameInputs) {
+        setTask0Report({
+          ok: true,
+          kind: "jobzip",
+          fileName,
+          summary: result.summary,
+          job: result.job,
+        });
+      }
+    } catch (e) {
+      // 사용자 취소(CancelError)는 정상 흐름 — 조용히 넘긴다.
+      if (e instanceof Error && e.name === "CancelError") return;
+      const msg = e instanceof Error ? e.message : String(e);
+      window.alert(`Task0 job.zip 내보내기에 실패했습니다.${NL}${msg}`);
+    } finally {
+      setBatchExport({ busy: false, done: 0, total: 0 });
+    }
+  }, [
+    files.length,
+    project?.name,
+    batchExport.busy,
+    sceneHandleRef,
+    // 규칙 7: 프로파일(베드·투사 프레임·노광)과 층두께를 새로 참조하므로 deps 에 반드시 넣는다.
+    printerProfile,
+    slicePreview.layerHeightMm,
+    alertIfOutOfTask0Area, // Task0 출력 가능 영역 차단
+  ]);
+
+  // ----- Task0 G-code(run.gcode) 내보내기 (Z2) — Task0 프로파일의 보조 내보내기(run.gcode 만) -----
   // 마스크 ZIP 과 같은 mesh 집합(STL + 서포트)·같은 topY 를 워커로 넘긴다(Z3 job.zip 의 마스크와
   // 도포 경로가 같은 단면에서 나오도록). 워커가 writer → 채움 실패 층 → Task0 파서 검사까지 하고,
   // 막히면 파일 없이 이유만 돌아온다(reject 아님). 진행률·취소·busy 는 다른 내보내기와 같은 인프라.
@@ -291,7 +424,8 @@ export function useSliceExport({
     if (!handle || files.length === 0) return;
     if (batchExport.busy) return;
     if (!isTask0Profile(printerProfile)) return; // 버튼은 Task0 프로파일에서만 보인다
-    if (!confirmIfOutOfBounds()) return; // P-1 (Task0 는 비대칭 영역 + 서포트)
+    if (alertIfOutOfTask0Area()) return; // Task0 는 출력 가능 영역 밖이면 막는다 (confirm 아님)
+    const epoch = task0ReportEpochRef.current;
     setBatchExport({ busy: true, done: 0, total: 0 });
     setTask0Report(null);
     try {
@@ -306,12 +440,16 @@ export function useSliceExport({
           writer: task0WriterOptionsForProfile(printerProfile),
           // 예상 시간의 노광 항목 — 프로파일에 노광 값이 없으면 DEFAULT_* (규칙 6).
           exposure: profileExposure(printerProfile),
+          printable: task0PrintableFrameForProfile(printerProfile),
         },
         (done, total) => setBatchExport({ busy: true, done, total }),
       );
+      const sameInputs = task0ReportEpochRef.current === epoch;
       if (!result.ok) {
         // 파일을 만들지 않았다 — 어느 층이 왜 막혔는지 알린다.
-        setTask0Report({ ok: false, issues: result.issues });
+        if (sameInputs) {
+          setTask0Report({ ok: false, kind: "gcode", issues: result.issues });
+        }
         window.alert(
           `Task0 G-code 를 내보내지 않았습니다.${NL}${NL}` +
             result.issues.map((s) => `· ${s}`).join(NL),
@@ -326,7 +464,9 @@ export function useSliceExport({
       const lh = layerHeightMm.toFixed(3).replace(".", "_");
       const fileName = `${safe}_task0_${lh}mm.gcode`;
       downloadBlob(blob, fileName);
-      setTask0Report({ ok: true, fileName, summary: result.summary });
+      if (sameInputs) {
+        setTask0Report({ ok: true, kind: "gcode", fileName, summary: result.summary });
+      }
     } catch (e) {
       // 사용자 취소(CancelError)는 정상 흐름 — 조용히 넘긴다.
       if (e instanceof Error && e.name === "CancelError") return;
@@ -343,7 +483,7 @@ export function useSliceExport({
     // 규칙 7: 프로파일(베드 크기·노광)과 층두께를 새로 참조하므로 deps 에 반드시 넣는다.
     printerProfile,
     slicePreview.layerHeightMm,
-    confirmIfOutOfBounds, // P-1
+    alertIfOutOfTask0Area, // Task0 출력 가능 영역 차단
   ]);
 
   return {
@@ -357,6 +497,7 @@ export function useSliceExport({
     handleExportMasksZip,
     handleExportGcode,
     handleExportStl,
+    handleExportTask0JobZip,
     handleExportTask0Gcode,
     task0Report,
   };

@@ -5,7 +5,9 @@
  *   §11(job.zip 구성·PNG·래스터 규약·manifest v1·exposure.json·preview·**거부 조건 1~7**), §3(층 규약, 빈 층 = PNG 전부 검정),
  *   §13(시간 상수). 협의 `docs/제안_Task0협의_20260929.md` §26-3(10/8 견본 구성)·§27-1(불량 7종).
  * 견본·불량 zip 생성: `scripts/gen-task0-sample-zip.mjs`, 상시 검증: `scripts/verify-task0-jobzip.mjs`.
- * Z3(앱 내보내기)가 이 모듈을 그대로 쓴다 — 지금은 앱에 연결돼 있지 않다.
+ * Z3(앱 내보내기 — task0-export runTask0JobZipExport)가 이 모듈을 그대로 쓴다: 층 이미지(buildTask0LayerImages)와
+ *   파일 목록(buildTask0JobFiles)은 견본 경로 buildTask0JobZip 과 **같은 함수**라 같은 입력이면 같은 바이트
+ *   (scripts/verify-task0-jobzip-export.mjs 가 sample.job.zip 바이트로 확인).
  *
  * zip 구성 (파일 순서 고정 — run.gcode, manifest.json, exposure.json, preview.png, layers/0000.png …):
  *   - run.gcode      = task0-gcode-writer generateTask0Gcode 출력 그대로.
@@ -41,6 +43,8 @@
  *   (조건 3·4 가 맞을 때만 — 층 N ↔ NNNN.png 대응이 정해짐) XY 이동 없는 층(빈 층) ↔ PNG 흰 픽셀 0, 도포 층 ↔ 흰 픽셀 > 0 /
  *   manifest 필드(format·materials·dualMaterial·toolChangeCount = G-code 툴 전환 수·estimate 8필드와 합·hints) /
  *   exposure 필드(layerHeightMm 일치, 값 ≥ 0) / preview.png 400 × 300 8-bit 회색조.
+ *   layerPngs 'header'(Z3 앱 자기 검사)면 층 PNG 풀기와 그 내용 대조(빈 층 ↔ 흰 픽셀)만 건너뛰고, 대신 IHDR 로 8-bit 회색조·
+ *   비인터레이스를 본다 — 나머지는 같다.
  *   zip 해석은 중앙 디렉터리 기준, 무압축(0)·deflate(8 — DecompressionStream 'deflate-raw') 지원.
  *
  * 순수 TS — DOM/Node/Babylon 의존 없음 (CompressionStream·DecompressionStream·TextEncoder/TextDecoder·Blob 만 —
@@ -270,6 +274,48 @@ export interface Task0JobZipBuild {
   clippedPixels: number;
 }
 
+export interface Task0LayerImagesOptions {
+  /** 투사 프레임 — 빠지면 TASK0_DEFAULTS (앱은 프로파일 값 — task0-profile resolveTask0ProfileFrame) */
+  frame?: Task0RasterFrame;
+  preview?: Task0PreviewOptions;
+  /** 층 하나를 PNG 로 만들 때마다 (끝낸 층 수, 전체 층 수) — 출력에는 영향 없음(읽기만 하는 알림) */
+  onLayerDone?: (done: number, total: number) => void;
+}
+
+/** 층 마스크 PNG + preview (buildTask0LayerImages 결과) */
+export interface Task0LayerImages {
+  /** layers/NNNN.png — 층 순서 */
+  layerFiles: Task0JobZipFile[];
+  /** 층별 마스크 흰 픽셀 수 */
+  layerWhitePixels: number[];
+  /** 단면 안이지만 투사 프레임 밖이라 잘린 픽셀 중심 수 (전 층 합) */
+  clippedPixels: number;
+  /** preview.png 바이트 */
+  preview: Uint8Array;
+}
+
+/** buildTask0JobFiles 입력 — writer 결과 + 층 이미지 + 노광·manifest 값 */
+export interface Task0JobFilesInput {
+  gcode: Task0GcodeResult;
+  layerHeightMm: number;
+  images: Task0LayerImages;
+  exposure?: Task0ExposureSettings;
+  materialName?: string;
+  generator?: string;
+  /** ISO 8601 — 빠지면 지금 시각 */
+  generatedAt?: string;
+  time?: Partial<Task0TimeConstants>;
+  /** manifest projector 값 — 층 이미지와 같은 프레임 (빠지면 TASK0_DEFAULTS) */
+  frame?: Task0RasterFrame;
+}
+
+export interface Task0JobFiles {
+  /** zip 안 순서 그대로 */
+  files: Task0JobZipFile[];
+  manifest: Task0Manifest;
+  exposure: Task0Exposure;
+}
+
 /** zip 에서 읽은 항목 */
 export interface Task0ZipEntry {
   name: string;
@@ -292,6 +338,14 @@ export interface Task0JobZipVerifyOptions {
   conditions?: readonly number[];
   /** 추가 검사 — 기본 true. 대조군용 */
   extraChecks?: boolean;
+  /**
+   * layers/*.png 를 어디까지 보나 (Z3) — 'decode'(기본): 끝까지 풀어 8-bit 회색조 해석 + 빈 층 ↔ 흰 픽셀 내용 대조.
+   * 'header': 머리만 — 청크 구조·CRC(readTask0PngHeader), 조건 5 해상도, IHDR 8-bit 회색조·비인터레이스는 그대로 보고
+   * 압축 풀기를 건너뛴다. 1920×1080 한 장 풀기가 층당 약 16 ms 라
+   * 앱 자기 검사(runTask0JobZipExport)가 쓴다: 그쪽은 내용(빈 층 = 흰 픽셀 0, 도포 층 = 흰 픽셀 > 0)을 PNG 로 만들기 전
+   * 마스크에서 직접 단언하고, 인코더 왕복은 표본 두 장(첫 도포 층·빈 층)만 풀어 본다.
+   */
+  layerPngs?: 'decode' | 'header';
 }
 
 /** layers/*.png 하나의 검사 결과 */
@@ -546,20 +600,68 @@ export function buildTask0Preview(
 // ==================== 조립 ====================
 
 /** 파일 목록 → zip 바이트 (기존 zip-store 무압축, 시각 0 — 순서 그대로, 결정적) */
-export async function assembleTask0JobZip(files: readonly Task0JobZipFile[]): Promise<Uint8Array> {
+export async function assembleTask0JobZip(files: readonly Task0JobZipFile[]): Promise<Uint8Array<ArrayBuffer>> {
   const blob = makeZipStore(files.map((f) => ({ name: f.name, data: f.data })));
   return new Uint8Array(await blob.arrayBuffer());
 }
 
 /**
- * world 메시 → Task0 job.zip (run.gcode + layers/NNNN.png + manifest.json + exposure.json + preview.png).
- * 층이 0개(topY ≤ 0)면 내보낼 것이 없으므로 throw.
+ * 층 마스크 PNG + preview — 층 N 마다 writer 와 같은 단면(task0-slice task0LayerPolygonsBed, 같은 meshes·lh·bed)을
+ * task0-mask rasterizeTask0Mask(투사 프레임 'full')로 그려 8-bit 회색조 PNG 로. preview 는 전 층 합집합 실루엣.
+ * 견본 경로(buildTask0JobZip)와 앱 경로(task0-export runTask0JobZipExport)가 **이 함수 하나**를 쓴다.
+ *
+ * 빈 마스크(흰 픽셀 0)는 내용이 전부 0 이라 인코더 출력도 늘 같다 → 처음 한 장만 인코딩하고 그 바이트를 다른 빈 층에
+ * 다시 쓴다(같은 런타임의 같은 입력 = 같은 바이트이므로 결과 zip 은 층마다 인코딩한 것과 바이트까지 같다 — 견본 sha256 로 확인).
+ * @param bed writer 와 같은 베드 크기 (world → 베드 변환)
  */
-export async function buildTask0JobZip(input: Task0JobZipInput): Promise<Task0JobZipBuild> {
+export async function buildTask0LayerImages(
+  meshes: readonly Float32Array[],
+  layerCount: number,
+  layerHeightMm: number,
+  bed: { widthMm: number; depthMm: number },
+  options: Task0LayerImagesOptions = {},
+): Promise<Task0LayerImages> {
+  nonNegInt('layerCount', layerCount);
+  const frame = options.frame ?? TASK0_DEFAULTS;
+  const W = frame.projectorWidthPx;
+  const H = frame.projectorHeightPx;
+  const union = new Uint8Array(W * H);
+  const layerFiles: Task0JobZipFile[] = [];
+  const layerWhitePixels: number[] = [];
+  let clippedPixels = 0;
+  let emptyPng: Uint8Array | null = null;
+  for (let n = 0; n < layerCount; n++) {
+    const polys = task0LayerPolygonsBed(meshes, n, layerHeightMm, bed.widthMm, bed.depthMm);
+    const mask = rasterizeTask0Mask(polys, { frame });
+    layerWhitePixels.push(mask.whitePixels);
+    clippedPixels += mask.clippedPixels;
+    let png: Uint8Array;
+    if (mask.whitePixels === 0) {
+      emptyPng ??= await encodeTask0MaskPng(mask);
+      png = emptyPng;
+    } else {
+      const md = mask.data;
+      for (let i = 0; i < md.length; i++) if (md[i] !== 0) union[i] = 1;
+      png = await encodeTask0MaskPng(mask);
+    }
+    layerFiles.push({ name: task0LayerPngName(n), data: png });
+    options.onLayerDone?.(n + 1, layerCount);
+  }
+  const preview = await encodeTask0GrayPng(buildTask0Preview({ width: W, height: H, data: union }, options.preview));
+  return { layerFiles, layerWhitePixels, clippedPixels, preview };
+}
+
+/**
+ * zip 에 넣을 파일 목록 (순서 고정 — 머리 주석) + manifest·exposure. writer 결과와 층 이미지를 받아 조립만 한다.
+ * 견본 경로·앱 경로 공통 — manifest 노광 값은 exposure 설정(빠지면 types/printer.ts DEFAULT_*), retractMm·bed 는 writer 값.
+ */
+export function buildTask0JobFiles(input: Task0JobFilesInput): Task0JobFiles {
+  const { gcode, images } = input;
   const lh = input.layerHeightMm;
-  const gcode = generateTask0Gcode(input.meshes, input.topY, lh, input.writer ?? {});
   const layerCount = gcode.totals.layerCount;
-  if (layerCount <= 0) throw new RangeError(`층이 0개 — topY ${String(input.topY)} mm 에서 내보낼 것이 없음`);
+  if (images.layerFiles.length !== layerCount) {
+    throw new RangeError(`층 PNG ${images.layerFiles.length}장 ≠ writer 층 수 ${layerCount}`);
+  }
   const params = gcode.params;
 
   const exposure = buildTask0Exposure(layerCount, lh, input.exposure ?? {});
@@ -581,36 +683,60 @@ export async function buildTask0JobZip(input: Task0JobZipInput): Promise<Task0Jo
     toolChangeCount: 0,
     generator: input.generator,
     generatedAt: input.generatedAt,
+    frame: input.frame,
     bed: { widthMm: params.bedWidthMm, depthMm: params.bedDepthMm },
   });
-
-  // 층 마스크 — writer 와 같은 단면(같은 bed 값), 투사 프레임 전체('full')
-  const W = TASK0_DEFAULTS.projectorWidthPx;
-  const H = TASK0_DEFAULTS.projectorHeightPx;
-  const union = new Uint8Array(W * H);
-  const layerFiles: Task0JobZipFile[] = [];
-  const layerWhitePixels: number[] = [];
-  let clippedPixels = 0;
-  for (let n = 0; n < layerCount; n++) {
-    const polys = task0LayerPolygonsBed(input.meshes, n, lh, params.bedWidthMm, params.bedDepthMm);
-    const mask = rasterizeTask0Mask(polys);
-    const md = mask.data;
-    for (let i = 0; i < md.length; i++) if (md[i] !== 0) union[i] = 1;
-    layerWhitePixels.push(mask.whitePixels);
-    clippedPixels += mask.clippedPixels;
-    layerFiles.push({ name: task0LayerPngName(n), data: await encodeTask0MaskPng(mask) });
-  }
-  const preview = await encodeTask0GrayPng(buildTask0Preview({ width: W, height: H, data: union }, input.preview));
 
   const files: Task0JobZipFile[] = [
     { name: TASK0_JOB_FILE_GCODE, data: new TextEncoder().encode(gcode.gcode) },
     { name: TASK0_JOB_FILE_MANIFEST, data: task0JsonBytes(manifest) },
     { name: TASK0_JOB_FILE_EXPOSURE, data: task0JsonBytes(exposure) },
-    { name: TASK0_JOB_FILE_PREVIEW, data: preview },
-    ...layerFiles,
+    { name: TASK0_JOB_FILE_PREVIEW, data: images.preview },
+    ...images.layerFiles,
   ];
+  return { files, manifest, exposure };
+}
+
+/**
+ * world 메시 → Task0 job.zip (run.gcode + layers/NNNN.png + manifest.json + exposure.json + preview.png) — 견본 경로.
+ * 층이 0개(topY ≤ 0)면 내보낼 것이 없으므로 throw. 검사(채움 실패·파서·자기 검사)는 하지 않는다 —
+ * 앱은 task0-export runTask0JobZipExport(검사 + 같은 조립 함수)를 쓴다.
+ */
+export async function buildTask0JobZip(input: Task0JobZipInput): Promise<Task0JobZipBuild> {
+  const lh = input.layerHeightMm;
+  const gcode = generateTask0Gcode(input.meshes, input.topY, lh, input.writer ?? {});
+  const layerCount = gcode.totals.layerCount;
+  if (layerCount <= 0) throw new RangeError(`층이 0개 — topY ${String(input.topY)} mm 에서 내보낼 것이 없음`);
+  const params = gcode.params;
+
+  // 층 마스크 — writer 와 같은 단면(같은 bed 값), 투사 프레임 전체('full')
+  const images = await buildTask0LayerImages(
+    input.meshes,
+    layerCount,
+    lh,
+    { widthMm: params.bedWidthMm, depthMm: params.bedDepthMm },
+    { preview: input.preview },
+  );
+  const { files, manifest, exposure } = buildTask0JobFiles({
+    gcode,
+    layerHeightMm: lh,
+    images,
+    exposure: input.exposure,
+    materialName: input.materialName,
+    generator: input.generator,
+    generatedAt: input.generatedAt,
+    time: input.time,
+  });
   const bytes = await assembleTask0JobZip(files);
-  return { bytes, files, gcode, manifest, exposure, layerWhitePixels, clippedPixels };
+  return {
+    bytes,
+    files,
+    gcode,
+    manifest,
+    exposure,
+    layerWhitePixels: images.layerWhitePixels,
+    clippedPixels: images.clippedPixels,
+  };
 }
 
 // ==================== zip 읽기 ====================
@@ -768,6 +894,7 @@ export async function verifyTask0JobZip(
 ): Promise<Task0JobZipReport> {
   const enabled = new Set<number>(options.conditions ?? ALL_CONDITIONS);
   const extra = options.extraChecks ?? true;
+  const decodeLayers = (options.layerPngs ?? 'decode') === 'decode';
   const expW = options.widthPx ?? TASK0_DEFAULTS.projectorWidthPx;
   const expH = options.heightPx ?? TASK0_DEFAULTS.projectorHeightPx;
   const expBedW = options.bedWidthMm ?? TASK0_DEFAULTS.bedWidthMm;
@@ -862,6 +989,10 @@ export async function verifyTask0JobZip(
       info.width = h.width;
       info.height = h.height;
       if (h.width !== expW || h.height !== expH) fail(5, `${e.name} 해상도 ${h.width}×${h.height} ≠ ${expW}×${expH}`);
+      // 'header' 는 풀지 않으므로 8-bit 회색조 여부를 IHDR 로 본다('decode' 는 디코더가 같은 것을 거부 — 문구 중복 방지)
+      if (!decodeLayers && (h.bitDepth !== 8 || h.colorType !== 0 || h.interlace !== 0)) {
+        issue(`${e.name} 가 8-bit 회색조·비인터레이스가 아님 (IHDR 비트 깊이 ${h.bitDepth}, 색 유형 ${h.colorType}, 인터레이스 ${h.interlace})`);
+      }
     } catch (err) {
       issue(`${e.name} PNG 머리 해석 실패: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -937,9 +1068,9 @@ export async function verifyTask0JobZip(
       if (bad.length) issue(`;HEIGHT: ≠ layerHeightMm ${lh} 인 층: ${listHead(bad.map(({ n, v }) => `${n}(${String(v)})`))}`);
     }
 
-    // PNG — 8-bit 회색조로 끝까지 풀리는지
+    // PNG — 8-bit 회색조로 끝까지 풀리는지 ('header' 면 건너뜀 — 옵션 주석)
     const decodedByName = new Map<string, Task0JobZipPngInfo>();
-    for (let i = 0; i < pngEntries.length; i++) {
+    for (let i = 0; decodeLayers && i < pngEntries.length; i++) {
       const info = pngs[i];
       try {
         const img = await decodeTask0GrayPng(pngEntries[i].data);
@@ -959,8 +1090,8 @@ export async function verifyTask0JobZip(
       }
     }
 
-    // 층 ↔ PNG 내용 — 대응이 정해질 때만 (조건 3·4 통과)
-    if (layerBlocks && cond3ok && cond4ok) {
+    // 층 ↔ PNG 내용 — 대응이 정해질 때만 (조건 3·4 통과). 'header' 면 풀린 내용이 없으므로 건너뜀
+    if (decodeLayers && layerBlocks && cond3ok && cond4ok) {
       const emptyWhite: string[] = [];
       const printedBlack: number[] = [];
       for (const b of layerBlocks) {

@@ -23,6 +23,7 @@ import {
   type Task0ProjectorFrame,
 } from './task0-frame';
 import type { Task0WriterOptions } from './task0-gcode-writer';
+import type { Task0RasterFrame } from './task0-mask';
 
 /** 빌트인 Task0 프로파일 id — 새 설치(저장값 없음)의 기본 선택 (hooks/usePrinterProfileStore.ts) */
 export const TASK0_PROFILE_ID = 'mazicalign-task0';
@@ -81,6 +82,36 @@ export function task0PrintableAreaForProfile(p: PrinterProfileV2): Task0Printabl
   if (!isTask0Profile(p)) return null;
   const f = resolveTask0ProfileFrame(p);
   return task0PrintableWorldRect(f, f.bedWidthMm, f.bedDepthMm);
+}
+
+/**
+ * 프로파일 → 층 마스크 투사 프레임 (Z3 job.zip — task0-mask rasterizeTask0Mask·manifest projector).
+ * 값은 resolveTask0ProfileFrame 그대로(선택 필드가 비면 TASK0_DEFAULTS) — 워커 메시지로 넘기도록 래스터에 필요한 다섯 값만.
+ */
+export function task0RasterFrameForProfile(p: PrinterProfileV2): Task0RasterFrame {
+  const f = resolveTask0ProfileFrame(p);
+  return {
+    projectorWidthPx: f.projectorWidthPx,
+    projectorHeightPx: f.projectorHeightPx,
+    pixelPitchUm: f.pixelPitchUm,
+    projectorOffsetXMm: f.projectorOffsetXMm,
+    projectorOffsetYMm: f.projectorOffsetYMm,
+  };
+}
+
+/**
+ * 프로파일 → 출력 가능 영역 (베드 mm — Z3 내보내기 코어의 writer 전 차단, task0-export 머리 주석 1-b).
+ * 값은 resolveTask0ProfileFrame 그대로(선택 필드가 비면 TASK0_DEFAULTS) — 워커 메시지로 넘기도록 네 값만.
+ * 화면 테두리·배너(task0PrintableAreaForProfile)와 같은 출처라 "화면에서 안이면 내보내기도 안" 이다.
+ */
+export function task0PrintableFrameForProfile(p: PrinterProfileV2): Task0PrintableFrame {
+  const f = resolveTask0ProfileFrame(p);
+  return {
+    printableXMinMm: f.printableXMinMm,
+    printableXMaxMm: f.printableXMaxMm,
+    printableYMinMm: f.printableYMinMm,
+    printableYMaxMm: f.printableYMaxMm,
+  };
 }
 
 /**
