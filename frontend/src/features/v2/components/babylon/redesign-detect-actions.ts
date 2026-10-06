@@ -37,6 +37,7 @@ import {
 } from "../../support/route-plan";
 import type { SceneCtx } from "./scene-refs";
 import { getActiveStl } from "./scene-actions";
+import { resolveRedesignTarget, type RedesignTarget } from "./redesign-target";
 
 /** 재설계 검출·점생성 요약 통계 (패널 표시용). */
 export interface RedesignDetectStats {
@@ -89,10 +90,17 @@ export function disposeRedesignVisualization(ctx: SceneCtx): void {
  * STL id 를 꺼내오는" Babylon 의존 부분만 담당한다(규칙 2 — 씬은 handle 경유).
  *
  * ⚠️ 반환된 `triangles` 는 **transferable 로 워커에 넘어가 여기서 못 쓰게 된다.**
+ *
+ * ## 대상 모델 고정 (신규 9)
+ * 여기가 생성의 **시작 시점**이다. 활성 STL 의 id 와 world 행렬을 함께 돌려주면
+ * 호출 측이 그것을 들고 있다가 확정(`routeAndFinalizePoints`)에 넘긴다 — 생성 중
+ * 선택이 바뀌어도 결과는 이 모델 기준이다(redesign-target.ts).
  */
 export function prepareRedesignDetectInput(
   ctx: SceneCtx,
-): { ok: true; triangles: Float32Array; stlId: string } | { ok: false; reason: string } {
+):
+  | { ok: true; triangles: Float32Array; stlId: string; worldMatrix: number[] }
+  | { ok: false; reason: string } {
   const scene = ctx.sceneRef.current;
   if (!scene) return { ok: false, reason: "씬이 준비되지 않았습니다." };
   const active = getActiveStl(ctx);
@@ -102,7 +110,9 @@ export function prepareRedesignDetectInput(
   if (triangles.length === 0) {
     return { ok: false, reason: "분석할 삼각형이 없습니다." };
   }
-  return { ok: true, triangles, stlId: active.id };
+  // 삼각형을 뽑은 바로 그 자세의 사본 — 이후 메시가 움직여도 값이 안 바뀌게 복사한다.
+  const worldMatrix = Array.from(active.mesh.getWorldMatrix().asArray());
+  return { ok: true, triangles, stlId: active.id, worldMatrix };
 }
 
 /**
@@ -348,19 +358,41 @@ function snapContactsToSurface(
  *   실패(failed) 점은 저장 목록에서 빠지고 report 에 카운트만 남는다
  *   (연구 7절-6 "조용히 버리지 말 것" — 호출 측이 사용자에게 통지한다).
  *
- * 활성 STL 이 없으면 라우팅할 대상이 없으므로 입력을 그대로 돌려준다.
+ * ## 대상 모델은 시작 시점에 고정된 것 (신규 9·11)
+ * 종전에는 여기서 **현재 선택**(getActiveStl)을 다시 읽었다 — 생성 중 다른 모델을
+ * 클릭하면 그 모델 기준으로 스냅·변환돼 좌표가 엉뚱하게 저장됐다. 이제 시작 시점의
+ * `target`(stlId·world 행렬)의 메시로만 확정하고, 그 모델이 사라졌거나 움직였으면
+ * `ok:false` 로 거절한다(저장 금지 — redesign-target.ts).
+ * 또 종전에는 씬·활성 STL 이 없으면 **입력(라우팅 전 원시 점)을 그대로** 돌려줘
+ * 호출 측이 그것을 저장했다. 이제는 거절한다 — 원시 점은 절대 저장되지 않는다.
  *
  * @param params 서포트 파라미터 — 반경(trunkDiameterMm/2)과 화살촉 높이를 준다.
+ * @param target 생성 시작 시점에 고정한 대상 모델(`prepareRedesignDetectInput` 결과).
  */
 export function routeAndFinalizePoints(
   ctx: SceneCtx,
   points: SupportPointV2[],
   params: SupportParams,
-): { points: SupportPointV2[]; report: RouteReport | null } {
+  target: RedesignTarget,
+):
+  | { ok: true; points: SupportPointV2[]; report: RouteReport }
+  | { ok: false; reason: string } {
   const scene = ctx.sceneRef.current;
-  const active = getActiveStl(ctx);
-  if (!scene || !active) return { points, report: null };
-  const { mesh } = active;
+  if (!scene) return { ok: false, reason: "씬이 준비되지 않았습니다." };
+  // 점은 워커가 시작 모델 id 로 찍어 온다 — 다른 모델 점이 섞였으면 확정하지 않는다.
+  if (points.some((p) => p.stlId !== target.stlId)) {
+    return { ok: false, reason: "서포트 점의 대상 모델이 일치하지 않습니다." };
+  }
+  const resolved = resolveRedesignTarget(
+    ctx.meshMapRef.current,
+    target,
+    (m) => {
+      m.computeWorldMatrix(true);
+      return m.getWorldMatrix().asArray();
+    },
+  );
+  if (!resolved.ok) return resolved;
+  const mesh = resolved.mesh;
   mesh.computeWorldMatrix(true);
 
   // ── 1) 표면 스냅 (world 유지) ───────────────────────────────────────────
@@ -494,5 +526,5 @@ export function routeAndFinalizePoints(
     }
   }
 
-  return { points: finalized, report };
+  return { ok: true, points: finalized, report };
 }

@@ -1,5 +1,6 @@
 // 서포트/브릿지 배치·이동·삭제·변곡점 편집 핸들러 묶음 + 관련 편집 상태.
 // (ViewerV2Page 에서 추출 — undo push·supportsRef·cascade 동작 불변.)
+// 2026-10-07 신규 8: "자동 생성" 은 대상 모델의 자동 서포트를 교체(추가 아님) + undo 1회 — auto-support-replace.
 //
 // followAttachedChildren 은 useTransformCommit 이 소유하며 인자로 주입받는다.
 
@@ -13,6 +14,11 @@ import type { EditMode } from "../../../components/EditModeControls";
 import type { SupportParams } from "../../../support";
 import { IDENTITY_TRANSFORM } from "../../../types/transform";
 import { addCopySuffix } from "../utils/file-naming";
+import {
+  applyAutoSupportReplace,
+  formatAutoReplaceNotice,
+  makeUndoPusher,
+} from "../utils/auto-support-replace";
 import { useBridgeControlPoints } from "./useBridgeControlPoints";
 import type {
   AddStlFile,
@@ -66,6 +72,8 @@ interface UseSupportEditingArgs {
    * 무시한다 — 신규 7.
    */
   editLocked: boolean;
+  /** 뷰포트 하단 안내(5초) — 자동 서포트 교체 결과·저장 실패 알림 (신규 8). */
+  onNotice: (message: string) => void;
 }
 
 export function useSupportEditing({
@@ -87,6 +95,7 @@ export function useSupportEditing({
   followAttachedChildren,
   setCtxMenu,
   editLocked,
+  onNotice,
 }: UseSupportEditingArgs) {
   const [bridgeMode, setBridgeMode] = useState(false);
   const [pendingBridge, setPendingBridge] = useState<PendingBridge | null>(
@@ -103,35 +112,55 @@ export function useSupportEditing({
   const [autoBusy, setAutoBusy] = useState(false);
 
   // ----- 자동 서포트 -----
+  //   재실행 = 교체 (정리_20261001 D5 / 신규 8): 이번 생성이 다룬 모델(씬에 메시가
+  //   올라온 STL 전부)의 기존 **자동** 서포트를 지우고 새 세트로 바꾼다 — 수동·
+  //   브릿지, 이번에 안 다룬 모델의 서포트는 그대로. 삭제+추가는 한 transaction 이고
+  //   undo 한 번이면 옛 세트로 정확히 돌아간다(auto-support-replace.ts).
+  //   새 점이 0개면 아무것도 바꾸지 않는다 — 파라미터 실수로 기존 세트가 통째로
+  //   지워지는 사고 방지(씬 미준비도 0개).
+  //   연타: autoBusy 로 버튼이 비활성화되고 여기서도 한 번 더 막는다.
   const handleAutoGenerate = useCallback(async () => {
     if (!projectId || autoBusy) return;
     if (files.length === 0) return;
     setAutoBusy(true);
     try {
-      const generated =
-        sceneHandleRef.current?.generateAutoSupports(projectId, supportParams) ??
-        [];
-      if (generated.length === 0) return;
+      const out = sceneHandleRef.current?.generateAutoSupports(
+        projectId,
+        supportParams,
+      );
+      if (!out || out.points.length === 0) return;
 
-      const ids = generated.map((p) => p.id);
-      await addSupports(generated);
-
-      useUndoStore.getState().push({
+      const result = await applyAutoSupportReplace({
         label: "auto-supports",
-        undo: async () => {
-          for (const id of ids) {
-            await supportRepo.deleteSupport(id);
-          }
-          await refreshSupports();
-        },
-        redo: async () => {
-          await addSupports(generated);
-        },
+        targetStlIds: new Set(out.targetStlIds),
+        generated: out.points,
+        replace: (pick, add) =>
+          supportRepo.replaceSupportsInProject(projectId, pick, add),
+        refresh: refreshSupports,
+        pushUndo: makeUndoPusher(),
       });
+      const notice = formatAutoReplaceNotice(result);
+      if (notice) onNotice(notice);
+    } catch (e) {
+      // 생성(씬) 또는 교체 저장 실패. 교체는 한 transaction 이라 실패하면 기존
+      //   서포트가 그대로 남는다(refreshSupports 는 자체적으로 예외를 삼킨다).
+      console.error("[자동 서포트] 생성 실패:", e);
+      onNotice(
+        `자동 서포트 생성 실패 — 기존 서포트는 그대로입니다. ` +
+          `(${e instanceof Error ? e.message : String(e)})`,
+      );
     } finally {
       setAutoBusy(false);
     }
-  }, [projectId, autoBusy, files.length, supportParams, addSupports, refreshSupports, sceneHandleRef]);
+  }, [
+    projectId,
+    autoBusy,
+    files.length,
+    supportParams,
+    refreshSupports,
+    sceneHandleRef,
+    onNotice,
+  ]);
 
   // ----- 수동 편집 -----
   const handleAddSupportAt = useCallback(

@@ -1,7 +1,9 @@
 // Dental 브러쉬 색칠 / 마진 찾기 / 아일랜드 검출 / 검출→서포트(2-4) 상태·핸들러.
-// (ViewerV2Page 에서 추출 — busy 라벨 페인트 순서·undo·통지 동작 불변.)
+// (ViewerV2Page 에서 추출 — busy 라벨 페인트 순서·통지 동작 불변.)
+// 2026-10-07 신규 8·9·11: 검출 영역 자동 서포트·재설계 생성은 "자동 세트 교체 + undo 1회"(auto-support-replace),
+//   재설계 확정은 시작 시점 대상 모델 고정(redesign-target), 언마운트 시 검출 취소·저장 금지.
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useDetectParamsStore } from "../../../support/hooks/useDetectParamsStore";
 import {
   detectService,
@@ -12,11 +14,17 @@ import {
   DEFAULT_PLACE_POINTS_PARAMS,
 } from "../../../support";
 
-import { useUndoStore } from "../../../hooks/useUndoStore";
 import * as supportRepo from "../../../data/supports.repo";
 import type { BabylonSceneHandle } from "../../../components/BabylonScene";
+import type { RedesignTarget } from "../../../components/babylon/redesign-target";
 import type { SupportParams } from "../../../support";
-import type { AddSupports, RefreshSupports } from "./types";
+import type { RefreshSupports } from "./types";
+import {
+  applyAutoSupportReplace,
+  commitRedesignGeneration,
+  formatAutoReplaceNotice,
+  makeUndoPusher,
+} from "../utils/auto-support-replace";
 
 /**
  * 동기(수십~수백 초) 검출 작업을 busy 라벨이 먼저 페인트된 뒤 시작하도록
@@ -56,8 +64,9 @@ interface UseDentalWorkflowArgs {
   supportParams: SupportParams;
   sceneHandleRef: React.RefObject<BabylonSceneHandle>;
   layerHeightMm: number;
-  addSupports: AddSupports;
   refreshSupports: RefreshSupports;
+  /** 뷰포트 하단 안내(5초) — 자동 서포트 교체 결과 알림 (신규 8). */
+  onNotice: (message: string) => void;
 }
 
 export function useDentalWorkflow({
@@ -65,8 +74,8 @@ export function useDentalWorkflow({
   supportParams,
   sceneHandleRef,
   layerHeightMm,
-  addSupports,
   refreshSupports,
+  onNotice,
 }: UseDentalWorkflowArgs) {
   // P-2: 검출·점생성 파라미터(사용자 조절). 스토어에서 직접 읽어
   //   프롭 스레딩 없이 최신값을 쓴다.
@@ -104,6 +113,19 @@ export function useDentalWorkflow({
   const [redesignBusy, setRedesignBusy] = useState(false);
   const [redesignStatus, setRedesignStatus] =
     useState<{ ok: boolean; message: string } | null>(null);
+
+  // 뷰어 이탈 신호 (신규 11). 재설계 생성은 워커 검출을 기다리는 동안 뷰어를
+  //   떠날 수 있다(프로젝트 목록으로 등). 언마운트되면 진행 중 검출을 취소하고,
+  //   이미 끝나 넘어온 결과도 저장하지 않는다(commitRedesignGeneration 의 isCancelled).
+  //   StrictMode 개발 모드의 mount→cleanup→mount 에서도 다시 true 로 돌아온다.
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+      detectService.cancel();
+    };
+  }, []);
 
   // ----- Dental 브러쉬 색칠 -----
   // 씬이 색칠 변경을 통지 → stlId 별 painted face 목록 갱신. 빈 목록이면 제거.
@@ -202,6 +224,10 @@ export function useDentalWorkflow({
    * 종전에는 메인스레드 동기라 대형 모델(하악 아치 등)에서 **화면이 통째로
    * 멈췄다** — 층 500개 × 층당 수만 샘플점이면 수백억 회 연산이다.
    * 씬 접근(삼각형 추출)과 시각화만 handle 을 거치고, 계산은 워커가 한다.
+   *
+   * 신규 9: 입력을 만드는 순간의 활성 STL(id·world 행렬)을 `target` 으로 함께
+   * 돌려준다 — 이것이 이 생성의 대상 모델이다. 검출 중 선택이 바뀌어도 확정·저장은
+   * target 기준으로 한다.
    */
   const runDetectInWorker = useCallback(async () => {
     const prep = sceneHandleRef.current?.prepareRedesignDetectInput();
@@ -210,9 +236,13 @@ export function useDentalWorkflow({
       setRedesignStatus({ ok: false, message: prep.reason });
       return null;
     }
+    const target: RedesignTarget = {
+      stlId: prep.stlId,
+      worldMatrix: prep.worldMatrix,
+    };
     setRedesignProgress({ done: 0, total: 1, phase: "준비" });
     try {
-      return await detectService.run(
+      const detected = await detectService.run(
         {
           triangles: prep.triangles,
           stlId: prep.stlId,
@@ -230,6 +260,7 @@ export function useDentalWorkflow({
         },
         (done, total, phase) => setRedesignProgress({ done, total, phase }),
       );
+      return { detected, target };
     } finally {
       setRedesignProgress(null);
     }
@@ -252,8 +283,9 @@ export function useDentalWorkflow({
     setRedesignBusy(true);
     setRedesignStatus(null);
     try {
-      const res = await runDetectInWorker();
-      if (!res) return;
+      const run = await runDetectInWorker();
+      if (!run) return;
+      const res = run.detected;
       sceneHandleRef.current?.renderRedesignPoints(res.points);
       setRedesignStatus({
         ok: true,
@@ -285,30 +317,56 @@ export function useDentalWorkflow({
   //   점을 표면 스냅한 뒤 **빔 충돌 검사로 3단 폴백 라우팅**
   //   (routeAndFinalizeRedesignPoints)하고 저장한다. 저장되면 useSupportMeshSync 가
   //   경로별 형상(수직 기둥 / 경사 다리 / 기둥 합류 / 모델 앵커)을 자동으로 세운다.
-  //   저장·undo 배선은 handleAutoSupportIslands 패턴을 그대로 따른다.
+  //
+  //   재실행 = 교체 (D5 / 신규 8): 대상 모델의 기존 자동 서포트(일반 자동·검출 영역
+  //   자동·이전 재설계 모두 source "auto")를 새 세트로 바꾼다 — 한 transaction,
+  //   undo 한 번이면 옛 세트로 복귀(auto-support-replace.ts).
+  //   대상 모델 고정 (신규 9): 시작 시점의 stlId·world 행렬(target)로만 확정한다.
+  //   뷰어 이탈 (신규 11): 언마운트되면 저장하지 않고, 라우팅을 못 하면 원시 점으로
+  //   폴백하지 않는다(commitRedesignGeneration).
+  //   연타: redesignBusy 로 버튼이 비활성화되고 여기서도 한 번 더 막는다.
   const handleGenerateRedesignSupports = useCallback(async () => {
     if (!projectId || redesignBusy) return;
     setRedesignBusy(true);
     setRedesignStatus(null);
     try {
       // S-2: 검출은 워커에서. 화면이 안 멈추고 진행률·취소가 된다.
-      const res = await runDetectInWorker();
-      if (!res) return;
-      // 표면 스냅 + 3단 폴백 라우팅 + world→stl-local 변환 (S-4b-2c).
-      const routed = sceneHandleRef.current?.routeAndFinalizeRedesignPoints(
-        res.points,
-        supportParams,
-      );
-      const finalized = routed?.points ?? res.points;
-      const report = routed?.report ?? null;
-      if (report) {
-        console.log("[재설계 라우팅]", report);
+      const run = await runDetectInWorker();
+      if (!run) return;
+      const { detected: res, target } = run;
+      const outcome = await commitRedesignGeneration({
+        isCancelled: () => !aliveRef.current,
+        // 표면 스냅 + 3단 폴백 라우팅 + world→stl-local 변환 (S-4b-2c) — 대상은 target.
+        route: () =>
+          sceneHandleRef.current?.routeAndFinalizeRedesignPoints(
+            res.points,
+            supportParams,
+            target,
+          ),
+        save: (points) =>
+          applyAutoSupportReplace({
+            label: "redesign-supports",
+            targetStlIds: new Set([target.stlId]),
+            generated: points,
+            replace: (pick, add) =>
+              supportRepo.replaceSupportsInProject(projectId, pick, add),
+            refresh: refreshSupports,
+            pushUndo: makeUndoPusher(),
+          }),
+      });
+      // 뷰어를 떠났다 — 저장도 안내도 하지 않는다.
+      if (outcome.kind === "cancelled") return;
+      if (outcome.kind === "rejected") {
+        setRedesignStatus({ ok: false, message: outcome.reason });
+        return;
       }
-      if (finalized.length === 0) {
+      const report = outcome.report;
+      console.log("[재설계 라우팅]", report);
+      if (outcome.kind === "empty") {
         setRedesignStatus({ ok: true, message: "생성할 서포트 점이 없습니다." });
         return;
       }
-      await addSupports(finalized);
+      const finalized = outcome.points;
       // 검출 디버그 오버레이(마젠타/주황/파랑 점) 정리 — 저장이 끝나면 기둥이
       //   실물로 서므로 오버레이는 역할이 끝났다. world 좌표 고정이라 남겨두면
       //   모델을 움직였을 때 허공에 떠 보인다(B-4). 상태 메시지는 통계 표시용으로
@@ -340,19 +398,12 @@ export function useDentalWorkflow({
           `(아일랜드 ${res.stats.islandCount} · 오버행 ${res.stats.overhangCount})` +
           routeSummary,
       });
-      const ids = finalized.map((p) => p.id);
-      useUndoStore.getState().push({
-        label: "redesign-supports",
-        undo: async () => {
-          for (const id of ids) await supportRepo.deleteSupport(id);
-          await refreshSupports();
-        },
-        redo: async () => {
-          await addSupports(finalized);
-        },
-      });
+      // undo 항목은 applyAutoSupportReplace 가 이미 남겼다 — 여기서는 교체 안내만.
+      const notice = formatAutoReplaceNotice(outcome.result);
+      if (notice) onNotice(notice);
     } catch (e) {
       // 저장/스냅 중 예외도 사용자에게 실패 사유를 남긴다(감사 #5 취지).
+      //   교체는 한 transaction 이라 저장 실패 시 기존 서포트는 그대로다.
       setRedesignStatus({
         ok: false,
         message: `서포트 생성 실패: ${e instanceof Error ? e.message : String(e)}`,
@@ -369,15 +420,17 @@ export function useDentalWorkflow({
     // S-2: 검출 입력(층높이·검출 파라미터)은 이 콜백이 안에 품고 있으므로
     //   개별 값 대신 콜백 자체를 의존성으로 둔다 — 규칙 7(deps 누락) 준수.
     runDetectInWorker,
-    addSupports,
     refreshSupports,
     sceneHandleRef,
+    onNotice,
   ]);
 
   // ----- 검출 영역 자동 서포트 (Step 2-4, ADR-3: 검출→생성 파이프라인) -----
   //   아일랜드 검출 결과의 island 영역에만 자동 서포트를 생성한다. BabylonScene 이
   //   faceFilter + 마진 가드까지 적용해 점을 반환하면, 여기서 기존 자동 생성 배선
-  //   (addSupports → undo push)과 동일 패턴으로 저장한다.
+  //   과 동일 패턴으로 저장한다 — 재실행 = 교체 (D5 / 신규 8): 그 모델의 기존 자동
+  //   서포트를 새 세트로 바꾼다(auto-support-replace.ts). 대상 모델은 아일랜드 검출
+  //   대상 STL 하나(점이 전부 그 stlId) — 생성이 동기라 도중에 선택이 바뀔 틈이 없다.
   const handleAutoSupportIslands = useCallback(async () => {
     if (!projectId || islandSupportBusy) return;
     setIslandSupportBusy(true);
@@ -397,8 +450,15 @@ export function useDentalWorkflow({
         return;
       }
 
-      const ids = generated.map((p) => p.id);
-      await addSupports(generated);
+      const result = await applyAutoSupportReplace({
+        label: "island-auto-supports",
+        targetStlIds: new Set(generated.map((p) => p.stlId)),
+        generated,
+        replace: (pick, add) =>
+          supportRepo.replaceSupportsInProject(projectId, pick, add),
+        refresh: refreshSupports,
+        pushUndo: makeUndoPusher(),
+      });
       // 완료 통지 (감사 #5) — Support 탭의 "현재 N 개" 로 연결됨을 안내.
       setIslandSupportResult(
         `서포트 ${generated.length}개 생성됨 · Support 탭 "현재 개수" 에 반영`,
@@ -411,18 +471,15 @@ export function useDentalWorkflow({
       //   (재생성하려면 명시적 재검출 필요). 마진 상태는 건드리지 않는다.
       setIslandStatus(null);
 
-      useUndoStore.getState().push({
-        label: "island-auto-supports",
-        undo: async () => {
-          for (const id of ids) {
-            await supportRepo.deleteSupport(id);
-          }
-          await refreshSupports();
-        },
-        redo: async () => {
-          await addSupports(generated);
-        },
-      });
+      const notice = formatAutoReplaceNotice(result);
+      if (notice) onNotice(notice);
+    } catch (e) {
+      // 생성(씬) 또는 교체 저장 실패. 교체는 한 transaction 이라 실패하면 기존
+      //   서포트는 그대로다.
+      setIslandSupportResult(
+        `서포트 생성 실패 — 기존 서포트는 그대로입니다. ` +
+          `(${e instanceof Error ? e.message : String(e)})`,
+      );
     } finally {
       setIslandSupportBusy(false);
     }
@@ -430,9 +487,9 @@ export function useDentalWorkflow({
     projectId,
     islandSupportBusy,
     supportParams,
-    addSupports,
     refreshSupports,
     sceneHandleRef,
+    onNotice,
   ]);
 
   return {
