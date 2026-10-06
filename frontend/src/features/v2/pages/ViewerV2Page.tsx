@@ -7,6 +7,7 @@ import { useSupportsV2 } from "../hooks/useSupportsV2";
 import { useShortcutsListener, useShortcutHandler } from "../hooks/useShortcuts";
 import { useSupportParamsStore } from "../support";
 import { summarizeSupports } from "../support/support-stats";
+import { modelFitRegionForProfile } from "../utils/model-size";
 import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
@@ -21,7 +22,6 @@ import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM } from "../types/transform";
 import { SAMPLE_MODELS } from "../utils/sample-models";
 import { task0PrintableAreaForProfile } from "../utils/task0/task0-profile";
-import { modelFitRegionForProfile } from "../utils/model-size";
 
 import { useClipboardActions } from "./viewer/hooks/useClipboardActions";
 import { useViewerShortcuts } from "./viewer/hooks/useViewerShortcuts";
