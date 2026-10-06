@@ -85,7 +85,7 @@ Claude Code에서 `/dev-cycle <작업 내용>` 실행 시 다음 루프가 돈�
 
 1. `cd frontend && npx tsc --noEmit` — **0건**(2026-10-02 정리 후 기준선 0)
 2. `npm run lint` — 알려진 34건 외 **새 경고 0**
-3. `npx tsx scripts/verify-<이름>.mjs` **전부** exit code 0 (10/2 기준 25종 — `ls scripts/verify-*.mjs`).
+3. `npx tsx scripts/verify-<이름>.mjs` **전부** exit code 0 (10/2 기준 26종 — `ls scripts/verify-*.mjs`).
    plain `node` 금지(확장자 없는 TS import 오탐), 판정은 출력 문자열이 아니라 **exit code**. Node 20.6 이상.
 4. `npm run build` 성공
 5. 산출물(마스크 PNG·ZIP·G-code) 바이트가 바뀌는 수정이면 PR 에 before/after(SHA-256 또는 차이 설명) — CLAUDE.md 규칙 5
