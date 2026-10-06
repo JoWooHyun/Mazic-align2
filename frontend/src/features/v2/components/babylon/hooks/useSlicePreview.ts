@@ -1,5 +1,8 @@
 // Z 슬라이스 미리보기 훅 — 원본 effect #5.5 순수 이동.
 //   scene.clipPlane 으로 Y > sliceY 컬링 + 단면 polygon fill/outline 생성. 로직 무변경.
+//   Task0 2재료(D2): fill 머티리얼은 material-display sliceFillMaterialFor 로 고른다 — 재료 색 상태가 없으면 종전 그대로
+//   (STL = sliceModelMat, 서포트 = sliceSupportMat), 있으면 슬롯 fill(STL = 파일 슬롯, 서포트 = A). fill 마다 정체 표식
+//   (metadata.sliceFill)을 달아 상태가 바뀌면 이미 그려진 fill 도 setMaterialSlotColors 가 바로 바꾼다(applySliceFillMaterials).
 import { useEffect } from "react";
 import {
   Color3,
@@ -12,6 +15,7 @@ import { buildPolygonFillMesh } from "../../../utils/slice-render";
 import type { STLFileV2 } from "../../../types/stl";
 import type { SupportParams, SupportPointV2 } from "../../../support/types";
 import type { SceneCtx } from "../scene-refs";
+import { sliceFillMaterialFor, type SliceFillTag } from "../material-display";
 
 export function useSlicePreview(
   ctx: SceneCtx,
@@ -58,19 +62,24 @@ export function useSlicePreview(
     const lines: Vector3[][] = [];
 
     // 모델 단면.
-    for (const mesh of ctx.meshMapRef.current.values()) {
+    for (const [stlId, mesh] of ctx.meshMapRef.current) {
       const segs = sliceMeshAtY(mesh, sliceY);
       if (segs.length === 0) continue;
       const polys = chainSegments(segs);
+      const tag: SliceFillTag = { kind: "stl", stlId };
+      const fillMat = sliceFillMaterialFor(ctx, tag) ?? modelMat;
       for (const p of polys) {
         const fill = buildPolygonFillMesh(
           scene,
           p,
           yFill,
-          modelMat,
+          fillMat,
           "v2_slice_model_fill",
         );
-        if (fill) ctx.sliceFillMeshesRef.current.push(fill);
+        if (fill) {
+          fill.metadata = { sliceFill: tag };
+          ctx.sliceFillMeshesRef.current.push(fill);
+        }
       }
       for (const s of segs) {
         lines.push([
@@ -81,6 +90,8 @@ export function useSlicePreview(
     }
 
     // 서포트 단면.
+    const supportTag: SliceFillTag = { kind: "support" };
+    const supportFillMat = sliceFillMaterialFor(ctx, supportTag) ?? supportMat;
     for (const sm of ctx.supportMeshMapRef.current.values()) {
       const segs = sliceMeshAtY(sm, sliceY);
       if (segs.length === 0) continue;
@@ -90,10 +101,13 @@ export function useSlicePreview(
           scene,
           p,
           yFill,
-          supportMat,
+          supportFillMat,
           "v2_slice_support_fill",
         );
-        if (fill) ctx.sliceFillMeshesRef.current.push(fill);
+        if (fill) {
+          fill.metadata = { sliceFill: supportTag };
+          ctx.sliceFillMeshesRef.current.push(fill);
+        }
       }
       for (const s of segs) {
         lines.push([

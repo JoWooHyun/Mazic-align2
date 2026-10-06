@@ -56,6 +56,13 @@ export function disposeScene(
   ctx.sliceSupportMatRef.current?.dispose();
   ctx.sliceModelMatRef.current = null;
   ctx.sliceSupportMatRef.current = null;
+  // Task0 2재료 슬롯별 단면 fill (D2) — 위 단면 머티리얼과 같은 자리(순서 규약 유지, 새 단계 아님).
+  //   scene.dispose() 도 scene.materials 를 정리하지만(Babylon 6 scene.js — _disposeList(this.materials)) 이 파일 규약대로 명시 해제.
+  ctx.sliceSlotMatsRef.current?.A.dispose();
+  ctx.sliceSlotMatsRef.current?.B.dispose();
+  ctx.sliceSlotMatsRef.current = null;
+  // 재료 색 상태도 비운다 (머티리얼이 사라진 뒤 stale 상태 방지).
+  ctx.materialSlotColorsRef.current = null;
   for (const mesh of ctx.meshMapRef.current.values()) {
     mesh.dispose();
   }

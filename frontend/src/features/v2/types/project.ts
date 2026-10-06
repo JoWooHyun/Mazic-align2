@@ -19,6 +19,12 @@ export interface ProjectV2 {
    * Task0 프로파일에서만 쓰인다. IndexedDB 레코드의 선택 필드(스토어·인덱스·버전 변경 없음).
    */
   task0MaterialMode?: "single" | "dual";
+  /**
+   * Task0 재료 이름 (D2) — job.zip manifest `materials[].name`(규격서 v0.3.4 §11 — Task0 GUI 표시용 자유 문자열).
+   * 2재료일 때만 manifest 에 쓴다(단일 재료는 기본 이름 그대로). 없거나 빈 슬롯은 기본 이름(A 모델레진 / B 템프레진) —
+   * 해석·정규화는 utils/task0/task0-material.ts resolveTask0MaterialNames. IndexedDB 레코드의 선택 필드(스토어·인덱스·버전 변경 없음).
+   */
+  task0MaterialNames?: { A?: string; B?: string };
 }
 
 /** 새 프로젝트 생성 시 호출 측이 채워야 하는 필드. */

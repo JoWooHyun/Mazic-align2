@@ -832,6 +832,7 @@ const ViewerV2Page: React.FC = () => {
             sliceY={sliceYNow}
             lcdWidthPx={printerProfile.lcdWidthPx}
             lcdHeightPx={printerProfile.lcdHeightPx}
+            materialSlots={task0Material.sliceSlots}
           />
         )}
 

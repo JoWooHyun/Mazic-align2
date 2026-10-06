@@ -43,7 +43,7 @@
 //       b. job.zip 의 toolChangeCount 를 0 으로 고정한 task0-jobzip(+ 그것을 쓰는 코어) → 파일 D job.zip 이 막히고(자기 검사 — 툴 전환 수
 //          불일치) 견본 경로 zip 은 검사기가 잡는다 c. 코어에서 2재료 자기 검사를 빼면 (4)④ 의 B 우선 위반·교차 트래블 출력이 파일로 나온다
 //       d. 트래블 검사만 빼면 교차 출력이 나오고 B 우선 위반은 여전히 막힌다(두 검사가 각각 필요) e. 갇힌 B 판정을 빼면 이유가 엉뚱한
-//          "얇은 부분 채움 실패" 로 바뀐다 f. deps 에서 재료 모드·files 를 빼거나 무효화 deps 에서 재료 모드를 빼면 (6) 이 실패한다
+//          "두 재료가 맞물린 단면" 으로 바뀐다(D2 — 판정이 writer 통계 기반, 그 전에는 "얇은 부분 채움 실패" 였다) f. deps 에서 재료 모드·files 를 빼거나 무효화 deps 에서 재료 모드를 빼면 (6) 이 실패한다
 //       g. 슬롯 입력을 무시하는 코어(D1b 이전 동작) → 단일 재료 파일이 나와 (1) 의 파일 D 바이트·manifest 2재료가 실패.
 //       (수정 전 트리 전체로 돌리면 task0-material.ts 가 없어 import 단계에서 exit 1 — 구현 확인 때 실측.)
 //   (8) 성능 참고 — TASK0_PERF=1 일 때만(판정 없음): 2재료 job.zip — 파일 D 형상, 구 + 기둥 서포트(verify-task0-dual sphereSeedModel) 단계별 시간.
@@ -551,7 +551,7 @@ async function sectionBlocked() {
  * 가짜 IndexedDB — data/*.repo.ts 가 쓰는 것만: open(업그레이드 이벤트) · 트랜잭션(요청이 다 끝나면 complete) · 스토어 get/put/add/delete/clear ·
  * createIndex(unique) · index.openCursor(IDBKeyRange.only, 'prev') + cursor.continue/delete · tx.abort. 레코드는 얕은 복사로 둔다(Blob 은 참조).
  */
-function installFakeIndexedDB() {
+export function installFakeIndexedDB() {
   const databases = new Map();
   const later = (fn) => setTimeout(fn, 0);
   const clone = (v) => (v === undefined ? undefined : { ...v });
@@ -915,10 +915,14 @@ function sectionWiring() {
   const fdm = h.slice(h.indexOf("    getFdmSliceInput(settings) {"), h.indexOf("    getSliceMask("));
   assert(/out\.push\(\{ triangles: tris \}\);/.test(fdm) && !/kind/.test(fdm), "handle getFdmSliceInput(marlin) 무변경 — 메시 정체를 붙이지 않음");
   const colors = h.slice(h.indexOf("    setMaterialSlotColors(slots) {"), h.indexOf("    getSceneTopY() {"));
+  // D2: 색 칠하기는 재료 색 상태(components/babylon/material-display.ts setMaterialSlotState)로 옮겼다 — 색 규칙 자체는
+  //   verify-task0-dual-preview (2) 가 NullEngine 으로 본다(STL = 슬롯 색, 서포트 = A, null 이면 편집 모드 표시 색·칠하기 전 색).
+  const md = read("components", "babylon", "material-display.ts");
   assert(
-    /setModelDiffuseMode\(mesh, overhang\)/.test(colors) && /task0SlotColorRgb\(slots\[stlId\] \?\? TASK0_DEFAULT_STL_SLOT\)/.test(colors) &&
-      /task0SlotColorRgb\(TASK0_SUPPORT_SLOT\)/.test(colors) && !/setVerticesData|VertexBuffer/.test(colors),
-    "handle setMaterialSlotColors: STL = 슬롯 색, 서포트 = A 색, null 이면 편집 모드 표시 색으로 복귀, 정점 데이터는 안 건드림",
+    /setMaterialSlotState\(ctx, slots\);/.test(colors) &&
+      /setModelDiffuseMode\(mesh, overhang\)/.test(md) && /task0SlotColorRgb\(slots\[stlId\] \?\? TASK0_DEFAULT_STL_SLOT\)/.test(md) &&
+      /task0SlotColorRgb\(TASK0_SUPPORT_SLOT\)/.test(md) && !/setVerticesData|VertexBuffer/.test(colors + md),
+    "handle setMaterialSlotColors → 재료 색 상태(material-display): STL = 슬롯 색, 서포트 = A 색, null 이면 편집 모드 표시 색으로 복귀, 정점 데이터는 안 건드림",
   );
   const types = read("components", "babylon", "babylon-scene-types.ts");
   assert(
@@ -942,11 +946,13 @@ function sectionWiring() {
   const maskBody = hook.slice(hook.indexOf("const handleExportMasksZip"), hook.indexOf("const handleExportGcode"));
   assert(/const meshes = handle\.getSliceGeometry\(\);\s*const topY = handle\.getSceneTopY\(\);\s*const blob = await sliceBatchService\.exportPngZip\(\s*meshes,/.test(maskBody) && !/materialSlots/.test(maskBody), "마스크 ZIP 핸들러 무변경 — 같은 getSliceGeometry 항목을 그대로 워커로");
   const tm = read("pages", "viewer", "hooks", "useTask0Material.ts");
+  // D2: 3D 색은 슬롯 표(sliceSlots — 슬라이스 화면 + 2재료일 때만, 아니면 null)가 바뀔 때만 handle 로(씬의 재료 색 상태 — 멱등)
   assert(
     /updateProject\(\{ task0MaterialMode: next \}\)/.test(tm) && /updateMaterialSlot\(id, slot\)/.test(tm) &&
-      /if \(!\(sliceOn && dualActive\)\) \{\s*handle\.setMaterialSlotColors\(null\);/.test(tm) && /handle\.setMaterialSlotColors\(slots\);/.test(tm) &&
-      /\}, \[sliceOn, dualActive, files, sceneHandleRef\]\);/.test(tm) && /const dualActive = task0 && mode === "dual";/.test(tm),
-    "useTask0Material: 모드·슬롯은 repo 경유 함수로, 3D 색은 슬라이스 화면 + Task0 2재료일 때만(아니면 원래 색), deps 에 files·sliceOn",
+      /if \(!\(sliceOn && dualActive\)\) return null;/.test(tm) && /sceneHandleRef\.current\?\.setMaterialSlotColors\(sliceSlots\);/.test(tm) &&
+      /\}, \[sliceOn, dualActive, slotKey\]\);/.test(tm) && /\}, \[sliceSlots, sceneHandleRef\]\);/.test(tm) &&
+      /const dualActive = task0 && mode === "dual";/.test(tm),
+    "useTask0Material: 모드·슬롯은 repo 경유 함수로, 3D 색은 슬라이스 화면 + Task0 2재료일 때만(아니면 원래 색), 슬롯 표가 바뀔 때만 handle",
   );
   const projHook = read("hooks", "useProjectsV2.ts");
   const stlHook = read("hooks", "useStlFilesV2.ts");
@@ -1011,7 +1017,7 @@ async function loadMutantSet(tag, mutations, entry) {
 
 const AT_DUAL_SELF = "  if (dualSlots !== null && issues.length === 0) {";
 const AT_TRAVEL = "  const travel = travelContactViolations(gen.gcode, [toUm(p.parkXMm), toUm(p.parkYMm)]);";
-const AT_TRAPPED = "    else if (abOrder && s.byTool[1].segments === 0) trapped.push(n);";
+const AT_TRAPPED = "    else if (abOrder && stuckT1 > 0) {";
 const AT_SUPPORT_SLOT = "export const TASK0_SUPPORT_SLOT: Task0MaterialSlot = 'A';";
 const AT_TOOL_CHANGES = "  const toolChangeCount = gcode.totals.toolChanges;";
 const AT_DUAL_SLOTS = "  const dualSlots = dualSlotsOf(input);";
@@ -1061,11 +1067,11 @@ async function sectionControls(ref) {
     dUn.ok && !dOv.ok && dOv.issues.some((s) => s.startsWith("B 우선 위반")),
     "d. 트래블 검사만 빼면 교차 출력은 나오고 B 우선 위반은 여전히 막힘 — 커버리지 검사만으로는 교차를 못 잡는다",
   );
-  // e. 갇힌 B 판정 제거
-  const noTrap = await loadMutantSet("no-trapped", { "task0-export.ts": [[AT_TRAPPED, "    else if (abOrder && s.byTool[1].segments === 0) thin.push(n);"]] }, "task0-export.ts");
+  // e. 갇힌 B 판정 제거 (D2 — 판정이 writer 통계 unreachableByTool 기반이 된 뒤: 빼면 "맞물림" 문구로 떨어진다)
+  const noTrap = await loadMutantSet("no-trapped", { "task0-export.ts": [[AT_TRAPPED, "    else if (abOrder && stuckT1 > 0 && false) {"]] }, "task0-export.ts");
   const eR = noTrap.runTask0GcodeExport(ringInput());
   assert(
-    !eR.ok && !eR.issues.some((s) => s.includes("둘러싸여")) && eR.issues.some((s) => s.startsWith("얇은 부분 채움 실패 10개 층")),
+    !eR.ok && !eR.issues.some((s) => s.includes("둘러싸여")) && eR.issues.some((s) => s.startsWith("두 재료가 맞물린 단면에서")),
     `e. 갇힌 B 판정을 빼면 이유가 엉뚱한 "${eR.ok ? "(통과)" : eR.issues[0].slice(0, 20)}…" 로 바뀐다 — (4)① 의 구체 이유 단언이 잡는다`,
   );
   // g. 수정 전 코어처럼 슬롯 입력을 무시하면 (앱이 materialSlots 를 보내도 단일 재료) — (1) 의 파일 D 바이트·manifest 2재료가 실패
@@ -1132,7 +1138,11 @@ async function main() {
   process.exit(failed === 0 ? 0 : 1);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// 다른 검증 스크립트(verify-task0-dual-preview — D2)가 가짜 IndexedDB 를 가져다 쓴다 → 직접 실행할 때만 main.
+const isMain = path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url);
+if (isMain) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

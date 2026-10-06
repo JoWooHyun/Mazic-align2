@@ -2,8 +2,9 @@
 //   STL 드래그 behavior detach/attach + support isPickable 토글 + 카메라 좌클릭 버튼
 //   매핑 조정(dental-brush 진입 [1,2] / 이탈 [0,1,2] 원복, 감사 B2)
 //   + 모델 머티리얼 표시 모드 전환(서포트 탭에서만 오버행 색, 리드 결정 C안).
+//   Task0 2재료 재료 색 상태(D2)가 있으면 표시 색은 그 상태를 따른다(material-display applyModelDisplayColor).
 import { useEffect, useRef } from "react";
-import { setModelDiffuseMode } from "../../../utils/stl-loader";
+import { applyModelDisplayColor } from "../material-display";
 import { syncGizmo } from "../scene-actions";
 import type { STLFileV2 } from "../../../types/stl";
 import type { SupportPointV2 } from "../../../support/types";
@@ -60,7 +61,9 @@ export function useEditModeSync(
       // 머티리얼은 mesh 마다 개별 생성(`${meshName}-mat`)되므로 **모든** STL
       // 메쉬에 적용해야 한다. 서포트 메쉬·플레이트·기즈모는 meshMapRef 에
       // 없으므로 자연히 제외된다.
-      setModelDiffuseMode(mesh, showOverhang);
+      // Task0 2재료 재료 색 상태(D2)가 있으면 슬롯 색, 없으면 종전 setModelDiffuseMode(mesh, showOverhang) 그대로 —
+      //   이 effect 가 재료 색을 되돌려 놓고 부모 effect 가 다시 칠하는 순서에 기대지 않는다(material-display 머리 주석).
+      applyModelDisplayColor(ctx, id, mesh, showOverhang);
 
       const drag = ctx.dragBehaviorMapRef.current.get(id);
       if (!drag) continue;

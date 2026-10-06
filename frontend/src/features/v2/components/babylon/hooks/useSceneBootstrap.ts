@@ -21,6 +21,7 @@ import { createSupportMaterial } from "../../../utils/support-render";
 import { ensureManifoldReady } from "../../../utils/manifold-csg";
 import { createSliceFillMaterial } from "../../../utils/slice-render";
 import { addBuildPlateAndGrid } from "../../../utils/scene-setup";
+import { task0SlotColorRgb } from "../../../utils/task0/task0-material";
 import { applyZoomLimits, resetCameraOnPlate } from "../../../utils/camera-views";
 import type { SceneCtx } from "../scene-refs";
 import { setupGizmos } from "./setup-gizmos";
@@ -208,6 +209,20 @@ export function useSceneBootstrap(
       new Color3(0.55, 0.7, 0.95),
       "v2_slice_support_mat",
     );
+    // Task0 2재료 슬롯별 단면 fill (D2) — 재료 색 상태가 있을 때만 쓰인다(material-display sliceFillMaterialFor).
+    //   색은 task0-material TASK0_SLOT_COLOR_HEX 한 곳. 정리는 dispose-scene 의 단면 머티리얼 자리.
+    ctx.sliceSlotMatsRef.current = {
+      A: createSliceFillMaterial(
+        scene,
+        Color3.FromArray(task0SlotColorRgb("A")),
+        "v2_slice_slot_a_mat",
+      ),
+      B: createSliceFillMaterial(
+        scene,
+        Color3.FromArray(task0SlotColorRgb("B")),
+        "v2_slice_slot_b_mat",
+      ),
+    };
 
     const hl = new HighlightLayer("v2_highlight", scene, {
       blurHorizontalSize: 0.6,

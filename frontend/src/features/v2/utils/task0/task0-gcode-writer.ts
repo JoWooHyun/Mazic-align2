@@ -228,6 +228,11 @@ export interface Task0LayerStats {
   detourTravels: number;
   /** 경로가 없어 칠하지 못한 항목 수 (채움·2재료 두 번째 패스 — > 0 이면 thinFill 'failed') */
   unreachable: number;
+  /**
+   * (D2) 툴 패스별 경로 없는 항목 수 — byTool 과 같은 모양(단일 재료 [T0], 2재료 [T0, T1]), 합 = unreachable.
+   * 쓰는 쪽(task0-export)이 실패 층 이유를 가른다(B 패스가 막힘 = 칠한 A 에 갇힌 B 등). 통계일 뿐 출력 바이트와 무관
+   */
+  unreachableByTool: number[];
   /** 이 층 블록의 T 줄 수 (= 툴 전환 수, 단일 재료 0) */
   toolChanges: number;
   /** 툴별 통계 — 단일 재료 [T0], 2재료 [T0, T1] */
@@ -952,6 +957,7 @@ export function generateTask0Gcode(
       fillSegments: 0,
       detourTravels: 0,
       unreachable: 0,
+      unreachableByTool: new Array<number>(toolCount).fill(0),
       toolChanges: 0,
       byTool,
       routeVariant: 0,
@@ -1084,6 +1090,7 @@ export function generateTask0Gcode(
         stat.fillDots += plan.route?.dots ?? 0;
         stat.detourTravels += plan.route?.detourTravels ?? 0;
         stat.unreachable += plan.route?.unreachable ?? 0;
+        stat.unreachableByTool[pass.tool] += plan.route?.unreachable ?? 0;
       }
       const willDeposit = plan !== null && plan.route !== null ? plan.route.steps.length > 0 : pass.rows.length > 0;
       if (!willDeposit) continue;

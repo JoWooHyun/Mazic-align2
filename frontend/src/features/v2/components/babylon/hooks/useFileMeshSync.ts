@@ -3,7 +3,7 @@
 //   그 순서로 등록한다. manifold man.delete() 짝, painted/margin/island 정리 등 무변경.
 import { useEffect } from "react";
 import { Mesh } from "@babylonjs/core";
-import { loadStlIntoScene, setModelDiffuseMode } from "../../../utils/stl-loader";
+import { loadStlIntoScene } from "../../../utils/stl-loader";
 import { applyOverhangColors } from "../../../utils/overhang";
 import { applyTransformToMesh } from "../../../utils/transform";
 import { IDENTITY_TRANSFORM } from "../../../types/transform";
@@ -12,6 +12,7 @@ import { frameCameraToMeshes } from "../../../utils/camera-views";
 import type { STLFileV2 } from "../../../types/stl";
 import type { SceneCtx } from "../scene-refs";
 import { attachDragBehavior, refreshHighlight, syncGizmo } from "../scene-actions";
+import { applyModelDisplayColor } from "../material-display";
 import {
   disposeIslandVisualization,
   disposeMarginVisualization,
@@ -112,7 +113,9 @@ export function useFileMeshSync(
           //   변하지 않으므로 다시 돌지 않는다 → 새 모델만 파란색으로 남는다.
           //   여기서 한 번 맞춰 두면 그 구멍이 없다 (모드 전환 시의 일괄 적용은
           //   useEditModeSync 가 계속 담당).
-          setModelDiffuseMode(mesh, ctx.editModeRef.current === "support");
+          //   Task0 2재료 재료 색 상태(D2)가 있으면 슬롯 색 — 슬라이스 화면 진입 **뒤에** 로드가 끝난 STL 도 재료 색을 받는다
+          //   (상태가 없으면 종전 setModelDiffuseMode 그대로 — material-display applyModelDisplayColor).
+          applyModelDisplayColor(ctx, f.id, mesh, ctx.editModeRef.current === "support");
           mesh.isPickable = true;
           attachDragBehavior(ctx, mesh, f.id);
           ctx.meshMapRef.current.set(f.id, mesh);

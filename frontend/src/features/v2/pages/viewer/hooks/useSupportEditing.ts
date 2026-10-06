@@ -12,6 +12,7 @@ import type { BabylonSceneHandle } from "../../../components/BabylonScene";
 import type { EditMode } from "../../../components/EditModeControls";
 import type { SupportParams } from "../../../support";
 import { IDENTITY_TRANSFORM } from "../../../types/transform";
+import { task0CopySlotInit } from "../../../utils/task0/task0-material";
 import { addCopySuffix } from "../utils/file-naming";
 import { useBridgeControlPoints } from "./useBridgeControlPoints";
 import type {
@@ -382,15 +383,18 @@ export function useSupportEditing({
   //   handlePaste 와 동일하게 "addCopySuffix + addStlFile" 경로로 새 STL 을 추가하되,
   //   소스는 클립보드가 아니라 현재 선택이다 — 사용자 Ctrl+C 클립보드는 건드리지 않는다.
   //   원본에서 XZ +5mm 오프셋해 겹침을 피한다 (자동배치는 건드리지 않음).
+  //   Task0 재료 슬롯은 원본 것을 물려받는다(D2). 되돌리기 이력에는 넣지 않는다(종전과 같음 — 복제는 이력 없음).
   const handleDuplicateSelected = useCallback(async () => {
     if (editLocked) return; // 미리보기 중 복제 금지 — 신규 7.
     if (selectedIds.size === 0) return;
     const sources = files.filter((f) => selectedIds.has(f.id));
     const newIds: string[] = [];
     for (const src of sources) {
+      // 원본의 Task0 재료 슬롯을 물려받는다 (D2 — 원본에 없으면 기본 B 그대로).
       const created = await addStlFile(
         addCopySuffix(src.fileName, files),
         src.blob,
+        task0CopySlotInit(src),
       );
       // 원본 transform 을 복제하고 XZ 로 +5mm 이동해 원본 위에 겹치지 않게 한다.
       const base = src.transform ?? IDENTITY_TRANSFORM;

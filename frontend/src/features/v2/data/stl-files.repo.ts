@@ -33,10 +33,16 @@ export async function getStlFile(id: string): Promise<STLFileV2 | undefined> {
   });
 }
 
+/**
+ * 새 STL 레코드 추가. init 은 처음부터 함께 저장할 선택 필드 —
+ * 지금은 Task0 재료 슬롯(복제·붙여넣기가 원본 슬롯을 물려받는 경로, D2)만. 'A'·'B' 가 아니면 필드를 만들지 않는다
+ * (드롭·파일 열기·예제처럼 init 이 없으면 종전과 같은 레코드 = 기본 B).
+ */
 export async function createStlFile(
   projectId: string,
   fileName: string,
   blob: Blob,
+  init?: Pick<STLFileV2, "materialSlot">,
 ): Promise<STLFileV2> {
   const stlFile: STLFileV2 = {
     id: crypto.randomUUID(),
@@ -46,6 +52,8 @@ export async function createStlFile(
     fileSize: blob.size,
     addedAt: Date.now(),
   };
+  const slot = init?.materialSlot;
+  if (slot === "A" || slot === "B") stlFile.materialSlot = slot;
   const db = await openDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_STL_FILES, "readwrite");
