@@ -1,22 +1,26 @@
 // Task0 G-code 파서 TS 이식 헤드리스 검증 (로드맵 0절 2주차 PR-1 Z1-a1).
 //
 //   무엇을: src/features/v2/utils/task0/task0-gcode-parser.ts 가 Task0 원본 파서
-//     `controllers/task0_gcode.py` @ 커밋 592accf (파서 v0.2, 규격서 v0.3.3 §12) 와
+//     `controllers/task0_gcode.py` @ 커밋 03c0519 (파서 v0.2.1, 규격서 v0.3.4 §12 @ a4ebc6c) 와
 //     **같은 결과**를 내는지 본다. Z1-a2 의 task0 G-code writer 가 이 파서로 자기 출력을 검사하므로,
 //     여기서 어긋나면 "MazicAlign 은 통과, Task0 는 거부" 가 생긴다.
+//     (Z1-c — 이식 기준 592accf(v0.2) → 03c0519(v0.2.1): G92 인자 검사, 인자 없는 이동 줄 분리,
+//      Z 관련 위반 문구 소수 4자리. 협의 §30-3)
 //
-//   (a) 단위테스트 이식 — 원본 `test/test_task0_gcode.py` @ 592accf 의 테스트 69건을 같은 입력·같은
+//   (a) 단위테스트 이식 — 원본 `test/test_task0_gcode.py` @ 03c0519 의 테스트 82건을 같은 입력·같은
 //       기대값으로 옮겼다(레이블 = 원본 클래스.테스트 이름). 이식 개수 ≠ 원본 개수면 실패.
 //       test_big_file(Task0 루트의 미커밋 OrcaSlicer 파일)은 원본처럼 파일이 있을 때만 돌고 없으면 SKIP.
-//       test_2.gcode 는 592accf 판을 아래에 내장(Task0 가 있으면 원본 blob 과 같은지도 확인).
+//       test_2.gcode 는 03c0519 판을 아래에 내장(Task0 가 있으면 원본 blob 과 같은지도 확인).
 //   (b) Python 원본과의 차분 검사 — python 과 Task0 리포(TASK0_DIR, 기본 = 리포 루트 기준 ../Task0)가
-//       있으면 `git show 592accf:controllers/task0_gcode.py` 를 임시 폴더에 풀어 Python 하네스로 돌리고,
+//       있으면 `git show 03c0519:controllers/task0_gcode.py` 를 임시 폴더에 풀어 Python 하네스로 돌리고,
 //       말뭉치(= (a)의 모든 입력 + 결정적 시드 퍼즈 600건 × 모드 5종 + 숫자 포맷 경계 + 인자 오류 +
 //       함수 단위 입력) 각각의 결과(블록 필드·warnings·errors·layerCount·endFound / 예외 메시지)가
-//       JS 와 **완전히 같아야** 한다(float 는 비트 단위 비교).
+//       JS 와 **완전히 같아야** 한다(float 는 비트 단위 비교). 퍼즈·경계 말뭉치에는 v0.2.1 새 규칙 사례
+//       (G92 인자 변형, 인자 없는 G0/G1, |Z| ≥ 1000·소수 4자리 동률·지수 범위 Z 문구)가 들어 있다.
 //       ★ 대조군 원칙: 같은 하네스로 원본을 일부러 변조한 판(_TOL 0.001→0.01, 경고 문구 한 글자,
-//       half-even 반올림 → +0.5 절삭, re.ASCII 제거, utf-8-sig → utf-8)을 돌리면 불일치가 **검출돼야**
-//       한다 — 검출 못 하면 말뭉치가 그 차이를 못 잡는다는 뜻이므로 실패.
+//       half-even 반올림 → +0.5 절삭, 이동·G92 인자 정규식 re.ASCII 제거, utf-8-sig → utf-8,
+//       Z 문구 소수 3자리, 인자 없는 이동 줄을 F 단독 줄로, G92 허용 글자에 F 추가)을 돌리면 불일치가
+//       **검출돼야** 한다 — 검출 못 하면 말뭉치가 그 차이를 못 잡는다는 뜻이므로 실패.
 //       python·Task0·커밋 중 하나라도 없으면 `SKIP(차분 검사): 사유` 를 찍고 (a)만으로 판정한다
 //       (Task0 를 안 가진 팀원 PC 에서도 돈다).
 //
@@ -39,8 +43,8 @@ import { fileURLToPath } from "node:url";
 
 import * as P from "../src/features/v2/utils/task0/task0-gcode-parser.ts";
 
-const ORIGIN_COMMIT = "592accf";
-const ORIGIN_TEST_COUNT = 69; // python test/test_task0_gcode.py @592accf → "Ran 69 tests"
+const ORIGIN_COMMIT = "03c0519";
+const ORIGIN_TEST_COUNT = 82; // python test/test_task0_gcode.py @03c0519 → "Ran 82 tests"
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const TASK0_DIR = process.env.TASK0_DIR || path.resolve(REPO_ROOT, "..", "Task0");
@@ -58,9 +62,9 @@ function assert(cond, msg) {
   }
 }
 
-// ── 원본 test_2.gcode @592accf (내장 사본 — Task0 가 있으면 blob 과 대조) ──
+// ── 원본 test_2.gcode @03c0519 (내장 사본 — Task0 가 있으면 blob 과 대조) ──
 const TEST2_GCODE = `; ============================================
-; test_2.gcode — 층 내 듀얼 전환 + 층간 LED 노광 검증 (규격서 §7)
+; test_2.gcode — 층 내 듀얼 전환 + 층간 LED 노광 검증 (규격서 §6·§9)
 ; 3층, 매 층: [Z 이동] -> T0(왼쪽 사각) -> T1(오른쪽 사각)
 ;   파킹/블레이드/리프트/LED는 Task0(GUI)가 삽입 (규격서 §2: 슬라이서는 블레이드 명령을 쓰지 않는다)
 ;   => 실행 순서: 도포 -> Z 리프트 -> 익스트루더 파킹(0,0) -> Z 복원
@@ -613,6 +617,125 @@ test("TestPrintCommands.test_invalid_mode", () => {
   T.raises(() => parse(["G90"], { mode: "run" }));
 });
 
+// ---------- TestG92Args (v0.2.1 — 협의 §28-3 1·2: G92 인자 검사, 두 모드) ----------
+const G92_MSG = "잘못된 G92 줄";
+// E만 썼지만 잘못된 인자 / 허용 안 되는 글자 / 중복 / 무한대
+const G92_BAD = [
+  "G92 E", "G92 E1e3", "G92 E1 E2", "G92 e1E3", "G92 Enan", "G92 E1_0", "G92 X",
+  "G92 F100", "G92 E0 A1", "G92 E" + "9".repeat(400),
+];
+test("TestG92Args.test_print_bad", () => {
+  for (const line of G92_BAD) {
+    const r = parse([line], { mode: "print" });
+    T.eq(r.blocks, [], line);
+    T.eq(find(r.errors, G92_MSG).length, 1, line);
+    // 예전 오류: E만 썼는데 "X/Y/Z 재설정 금지"로 나옴 → 이제 그 사유로는 나오지 않음
+    T.eq(find(r.errors, "G92 좌표 재설정"), [], line);
+    T.eq(find(r.warnings, G92_MSG), [], line);
+  }
+});
+test("TestG92Args.test_print_message", () => {
+  const r = parse(["G92 E", "G92 E1e3", "G92 E0"], { mode: "print" });
+  T.eq(gl(r.blocks[0]), ["G92 E0"]);
+  T.eq(r.errors, ["잘못된 G92 줄 2줄 (줄 2, 3) — 버림 (인자는 X/Y/Z/E + 10진수, 중복 금지)"]);
+  T.eq(r.warnings, []);
+});
+test("TestG92Args.test_print_valid_args", () => {
+  // E만 → 통과 (원문 그대로)
+  let r = parse(["G92 E0", "g92 e-.5", "G92 E+1. ; c"], { mode: "print" });
+  T.eq(gl(r.blocks[0]), ["G92 E0", "g92 e-.5", "G92 E+1."]);
+  T.eq(r.errors, []);
+  // X/Y/Z 있음 / 인자 없음(전 축 재설정) → 기존 X/Y/Z 재설정 오류
+  r = parse(["G92 Z0", "G92", "G92 E0 X1"], { mode: "print" });
+  T.eq(r.blocks, []);
+  T.eq(r.errors, ["G92 좌표 재설정 3줄 (줄 2, 3, 4) — X/Y/Z 재설정 금지 (G92 E만 허용)"]);
+  T.eq(r.warnings, []);
+});
+test("TestG92Args.test_dryrun_bad", () => {
+  for (const keepE of [false, true]) {
+    for (const line of G92_BAD) {
+      const r = parse([line], { keepE });
+      T.eq(r.blocks, [], line); // 버림 — Klipper로 보내지 않음
+      T.eq(find(r.warnings, G92_MSG).length, 1, line);
+      T.eq(find(r.warnings, "G92 좌표 재설정"), [], line);
+      T.eq(r.errors, []);
+    }
+  }
+});
+test("TestG92Args.test_dryrun_message", () => {
+  const r = parse(["G92 E1e3", "G92 E", "G92 E1 E2", "G90"]);
+  T.eq(gl(r.blocks[0]), ["G90"]);
+  T.eq(r.warnings, ["잘못된 G92 줄 3줄 (줄 2, 3, 4) — 버림 (인자는 X/Y/Z/E + 10진수, 중복 금지)"]);
+});
+test("TestG92Args.test_dryrun_valid_args", () => {
+  for (const keepE of [false, true]) {
+    let r = parse(["G92 E0"], { keepE });
+    T.eq(gl(r.blocks[0]), ["G92 E0"]);
+    T.eq(r.warnings, []);
+    r = parse(["G92 Z0"], { keepE });
+    T.eq(gl(r.blocks[0]), ["G92 Z0"]);
+    T.eq(r.warnings, ["G92 좌표 재설정(X/Y/Z) 1줄 (줄 2) — 층 Z 기준이 틀어질 수 있음"]);
+  }
+});
+
+// ---------- TestZNumberFormat (v0.2.1 — 협의 §28-3 3: Z 관련 위반 문구 숫자 소수 4자리) ----------
+test("TestZNumberFormat.test_mismatch_big_z", () => {
+  const lines = [LC, ";Z:1000.002", "G1 Z1000", "G1 X1 Y1"];
+  let r = parse(lines);
+  T.eq(find(r.warnings, ";Z:와 G1 Z 불일치"), [
+    ";Z:와 G1 Z 불일치 1층 (층 1) — 첫 사례 층 1: ;Z:1000.0020 ≠ G1 Z1000.0000",
+  ]);
+  r = parse(lines, { mode: "print" });
+  T.has(";Z:1000.0020 ≠ G1 Z1000.0000", find(r.errors, ";Z:와 G1 Z 불일치")[0]);
+});
+test("TestZNumberFormat.test_layer_height", () => {
+  const lines = [...layer("0.05", ["G1 X1 Y1"]), ...layer("0.1", ["G1 X1 Y1"]), ...layer("0.16", ["G1 X1 Y1"])];
+  let r = parse(lines, { layerHeightMm: 0.05 });
+  T.eq(find(r.warnings, "Z ≠ (N+1)×층두께"), [
+    "Z ≠ (N+1)×층두께 1층 (층 3) — 층두께 0.0500, 첫 사례 층 3: Z0.1600 (기대 Z0.1500)",
+  ]);
+  r = parse(layer("1000.002", ["G1 X1 Y1"]), { layerHeightMm: 1000, mode: "print" });
+  T.has("층두께 1000.0000, 첫 사례 층 1: Z1000.0020 (기대 Z1000.0000)", find(r.errors, "Z ≠ (N+1)×층두께")[0]);
+});
+test("TestZNumberFormat.test_z_down", () => {
+  const lines = [...layer("1000.002", ["G1 X1 Y1"]), ...layer("1000", ["G1 X1 Y1"])];
+  let r = parse(lines);
+  T.eq(find(r.warnings, "Z가 이전 층보다 작음"), [
+    "Z가 이전 층보다 작음 1층 (층 2) — 첫 사례 층 2: Z1000.0000 < 이전 Z1000.0020",
+  ]);
+  r = parse(lines, { mode: "print" });
+  T.has("Z1000.0000 < 이전 Z1000.0020", find(r.errors, "Z가 이전 층보다 작음")[0]);
+});
+test("TestZNumberFormat.test_other_numbers_unchanged", () => {
+  // Z 외 문구(F 클램프)는 기존 형식 그대로
+  const r = parse(["G1 X1 Y1 F9000.5"], { mode: "print" });
+  T.has("최대 원래 F9000.5, 한계 F6000", find(r.warnings, "트래블 F 클램프")[0]);
+});
+
+// ---------- TestNoArgMove (v0.2.1 — 협의 §28-3 4: 인자 없는 G0/G1 은 'F 단독 줄'과 따로 경고) ----------
+test("TestNoArgMove.test_both_modes", () => {
+  for (const kw of [{}, { keepE: true }, { mode: "print" }]) {
+    const r = parse(["G1", "g0", "G1 ; c", "G1 F1800", "G90"], kw);
+    T.eq(gl(r.blocks[0]), ["G90"], show(kw));
+    T.eq(find(r.warnings, "인자 없는 이동 줄"), ["인자 없는 이동 줄 3줄 (줄 2, 3, 4) — 버림"], show(kw));
+    T.eq(find(r.warnings, "F 단독 줄"), ["F 단독 줄 1줄 (줄 5) — 버림 (규격서 §4-2)"], show(kw));
+    T.eq(r.errors, [], show(kw));
+  }
+});
+test("TestNoArgMove.test_modal_f_unchanged", () => {
+  // 인자 없는 G1은 modal F를 바꾸지 않음, F 단독 줄은 그대로 modal 갱신
+  const r = parse(["G1 F1500", "G1", "G1 X1 Y1"], { mode: "print" });
+  T.eq(gl(r.blocks[0]), ["G1 X1 Y1 F1500"]);
+  T.eq(find(r.warnings, "F 미지정 이동"), []);
+});
+test("TestNoArgMove.test_not_a_first_move", () => {
+  // 이동이 아니므로 층 첫 이동 판정(불변식 1)에 영향 없음
+  const r = parse([LC, ";Z:0.05", "G1", "G1 Z0.05", "G1 X1 Y1"]);
+  T.eq(gl(r.blocks[0]), ["G1 Z0.05 F600", "G1 X1 Y1 F600"]);
+  T.eq(find(r.warnings, "층 첫 이동"), []);
+  T.eq(find(r.warnings, "인자 없는 이동 줄").length, 1);
+});
+
 // ---------- TestZMixed ----------
 const ZMIXED_LINES = [
   "G1 X1 Y1 Z0.6 F3000", // 프리앰블 (줄 2)
@@ -928,6 +1051,7 @@ test("TestNormalize.test_cases", () => {
   T.isNull(R.norm("G1 X1e3", false));
   T.isNull(R.norm("G1 X10 X20", false));
   T.isNull(R.norm("G1 F1800", true));
+  T.isNull(R.norm("G1", true));
   T.isNull(R.norm("M104 S200", true));
   T.isNull(R.norm("; G1 X10", true));
   T.eq(R.norm("g0 z5 f300", false), "G0 Z5 F600");
@@ -1073,6 +1197,10 @@ const PASS_POOL = [
   "G28", "G28 X Y", "G90", "G91", "G92", "G92 E0", "G92 Z0", "G92 X1 E0", "G92 e1.5", "G92 E1e3", "G92 E",
   "G92 E0 E1", "G92 ße", "M400", "M83", "M82", "T0", "T1", "t1", "m83", "g90", "g28", "MANUAL_STEPPER STEPPER=blade MOVE=10",
   "manual_stepper stepper=blade", "G1", "G0", "G1 F1800", "G1 F0", "g1 f3000.5", "G1 F2.5",
+  // v0.2.1 — G92 인자 검사(두 모드)·인자 없는 이동 줄
+  "G92 X", "G92 F100", "G92 E0 A1", "G92 Enan", "G92 E1_0", "g92 e-.5", "G92 E+1.", "G92 e1E3", "G92 X1 Y2 Z3 E4",
+  "G92 E-0", "G92\tE0", "G92 E0 X1", "G92  E0  ", "G92 E" + "9".repeat(400), "G92 E0." + "0".repeat(300) + "1",
+  "G92 Y-.5 e2", "G92 Z", "g0", "g1", "G0\t", "G1 　",
 ];
 const UNKNOWN_POOL = [
   "M104 S200", "M109 S210", "M140 S60", "M106 S255", "M107", "M84", "G4 P100", "G21", "M73 P10 R5",
@@ -1160,7 +1288,8 @@ function printExtras() {
   if (chance(0.6)) out.zSpeedF = pick([150.4, 150.5, 151.5, 300, 0.4, 1e20, 1e300, 2.5, 2 ** 53]);
   return out;
 }
-const LH_POOL = [0.05, 0.1, 0.2, 0.3, 0.25, 5, 1, 0.0000015, 0.123456789, 0.0000025];
+// 250·1000: |Z| ≥ 1000 위반 문구(v0.2.1 소수 4자리 — :g 유효 6자리였으면 ±0.001 이 안 보이던 범위)
+const LH_POOL = [0.05, 0.1, 0.2, 0.3, 0.25, 5, 1, 0.0000015, 0.123456789, 0.0000025, 250, 1000];
 
 const FUZZ_CASES = 600;
 function buildFuzzCorpus() {
@@ -1204,6 +1333,14 @@ function buildEdgeCorpus() {
     ["G1 X1 Y1 F3.5", "G1 X2 Y2 E1 F4.5", "G1 E-1 F" + "1".repeat(305), "G1 Z1 F1"],
     // 알 수 없는 명령 이름 자르기 (코드 포인트 단위) · 홀로 선 서로게이트
     ["\ud800CMD", "A".repeat(39) + "😀B", "Z".repeat(39) + "ß", "ﬀ".repeat(25), "\ud83d".repeat(3), "\udc00x"],
+    // v0.2.1 Z 문구 소수 4자리 — |Z| ≥ 1000, 소수 5째 자리 동률(0.03125 는 2진 정확값 → half-even 0.0312),
+    // 0 으로 반올림되는 음수('-0.0000'), 지수 범위(1e22 → 자리 전부), Z 역행
+    [LC, ";Z:1000.002", "G1 Z1000", "G1 X1 Y1", LC, ";Z:999.9985", "G1 Z999.9985", "G1 X1 Y1"],
+    [LC, ";Z:0.03125", "G1 Z0.04375", "G1 X1 Y1", LC, ";Z:0.00015", "G1 Z0.00015", LC, ";Z:0.00025", "G1 Z0.00025"],
+    [LC, ";Z:-0.00004", "G1 Z0.5", "G1 X1 Y1", LC, ";Z:0.99995", "G1 Z0.99995"],
+    [LC, ";Z:10000000000000000000000.5", "G1 Z1", "G1 X1 Y1", LC, ";Z:1234.56785", "G1 Z1234.56785"],
+    // v0.2.1 G92 인자·인자 없는 이동 줄 (층 안·프리앰블)
+    ["G92 E", "G92 E0", "G92", "G1", "G1 F1500", LC, ";Z:0.05", "G1", "G1 Z0.05", "G92 E1e3", "G0", "G1 X1 Y1"],
     // 줄 안 개행 문자 (줄 배열 입력)
     ["G1 X1\nG1 Y2", "G90\r", "\nG91", "G1 X1 \u2028Y2", "G1\u00a0X1"],
   ];
@@ -1219,6 +1356,11 @@ function buildEdgeCorpus() {
     { mode: "dryrun", layerHeightMm: 1e-7 },
     { mode: "print", layerHeightMm: 123456.5 },
     { mode: "dryrun", layerHeightMm: 5 },
+    // v0.2.1 층두께·기대 Z 소수 4자리 — 동률·0 근처·큰 값·정수
+    { mode: "dryrun", layerHeightMm: 0.03125 },
+    { mode: "print", layerHeightMm: 0.00005 },
+    { mode: "dryrun", layerHeightMm: 1000 },
+    { mode: "print", layerHeightMm: 1e22 },
   ];
   const out = [];
   groups.forEach((g, gi) => {
@@ -1427,8 +1569,21 @@ const MUTANTS = [
     '"F 단독 줄 {n}줄{refs} — 버림 (규격서 §4-3)"',
   ],
   ["_f_int half-even → +0.5 절삭", "return max(1, int(round(value)))", "return max(1, int(value + 0.5))"],
-  ["_MOVE_ARG_RE re.ASCII 제거", '+ r")(?=\\s|\\Z)", re.ASCII)', '+ r")(?=\\s|\\Z)")'],
+  [
+    "_MOVE_ARG_RE re.ASCII 제거",
+    '_MOVE_ARG_RE = re.compile(r"\\s+([XYZEFxyzef])(" + _NUM + r")(?=\\s|\\Z)", re.ASCII)',
+    '_MOVE_ARG_RE = re.compile(r"\\s+([XYZEFxyzef])(" + _NUM + r")(?=\\s|\\Z)")',
+  ],
   ["parse_gcode_file utf-8-sig → utf-8", 'encoding="utf-8-sig"', 'encoding="utf-8"'],
+  // v0.2.1 새 규칙 — 이 셋을 말뭉치가 못 잡으면 G92·인자 없는 이동·Z 문구 이식 오류도 못 잡는다
+  ["_fmt_z 소수 4자리 → 3자리", 'return f"{value:.4f}"', 'return f"{value:.3f}"'],
+  ["인자 없는 이동 줄 → F 단독 줄로 다시 묶음", "        if not params:\n", "        if False:\n"],
+  ["_G92_ARG_RE 허용 글자에 F 추가", '_G92_ARG_RE = re.compile(r"\\s+([XYZExyze])(', '_G92_ARG_RE = re.compile(r"\\s+([XYZEFxyzef])('],
+  [
+    "_G92_ARG_RE re.ASCII 제거",
+    '_G92_ARG_RE = re.compile(r"\\s+([XYZExyze])(" + _NUM + r")(?=\\s|\\Z)", re.ASCII)',
+    '_G92_ARG_RE = re.compile(r"\\s+([XYZExyze])(" + _NUM + r")(?=\\s|\\Z)")',
+  ],
 ];
 
 function findPython() {
@@ -1566,6 +1721,7 @@ if (skipReason) {
     "상대 좌표 금지", "E 절대 모드 금지", "알 수 없는 명령 버림: ", "알 수 없는 명령 버림: 그 외 ", "잘못된 이동 줄",
     "F 단독 줄", "Z와 XY/E 동시 이동", "층 안 Z 이동", "F 미지정 이동", "도포 F 클램프", "트래블 F 클램프",
     "E 단독 F 클램프", "mode는", "layer_height_mm는", "f_limits 키는", "f_limits['", "z_speed_f는", "…)",
+    "잘못된 G92 줄", "인자 없는 이동 줄", // v0.2.1
   ];
   const uncovered = COVER.filter((k) => !allMsgs.some((m) => m.includes(k)));
   assert(uncovered.length === 0, `메시지 커버리지 ${COVER.length}종 전부 말뭉치에 등장` + (uncovered.length ? ` — 빠짐 ${show(uncovered)}` : ""));

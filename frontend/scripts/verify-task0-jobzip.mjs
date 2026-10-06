@@ -3,7 +3,7 @@
 //   무엇을: src/features/v2/utils/task0/ 의
 //     task0-png.ts (8-bit 회색조 PNG 인코더·디코더, CRC-32) · task0-jobzip.ts (manifest·exposure·estimate·preview·zip 조립,
 //     zip 읽기, 검사기 verifyTask0JobZip) + scripts/gen-task0-sample-zip.mjs (견본 sample.job.zip + 불량 7종).
-//     규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.3 @ dfdf08c §11(job.zip·거부 조건 1~7)·§3·§13,
+//     규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.4 @ a4ebc6c §11(job.zip·거부 조건 1~7)·§3·§13,
 //     협의 docs/제안_Task0협의_20260929.md §26-3·§27-1.
 //
 //   (1) PNG — 이 스크립트 안의 **독립 구현**(비트 단위 CRC-32 + node:zlib inflate + 필터 5종 복원)으로 대조:
@@ -33,8 +33,8 @@
 //          PNG 수·;LAYER_CHANGE 수만 다름 [3], ;Z: 없음 ∋ 7, zip 아님 ∋ 1·2,
 //          조건 7 허용치 경계 — 층 2 의 ;Z:·G1 Z 를 ±0.002 → [7], ±0.0009 → 통과 (파서 이식판 print(lh) 판정과 같음).
 //       d. deflate(방식 8)로 다시 묶은 견본도 통과(zip 읽기 경로).
-//   (8) (선택) python 이 있으면 zipfile.testzip() 로 8개 zip 무결성, Task0 리포가 있으면 원본 파서(592accf)로
-//       견본 run.gcode print(lh 0.1) 오류 0·bad_7 오류 1 — 없으면 SKIP(판정에 영향 없음).
+//   (8) (선택) python 이 있으면 zipfile.testzip() 로 8개 zip 무결성, Task0 리포가 있으면 원본 파서(03c0519 — v0.2.1)로
+//       견본 run.gcode print(lh 0.1) 오류 0·bad_7 오류 1(v0.2.1 문구 'Z0.3100 (기대 Z0.3000)') — 없으면 SKIP(판정에 영향 없음).
 //   (9) 참고 — 층당 마스크 래스터·PNG 인코딩·디코딩 시간 (판정 없음, Z3 성능 참고).
 //
 //   대조군 원칙(구현 쪽): 모듈을 일부러 망가뜨리면 이 스크립트가 exit 1 — 2026-10-06 실측 23종 모두 FAIL:
@@ -100,7 +100,7 @@ import {
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const TASK0_DIR = process.env.TASK0_DIR || path.resolve(REPO_ROOT, "..", "Task0");
-const PARSER_COMMIT = "592accf";
+const PARSER_COMMIT = "03c0519"; // 파서 v0.2.1 (Z1-c — 협의 §30-3)
 
 const F = TASK0_DEFAULTS;
 const W_PX = F.projectorWidthPx;
@@ -698,16 +698,17 @@ async function sectionManifest(sample) {
   // estimate 옵션 — 툴 전환·시간 상수 덮어쓰기
   {
     const layers = [
-      { index: 0, empty: false, depositMm: 30, travelMm: 100, retracts: 1, unretracts: 0 },
+      // v0.3.4 §5 모양 — 도포한 층은 E+r 수 = E−r 수 (둘 다 시간에 들어가는지도 이 손계산이 본다)
+      { index: 0, empty: false, depositMm: 30, travelMm: 100, retracts: 1, unretracts: 1 },
       { index: 1, empty: true, depositMm: 0, travelMm: 0, retracts: 0, unretracts: 0 },
     ];
     const prm = { depositF: 1800, travelF: 6000, retractF: 1800, retractMm: 1 };
     const est = buildTask0Estimate(layers, prm, [10, 99], { toolChangeCount: 3, time: { parkSec: 4 } });
-    const want = { depositSec: 1, travelSec: 1.033, toolChangeSec: 1.5, parkSec: 4, bladeSec: 15, layerOverheadSec: 4, exposureSec: 10 };
+    const want = { depositSec: 1, travelSec: 1.067, toolChangeSec: 1.5, parkSec: 4, bladeSec: 15, layerOverheadSec: 4, exposureSec: 10 };
     const diff = Object.keys(want).filter((key) => est[key] !== want[key]);
     assert(
-      diff.length === 0 && est.totalSec === 36.533,
-      `(2) buildTask0Estimate 손계산 — 도포 30 mm/30 mm/s, 트래블 100 mm/100 mm/s + 리트랙트 1 mm/30 mm/s, 툴전환 3×0.5, 파킹 덮어쓰기 4, ` +
+      diff.length === 0 && est.totalSec === 36.567,
+      `(2) buildTask0Estimate 손계산 — 도포 30 mm/30 mm/s, 트래블 100 mm/100 mm/s + 리트랙트(E−r 1 + E+r 1) × 1 mm/30 mm/s, 툴전환 3×0.5, 파킹 덮어쓰기 4, ` +
         `빈 층 노광 99 제외 → total ${est.totalSec} (다른 항목: ${diff.join(", ") || "없음"})`,
     );
   }
@@ -1135,8 +1136,9 @@ async function sectionPython(sample, bads) {
     if (out.parser) {
       const s = out.parser["sample.job.zip"];
       const b7 = out.parser["bad_7_z_mismatch.job.zip"];
-      assert(s.warnings === 0 && s.errors.length === 0 && b7.warnings === 0 && b7.errors.length === 1,
-        `(8) Task0 원본 파서 ${PARSER_COMMIT} print(lh 0.1) — 견본 경고·오류 0, bad_7 오류 1: ${b7.errors[0]}`);
+      assert(s.warnings === 0 && s.errors.length === 0 && b7.warnings === 0 && b7.errors.length === 1 &&
+        b7.errors[0].includes("(층 3)") && b7.errors[0].includes("Z0.3100 (기대 Z0.3000)"),
+        `(8) Task0 원본 파서 ${PARSER_COMMIT} print(lh 0.1) — 견본 경고·오류 0, bad_7 오류 1(층 3, v0.2.1 소수 4자리 문구): ${b7.errors[0]}`);
     } else console.log(`  SKIP(원본 파서): ${parserNote}`);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -1174,7 +1176,7 @@ async function sectionPerf() {
 
 async function main() {
   const t0 = performance.now();
-  console.log("Task0 job.zip 조립·검사기 + 8-bit 회색조 PNG 검증 (규격서 v0.3.3 §11, 협의 §26-3·§27)");
+  console.log("Task0 job.zip 조립·검사기 + 8-bit 회색조 PNG 검증 (규격서 v0.3.4 §11, 협의 §26-3·§27)");
   await timed("(1) PNG 인코더·디코더", sectionPng);
   const set = await timed("견본·불량 7종 생성", buildTask0SampleSet);
   if (!set) {

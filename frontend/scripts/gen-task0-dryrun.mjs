@@ -1,6 +1,7 @@
-// Task0 드라이런 파일 생성 (로드맵 0절 2주차 PR-1 Z1-a2·Z1-b2 — 10/7~8 Task0 프린터 드라이런용).
+// Task0 드라이런 파일 생성 (로드맵 0절 2주차 PR-1 Z1-a2·Z1-b2·Z1-c — 10/7~8 Task0 프린터 드라이런용).
 //
-//   만드는 것 (writer = src/features/v2/utils/task0/task0-gcode-writer.ts, 규격서 v0.3.3):
+//   만드는 것 (writer = src/features/v2/utils/task0/task0-gcode-writer.ts, 규격서 v0.3.4 — Z1-c: 모든 툴 리트랙트 상태로
+//   시작, 툴의 첫 도포 앞에도 E+r, 층마다 E+r 수 = E-r 수):
 //     파일 A  task0_A_cube10_lh0.1.gcode   10 mm 정육면체, 출력 가능 영역 가운데(베드 (80, 47.5) = world x 5, z 5),
 //                                          바닥 Y 0, lh 0.1 → 100층
 //     파일 B  task0_B_thin_5L_lh0.1.gcode  (Z1-b2) 한 층에 세 형상 — ① 10×10 판 + 가운데 3×3 구멍 ② 얇은 링(반경 4,
@@ -8,11 +9,13 @@
 //                                          형상 정의 = verify-task0-writer.mjs fixtureFileB (같은 검증을 상시로 돈다)
 //     파일 C  task0_C_gap_5L_lh0.1.gcode   10×10 판 두 장(Y 0~0.2, 0.3~0.5), lh 0.1 → 5층, 층 2(0-based)가 빈 층
 //
-//   쓰기 전에 verify-task0-writer.mjs 의 출력 검사(c1~c7 + c4b 실제 교차 + c8 참조 구간)와 통계 검사를 그대로 돌리고,
+//   쓰기 전에 verify-task0-writer.mjs 의 출력 검사(c1~c7 + c4b 실제 교차 + c8 참조 구간 — c3 은 v0.3.4 리트랙트 상태 기계)와
+//   통계 검사를 그대로 돌리고,
 //   (Z1-b1) 커버리지 검사기(task0-coverage.ts checkTask0GcodeCoverage)로 **전 층** (a)(b)(c)(d)·넘침 통과를 본다
 //   (규격 §3 "도포 영역 = 노광 영역" — G-code 텍스트에서 도포 선분을 다시 뽑아 같은 단면의 마스크와 맞댄다).
 //   (Z1-b2) writer 의 채움 실패 층(totals.thinFillFailedLayers)이 하나라도 있어도 실패. A·C 는 채움이 없어야 한다
-//   (채움 없는 층은 Z1-a2 바이트 그대로 — A·C sha256 불변), B 는 채움이 있어야 한다.
+//   (채움 없는 층은 B안 행 그대로), B 는 채움이 있어야 한다. sha256 고정값은 verify-task0-export.mjs (3) 이 갖는다
+//   (Z1-c 값 — Z1-b2 판과의 차이는 파일 첫 도포 앞 E+r 1줄과 머리 메타 두 줄뿐임을 거기서 단언).
 //   하나라도 실패하면 **어떤 파일도 쓰지 않고** exit 1.
 //   이 스크립트는 검증 목록(verify-*)이 아니다 — 상시 검증은 verify-task0-writer.mjs·verify-task0-coverage.mjs 가 맡는다.
 //
@@ -80,7 +83,7 @@ function dryrunSeconds(result) {
 function main() {
   const { out } = parseArgs(process.argv.slice(2));
   const params = resolveTask0WriterParams();
-  console.log("Task0 드라이런 파일 생성 (Z1-a2·Z1-b2, 규격서 v0.3.3)");
+  console.log("Task0 드라이런 파일 생성 (Z1-a2·Z1-b2·Z1-c, 규격서 v0.3.4)");
   console.log(
     `  설정: w ${params.depositWidthMm} mm, K ${params.syringeKMm3PerMm} mm³/mm, 과충전 ${params.overfill}, ` +
       `r ${params.retractMm} mm, 리트랙트 생략 < ${params.retractMinTravelMm} mm, ` +

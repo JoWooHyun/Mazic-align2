@@ -1,6 +1,7 @@
 // Task0 견본 job.zip + 불량 7종 생성 (로드맵 0절 2주차 — 협의 §26-3·§27, 10/8 전달분).
 //
-//   만드는 것 (조립 = src/features/v2/utils/task0/task0-jobzip.ts buildTask0JobZip, 규격서 v0.3.3 §11 @ dfdf08c):
+//   만드는 것 (조립 = src/features/v2/utils/task0/task0-jobzip.ts buildTask0JobZip, 규격서 v0.3.4 §11 @ a4ebc6c —
+//   run.gcode 는 §5 v0.3.4 리트랙트 규칙(모든 툴 리트랙트 상태로 시작, 첫 도포 앞 E+r), Z1-c):
 //     sample.job.zip   3층 견본. 10×10 mm 판 두 장(높이 0~0.1, 0.2~0.3 mm), lh 0.1 → 단면 0.05·0.15·0.25 →
 //                      층 1(0-based) 이 두 판 사이 틈이라 빈 층(run.gcode 는 마커 + ;Z: + ;HEIGHT: + G1 Z 만, PNG 전부 0).
 //                      자리 = 출력 가능 영역 가운데(파일 A 와 같은 자리 — world x·z 0~10 = 베드 X 75~85 × Y 42.5~52.5).
@@ -231,7 +232,7 @@ export const BAD_SPECS = [
       "두 값이 같으므로 파서의 ;Z: = G1 Z 검사와 Z 비감소 검사는 통과하고, job.zip 의 Z = (N+1) × layerHeightMm 비교만 어긋난다.",
     why:
       "조건 7 (층 2(0-based) = Task0 파서 메시지의 '층 3' 의 ;Z:0.31 ≠ 0.1 × 3 = 0.3, ±0.001 밖. " +
-      "원본 파서 592accf print(lh 0.1) 메시지: 'Z ≠ (N+1)×층두께 1층 (층 3) … Z0.31 (기대 Z0.3)')",
+      "원본 파서 03c0519(v0.2.1) print(lh 0.1) 메시지: 'Z ≠ (N+1)×층두께 1층 (층 3) … Z0.3100 (기대 Z0.3000)')",
     make: (files) => {
       const g = fileOf(files, "run.gcode");
       const { text } = shiftLayerZ(dec.decode(g.data), 2, SAMPLE_LH, 0.01);
@@ -343,12 +344,13 @@ function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
   L.push("");
   L.push(`생성: MazicAlign ${commit}`);
   L.push("      frontend/scripts/gen-task0-sample-zip.mjs (같은 입력이면 같은 바이트 — generatedAt 고정)");
-  L.push("규격: Task0_Gcode_규격서 v0.3.3 (dfdf08c) §11 job.zip, §3 층 규약, §13 시간 상수. 파서 이식 기준 592accf");
+  L.push("규격: Task0_Gcode_규격서 v0.3.4 (a4ebc6c) §11 job.zip, §3 층 규약, §5 리트랙트, §13 시간 상수. 파서 이식 기준 03c0519 (v0.2.1)");
   L.push("");
   L.push("공통 조건");
   L.push(`  단일 재료 T0, 도포폭 w = ${prm.depositWidthMm} mm, 시린지 상수 K = ${prm.syringeKMm3PerMm} mm3/mm (잠정: 10 mL 안지름 14.5 mm 가정)`);
   L.push(`  과충전 ${prm.overfill}, 리트랙트 r = ${prm.retractMm} mm, 층두께 lh = ${SAMPLE_LH} mm`);
   L.push(`  속도: 도포 F${prm.depositF} / 트래블 F${prm.travelF} / 리트랙트 F${prm.retractF}. 도포 패턴 B안. G28 없음`);
+  L.push("  리트랙트(규격 v0.3.4 §5): 모든 툴 리트랙트 상태·노즐 (0,0) 으로 시작 → 툴의 첫 도포 앞에도 E+r, 도포한 층 끝마다 E-r");
   L.push(
     `  노광: 일반 ${SAMPLE_EXPOSURE.exposureSec} s, 바닥 ${SAMPLE_EXPOSURE.bottomExposureSec} s, bottomLayerCount ${SAMPLE_EXPOSURE.bottomLayerCount}, ` +
       `transitionLayerCount ${SAMPLE_EXPOSURE.transitionLayerCount}`,
@@ -380,6 +382,7 @@ function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
     `    run.gcode: 3층, 층 1 은 ;LAYER_CHANGE + ;Z:0.2 + ;HEIGHT:0.1 + G1 Z0.2 만. 도포 ${t.depositMm.toFixed(3)} mm (${t.segments}줄), ` +
       `E 합 ${t.extrusionMm.toFixed(5)} mm, ${t.lineCount}줄`,
   );
+  L.push(`      리트랙트 E-r ${t.retracts} / E+r ${t.unretracts} (층마다 같은 수 — 툴별 E 순변화 층마다 0, 파일 전체 0)`);
   L.push(
     `      Task0 파서(이식판) print 모드 경고 ${sampleReport.parserWarnings.length}, 오류 ${sampleReport.parserErrors.length}`,
   );
@@ -403,14 +406,14 @@ function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
     L.push(`    검증기: 위반 [${b.report.violations.join(", ")}] — ${b.report.reasons.map((r) => r.message).join(" / ")}`);
   }
   L.push("");
-  L.push("거부 조건 (규격서 v0.3.3 §11)");
+  L.push("거부 조건 (규격서 v0.3.4 §11)");
   for (const [n, label] of Object.entries(TASK0_JOB_CONDITION_LABELS)) L.push(`  ${n}. ${label}`);
   return L.join("\n") + "\n";
 }
 
 async function main() {
   const { out } = parseArgs(process.argv.slice(2));
-  console.log("Task0 견본 job.zip + 불량 7종 생성 (규격서 v0.3.3 §11, 협의 §26-3·§27)");
+  console.log("Task0 견본 job.zip + 불량 7종 생성 (규격서 v0.3.4 §11, 협의 §26-3·§27)");
 
   // 1) 전부 만들고 검사 — 하나라도 어긋나면 아무것도 쓰지 않음
   const { sample, bads } = await buildTask0SampleSet();
