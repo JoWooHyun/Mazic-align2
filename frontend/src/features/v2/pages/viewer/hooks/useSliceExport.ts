@@ -23,6 +23,10 @@ import {
   task0RasterFrameForProfile,
   task0WriterOptionsForProfile,
 } from "../../../utils/task0/task0-profile";
+import {
+  resolveTask0MaterialMode,
+  task0ExportMaterialSlots,
+} from "../../../utils/task0/task0-material";
 import { profileExposure } from "../utils/profile-exposure";
 import { previewLayerCount } from "../utils/layer-count";
 
@@ -74,6 +78,8 @@ export function useSliceExport({
   //   나가면 지운다. 모델·서포트 편집은 슬라이스 화면 밖에서만 되므로(편집 잠금) 화면을 나갈 때 지우면 서포트만 옮긴
   //   경우(개수 그대로)도 덮인다. 내보내기 도중 입력이 바뀌면 끝난 결과를 화면에 올리지 않는다(epoch 비교 — 파일·알림은
   //   그대로 나가고, 패널 요약만 생략).
+  //   Task0 재료 모드(2재료 D1b)도 입력이다 — 파일별 재료 슬롯은 files 가 바뀌어 같이 덮인다.
+  const task0MaterialMode = resolveTask0MaterialMode(project);
   const task0ReportEpochRef = useRef(0);
   useEffect(() => {
     task0ReportEpochRef.current += 1;
@@ -82,6 +88,7 @@ export function useSliceExport({
     files,
     supportsLength,
     printerProfile,
+    task0MaterialMode,
     slicePreview.layerHeightMm,
     slicePreview.on,
   ]);
@@ -365,6 +372,9 @@ export function useSliceExport({
           frame: task0RasterFrameForProfile(printerProfile),
           printable: task0PrintableFrameForProfile(printerProfile),
           generator: TASK0_APP_JOB_GENERATOR,
+          // 2재료(D1b) — 재료 모드 2재료면 메시마다 슬롯(서포트 = A, STL = 파일의 materialSlot·기본 B), 단일이면 없음.
+          //   메시 순서는 위 getSliceGeometry 그대로 (task0-material task0ExportMaterialSlots).
+          materialSlots: task0ExportMaterialSlots(task0MaterialMode, meshes, files),
         },
         (done, total, stage) =>
           setBatchExport({ busy: true, done, total, stage }),
@@ -403,13 +413,15 @@ export function useSliceExport({
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
   }, [
-    files.length,
     project?.name,
     batchExport.busy,
     sceneHandleRef,
     // 규칙 7: 프로파일(베드·투사 프레임·노광)과 층두께를 새로 참조하므로 deps 에 반드시 넣는다.
     printerProfile,
     slicePreview.layerHeightMm,
+    // 규칙 7: 2재료(D1b) — 재료 모드와 파일별 재료 슬롯(files 의 materialSlot)을 새로 참조한다.
+    task0MaterialMode,
+    files,
     alertIfOutOfTask0Area, // Task0 출력 가능 영역 차단
   ]);
 
@@ -441,6 +453,8 @@ export function useSliceExport({
           // 예상 시간의 노광 항목 — 프로파일에 노광 값이 없으면 DEFAULT_* (규칙 6).
           exposure: profileExposure(printerProfile),
           printable: task0PrintableFrameForProfile(printerProfile),
+          // 2재료(D1b) — job.zip 과 같은 슬롯 (재료 모드 단일이면 없음 = 단일 재료 바이트 그대로)
+          materialSlots: task0ExportMaterialSlots(task0MaterialMode, meshes, files),
         },
         (done, total) => setBatchExport({ busy: true, done, total }),
       );
@@ -476,13 +490,15 @@ export function useSliceExport({
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
   }, [
-    files.length,
     project?.name,
     batchExport.busy,
     sceneHandleRef,
     // 규칙 7: 프로파일(베드 크기·노광)과 층두께를 새로 참조하므로 deps 에 반드시 넣는다.
     printerProfile,
     slicePreview.layerHeightMm,
+    // 규칙 7: 2재료(D1b) — 재료 모드와 파일별 재료 슬롯(files 의 materialSlot)을 새로 참조한다.
+    task0MaterialMode,
+    files,
     alertIfOutOfTask0Area, // Task0 출력 가능 영역 차단
   ]);
 

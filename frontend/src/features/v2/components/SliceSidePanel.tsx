@@ -16,6 +16,7 @@ import { isTask0Profile } from "../utils/task0/task0-profile";
 import type { BabylonSceneHandle } from "./BabylonScene";
 import NumberInput from "./common/NumberInput";
 import SliceMaskPreview from "./SliceMaskPreview";
+import Task0MaterialCard, { type Task0MaterialCardProps } from "./Task0MaterialCard";
 import { useSupportParamsStore } from "../support/hooks/useSupportParamsStore";
 
 /** SLA 레진 평균 밀도 (g/cm³). 메이커마다 1.05 ~ 1.15. */
@@ -69,6 +70,11 @@ interface Props {
   onExportTask0Gcode?: () => void;
   /** 마지막 Task0 내보내기 결과 — 요약(성공) 또는 이유(막힘). 없으면 표시 안 함. */
   task0Report?: Task0ExportReport | null;
+  /**
+   * Task0 재료 모드·파일별 재료 (2재료 D1b) — Task0 프로파일일 때만 "재료" 카드로 보인다(pages/viewer/hooks/useTask0Material).
+   * 내보내기 중에는 패널이 잠근다(batchBusy).
+   */
+  task0Material?: Omit<Task0MaterialCardProps, "disabled">;
   batchBusy: boolean;
   batchDone: number;
   batchTotal: number;
@@ -109,6 +115,7 @@ const SliceSidePanel: React.FC<Props> = ({
   onExportTask0JobZip,
   onExportTask0Gcode,
   task0Report = null,
+  task0Material,
   batchBusy,
   batchDone,
   batchTotal,
@@ -280,6 +287,13 @@ const SliceSidePanel: React.FC<Props> = ({
           </p>
         </Card>
 
+        {/* Task0 재료 모드·파일별 재료 (2재료 D1b) — Task0 프로파일에서만. 내보내기 중에는 잠근다. */}
+        {task0 && task0Material && (
+          <Card title="재료 (Task0)">
+            <Task0MaterialCard {...task0Material} disabled={batchBusy} />
+          </Card>
+        )}
+
         <Card title="내보내기">
           {batchBusy ? (
             <div className="text-sm text-gray-700">
@@ -398,6 +412,8 @@ function Task0ReportView({ report }: { report: Task0ExportReport }) {
   const s = report.summary;
   const e = s.estimate;
   const job = report.kind === "jobzip" ? report.job : null;
+  // 2재료 (D1b) — 툴 전환 수·재료별 도포 길이·막지 않는 알림(노광 큰 값 등). 단일 재료면 null
+  const dual = s.dual;
   return (
     <div className="text-xs text-gray-700 bg-white border border-gray-200 rounded px-3 py-2">
       <div className="font-medium text-green-700">내보냄 · {report.fileName}</div>
@@ -414,6 +430,22 @@ function Task0ReportView({ report }: { report: Task0ExportReport }) {
         </span>
         <span className="text-gray-500">예상 시간</span>
         <span className="font-mono text-right">{formatDuration(e.totalSec)}</span>
+        {dual && (
+          <>
+            <span className="text-gray-500">재료</span>
+            <span className="font-mono text-right">
+              2재료 (A {dual.meshCount.A}개 · B {dual.meshCount.B}개)
+            </span>
+            <span className="text-gray-500">툴 전환</span>
+            <span className="font-mono text-right">
+              {dual.toolChanges}회 ({e.toolChangeSec} s)
+            </span>
+            <span className="text-gray-500">도포 A(T0) / B(T1)</span>
+            <span className="font-mono text-right">
+              {dual.depositMmByTool[0].toFixed(0)} / {dual.depositMmByTool[1].toFixed(0)} mm
+            </span>
+          </>
+        )}
         {job && (
           <>
             <span className="text-gray-500">층 이미지 / zip 크기</span>
@@ -428,8 +460,14 @@ function Task0ReportView({ report }: { report: Task0ExportReport }) {
           투사 영역 밖이라 잘린 픽셀 {job.clippedPixels}개 — 그 부분은 노광되지 않습니다(출력 가능 영역 확인).
         </p>
       )}
+      {dual?.warnings.map((w, i) => (
+        <p key={`${i}:${w}`} className="text-amber-700 mt-1">
+          {w}
+        </p>
+      ))}
       <p className="text-gray-400 mt-1">
-        도포 {formatDuration(e.depositSec)} · 트래블 {formatDuration(e.travelSec)} · 파킹{" "}
+        도포 {formatDuration(e.depositSec)} · 트래블 {formatDuration(e.travelSec)}
+        {dual ? ` · 툴 전환 ${formatDuration(e.toolChangeSec)}` : ""} · 파킹{" "}
         {formatDuration(e.parkSec)} · 블레이드 {formatDuration(e.bladeSec)} · 층 오버헤드{" "}
         {formatDuration(e.layerOverheadSec)} · 노광 {formatDuration(e.exposureSec)} (층두께{" "}
         {s.layerHeightMm} mm, 규격서 §13 잠정 상수)

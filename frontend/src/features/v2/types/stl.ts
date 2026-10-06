@@ -17,4 +17,10 @@ export interface STLFileV2 {
   fileSize: number;
   addedAt: number;
   transform?: TransformV2;
+  /**
+   * Task0 2재료 재료 슬롯 (D1b) — A = T0, B = T1 (규격서 v0.3.4 §6). 없으면 B
+   * (`docs/계획_하이브리드슬라이서설정_20260928.md` §5-2 — 해석은 utils/task0/task0-material.ts resolveStlMaterialSlot).
+   * 프로젝트 재료 모드가 2재료일 때만 쓰인다. IndexedDB 레코드의 선택 필드(스토어·인덱스·버전 변경 없음).
+   */
+  materialSlot?: "A" | "B";
 }

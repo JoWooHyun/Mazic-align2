@@ -19,6 +19,7 @@ import type {
 import type { Task0ExposureSettings } from "../utils/task0/task0-jobzip";
 import type { Task0PrintableFrame } from "../utils/task0/task0-frame";
 import type { Task0RasterFrame } from "../utils/task0/task0-mask";
+import type { Task0MaterialSlot } from "../utils/task0/task0-slice";
 
 /** 워커가 자를 대상 메시 하나 — world 좌표 삼각형 flat 배열. */
 export interface WorkerMeshGeometry {
@@ -81,6 +82,11 @@ export interface Task0GcodeRequest {
   exposure?: Task0ExposureSettings;
   /** 출력 가능 영역 (프로파일 — 빠지면 TASK0_DEFAULTS). 모델·서포트가 밖이면 writer 전에 막는다(Z3). */
   printable?: Task0PrintableFrame;
+  /**
+   * 2재료 (D1b) — meshes 와 같은 순서의 재료 슬롯(서포트 = A, STL = 파일의 materialSlot·기본 B). 재료 모드가 단일이면
+   * 보내지 않는다(빠지면 단일 재료 — 바이트 그대로). 코어 task0-export materialSlots 로 그대로 넘긴다.
+   */
+  materialSlots?: Task0MaterialSlot[];
 }
 
 /**
@@ -107,6 +113,8 @@ export interface Task0JobZipRequest {
   generator?: string;
   /** manifest.generatedAt (빠지면 워커에서 지금 시각 — 같은 바이트가 필요한 검증만 고정값). */
   generatedAt?: string;
+  /** 2재료 (D1b) — Task0GcodeRequest.materialSlots 와 같다. 있으면 manifest materials 2개·dualMaterial true. */
+  materialSlots?: Task0MaterialSlot[];
 }
 
 export type SliceBatchRequest =

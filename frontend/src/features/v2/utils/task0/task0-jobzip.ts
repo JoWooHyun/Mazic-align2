@@ -15,6 +15,9 @@
  *                       8-bit 회색조 (task0-png). 단면은 writer 와 같은 task0-slice task0LayerPolygonsBed(같은 bed 값).
  *                       번호는 0-based 4자리(10000 층부터는 자리가 늘어남 — 규격은 4자리만 적었다).
  *   - manifest.json  = 규격 §11 예시와 같은 필드·순서. generatedAt 은 주입 가능(같은 입력 → 같은 바이트).
+ *                       2재료(D1b — writer 결과 totals.dualMaterial)면 materials = [A(T0), B(T1)]·dualMaterial true·
+ *                       toolChangeCount = G-code 툴 전환 수, 층 노광 = 재료별 큰 값(buildTask0MaterialExposure — 규격 §6).
+ *                       단일 재료는 지금 바이트 그대로(materials 1개·dualMaterial false·toolChangeCount 0).
  *   - exposure.json  = { layerHeightMm, bottomLayerCount, transitionLayerCount, exposureSecByLayer(길이 = layerCount) }.
  *                       값은 utils/exposure.ts layerExposureSec(기존 마스크 경로와 같은 보간), 빠진 설정은
  *                       types/printer.ts DEFAULT_* (규칙 6 — 기본값 단일 소스). 빈 층도 일정표 값 그대로 둔다
@@ -87,8 +90,13 @@ export const TASK0_JOB_FORMAT = 'mazicalign-job';
 export const TASK0_JOB_VERSION = 1;
 /** manifest.generator 기본값 ("MazicAlign v2 <버전>") */
 export const TASK0_JOB_GENERATOR = 'MazicAlign v2 task0-jobzip (Z1)';
-/** 단일 재료 기본 이름 — 규격 §11 예시 */
+/** 단일 재료 기본 이름 — 규격 §11 예시 (2재료면 재료 A(T0) 기본 이름도 이 값) */
 export const TASK0_DEFAULT_MATERIAL_NAME = '모델레진';
+/**
+ * 2재료 재료 B(T1) 기본 이름 (D1b) — `docs/계획_하이브리드슬라이서설정_20260928.md` §3-C 재료 이름 예("모델레진, 템프레진")와
+ * §5-5(템프 레진 크라운 = B 가 모델 레진 베이스 = A 위에)를 따른다. 재료 이름 편집 UI 는 아직 없다(D2).
+ */
+export const TASK0_DEFAULT_MATERIAL_NAME_B = '템프레진';
 /** zip 안 고정 이름 */
 export const TASK0_JOB_FILE_GCODE = 'run.gcode';
 export const TASK0_JOB_FILE_MANIFEST = 'manifest.json';
@@ -202,12 +210,25 @@ export interface Task0Manifest {
   hints: { blade: null; ledPower: null };
 }
 
+/** manifest 재료 하나의 입력 — 노광 값은 그 재료의 exposure 설정, retractMm 은 writer 값 */
+export interface Task0ManifestMaterialInput {
+  name?: string;
+  exposureSec: number;
+  bottomExposureSec: number;
+  retractMm: number;
+}
+
 export interface Task0ManifestInput {
   layerCount: number;
   layerHeightMm: number;
   estimate: Task0Estimate;
   /** 재료 A(T0) — 노광 값은 exposure 설정과 같은 값, retractMm 은 writer 값 */
-  material: { name?: string; exposureSec: number; bottomExposureSec: number; retractMm: number };
+  material: Task0ManifestMaterialInput;
+  /**
+   * (2재료 D1b) 재료 B(T1) — 있으면 materials 2개(A·B)·dualMaterial true (규격 §11 "materials 가 1개면 단일 모드").
+   * 이름이 빠지면 TASK0_DEFAULT_MATERIAL_NAME_B. 없으면 지금과 같은 단일 재료 manifest(바이트 그대로).
+   */
+  materialB?: Task0ManifestMaterialInput;
   toolChangeCount?: number;
   generator?: string;
   /** ISO 8601 — 빠지면 지금 시각 (결정적 출력이 필요하면 주입) */
@@ -217,7 +238,7 @@ export interface Task0ManifestInput {
 }
 
 export interface Task0EstimateOptions {
-  /** 툴 전환 횟수 (단일 재료 0) */
+  /** 툴 전환 횟수 (단일 재료 0, 2재료 = writer totals.toolChanges) */
   toolChangeCount?: number;
   /** 시간 상수 — 빠진 값은 TASK0_TIME_CONSTANTS (규격 §13) */
   time?: Partial<Task0TimeConstants>;
@@ -246,7 +267,11 @@ export interface Task0JobZipInput {
   layerHeightMm: number;
   writer?: Task0WriterOptions;
   exposure?: Task0ExposureSettings;
+  /** (2재료) 재료 B 노광 — 빠지면 exposure 와 같은 값. writer.dualMaterial 이 있을 때만 쓴다 */
+  exposureB?: Task0ExposureSettings;
   materialName?: string;
+  /** (2재료) 재료 B 이름 — 빠지면 TASK0_DEFAULT_MATERIAL_NAME_B */
+  materialNameB?: string;
   generator?: string;
   /** ISO 8601 — 빠지면 지금 시각 */
   generatedAt?: string;
@@ -300,7 +325,14 @@ export interface Task0JobFilesInput {
   layerHeightMm: number;
   images: Task0LayerImages;
   exposure?: Task0ExposureSettings;
+  /**
+   * (2재료) 재료 B 노광 — 빠지면 exposure 와 같은 값. 2재료 여부는 writer 결과(gcode.totals.dualMaterial)로 정한다.
+   * 층당 노광 = 재료별 큰 값 (buildTask0MaterialExposure — 규격 §6)
+   */
+  exposureB?: Task0ExposureSettings;
   materialName?: string;
+  /** (2재료) 재료 B 이름 — 빠지면 TASK0_DEFAULT_MATERIAL_NAME_B */
+  materialNameB?: string;
   generator?: string;
   /** ISO 8601 — 빠지면 지금 시각 */
   generatedAt?: string;
@@ -438,6 +470,64 @@ export function buildTask0Exposure(
   };
 }
 
+/** 재료별 노광 → 층 노광 (buildTask0MaterialExposure 결과) */
+export interface Task0MaterialExposure {
+  /** exposure.json — 단일이면 buildTask0Exposure 그대로, 2재료면 층마다 재료별 큰 값 */
+  exposure: Task0Exposure;
+  /** 재료 A(T0) 설정 (기본값 채움) — manifest materials[0] */
+  settingsA: Required<Task0ExposureSettings>;
+  /** 재료 B(T1) 설정 (기본값 채움) — manifest materials[1]. 단일 재료면 null */
+  settingsB: Required<Task0ExposureSettings> | null;
+  /** 재료별 값이 달라 큰 값을 쓴 항목 (화면 경고용 — 막지 않는다). 같으면 빈 목록 */
+  warnings: string[];
+}
+
+/**
+ * 층 노광 — 단일 재료(exposureB null)면 buildTask0Exposure(exposureA) 그대로.
+ * 2재료면 **층마다 재료별 큰 값**(규격 §6 "노광은 층당 1회. 재료별 노광 시간이 다르면 큰 값을 쓰고 UI에 경고",
+ * 계획 `docs/계획_하이브리드슬라이서설정_20260928.md` §6 결정 5): exposureSecByLayer[N] = max(A 의 [N], B 의 [N]),
+ * bottomLayerCount·transitionLayerCount 도 큰 값(exposure.json 표시용 — Task0 는 [N] 만 쓴다).
+ * 두 설정이 같으면 결과는 단일 재료와 같은 값이다(지금 앱은 한 프로파일에서 두 재료 값을 가져와 늘 같다).
+ */
+export function buildTask0MaterialExposure(
+  layerCount: number,
+  layerHeightMm: number,
+  exposureA: Task0ExposureSettings = {},
+  exposureB: Task0ExposureSettings | null = null,
+): Task0MaterialExposure {
+  const settingsA = resolveTask0ExposureSettings(exposureA);
+  if (exposureB === null) {
+    return { exposure: buildTask0Exposure(layerCount, layerHeightMm, exposureA), settingsA, settingsB: null, warnings: [] };
+  }
+  const settingsB = resolveTask0ExposureSettings(exposureB);
+  const a = buildTask0Exposure(layerCount, layerHeightMm, settingsA);
+  const b = buildTask0Exposure(layerCount, layerHeightMm, settingsB);
+  const labels: [keyof Task0ExposureSettings, string, string][] = [
+    ['exposureSec', '일반 노광', ' s'],
+    ['bottomExposureSec', '바닥 노광', ' s'],
+    ['bottomLayerCount', '바닥 층 수', '층'],
+    ['transitionLayerCount', '전환 층 수', '층'],
+  ];
+  const diffs = labels
+    .filter(([k]) => settingsA[k] !== settingsB[k])
+    .map(([k, label, unit]) => `${label} A ${settingsA[k]}${unit} / B ${settingsB[k]}${unit}`);
+  const warnings =
+    diffs.length === 0
+      ? []
+      : [`재료 A·B 노광 설정이 다릅니다(${diffs.join(', ')}) — 층마다 큰 값으로 노광합니다(규격 §6, 층당 노광 1회).`];
+  return {
+    exposure: {
+      layerHeightMm,
+      bottomLayerCount: Math.max(a.bottomLayerCount, b.bottomLayerCount),
+      transitionLayerCount: Math.max(a.transitionLayerCount, b.transitionLayerCount),
+      exposureSecByLayer: a.exposureSecByLayer.map((v, n) => Math.max(v, b.exposureSecByLayer[n])),
+    },
+    settingsA,
+    settingsB,
+    warnings,
+  };
+}
+
 /**
  * estimate 8필드 — 머리 주석의 식. 항목마다 1 ms 단위 반올림, totalSec = 나머지 7개의 ms 정수 합.
  * @param params writer 설정 (파일에 쓴 F 그대로 — mm/min)
@@ -488,11 +578,15 @@ export function buildTask0Estimate(
   };
 }
 
-/** manifest.json v1 (단일 재료 T0) — 규격 §11 예시와 같은 필드·순서 */
+/**
+ * manifest.json v1 — 규격 §11 예시와 같은 필드·순서. 단일 재료(materialB 없음)는 materials = [A(T0)]·dualMaterial false,
+ * 2재료(D1b)는 materials = [A(T0), B(T1)]·dualMaterial true. toolChangeCount 는 호출자가 넘긴 값(G-code 툴 전환 수).
+ */
 export function buildTask0Manifest(input: Task0ManifestInput): Task0Manifest {
   const frame = input.frame ?? TASK0_DEFAULTS;
   const bed = input.bed ?? { widthMm: TASK0_DEFAULTS.bedWidthMm, depthMm: TASK0_DEFAULTS.bedDepthMm };
   const toolChangeCount = nonNegInt('toolChangeCount', input.toolChangeCount ?? 0);
+  const mB = input.materialB;
   return {
     format: TASK0_JOB_FORMAT,
     version: TASK0_JOB_VERSION,
@@ -516,8 +610,20 @@ export function buildTask0Manifest(input: Task0ManifestInput): Task0Manifest {
         bottomExposureSec: nonNeg('bottomExposureSec', input.material.bottomExposureSec),
         retractMm: positive('retractMm', input.material.retractMm),
       },
+      ...(mB === undefined
+        ? []
+        : [
+            {
+              slot: 'B' as const,
+              tool: 'T1' as const,
+              name: mB.name ?? TASK0_DEFAULT_MATERIAL_NAME_B,
+              exposureSec: positive('materialB.exposureSec', mB.exposureSec),
+              bottomExposureSec: nonNeg('materialB.bottomExposureSec', mB.bottomExposureSec),
+              retractMm: positive('materialB.retractMm', mB.retractMm),
+            },
+          ]),
     ],
-    dualMaterial: false,
+    dualMaterial: mB !== undefined,
     toolChangeCount,
     estimate: { ...input.estimate },
     hints: { blade: null, ledPower: null },
@@ -652,8 +758,25 @@ export async function buildTask0LayerImages(
 }
 
 /**
+ * writer 결과에 맞는 층 노광 — 2재료 출력(gcode.totals.dualMaterial)이면 재료 B 노광(빠지면 A 와 같은 값)과 큰 값,
+ * 단일이면 A 그대로. buildTask0JobFiles(manifest·exposure.json·estimate)와 앱 코어 요약(task0-export)이 이 함수 하나를 써서
+ * 화면 요약 estimate = 파일 estimate 가 된다.
+ */
+export function task0JobMaterialExposure(
+  gcode: Pick<Task0GcodeResult, 'totals'>,
+  layerHeightMm: number,
+  exposure: Task0ExposureSettings = {},
+  exposureB?: Task0ExposureSettings,
+): Task0MaterialExposure {
+  const dual = gcode.totals.dualMaterial;
+  return buildTask0MaterialExposure(gcode.totals.layerCount, layerHeightMm, exposure, dual ? (exposureB ?? exposure) : null);
+}
+
+/**
  * zip 에 넣을 파일 목록 (순서 고정 — 머리 주석) + manifest·exposure. writer 결과와 층 이미지를 받아 조립만 한다.
  * 견본 경로·앱 경로 공통 — manifest 노광 값은 exposure 설정(빠지면 types/printer.ts DEFAULT_*), retractMm·bed 는 writer 값.
+ * 2재료(D1b — writer 결과 totals.dualMaterial): materials 2개(A = T0, B = T1)·dualMaterial true, 층 노광 = 재료별 큰 값.
+ * toolChangeCount·estimate 툴 전환 시간은 둘 다 writer 의 툴 전환 수(totals.toolChanges — 단일 재료는 늘 0)로 센다.
  */
 export function buildTask0JobFiles(input: Task0JobFilesInput): Task0JobFiles {
   const { gcode, images } = input;
@@ -664,10 +787,12 @@ export function buildTask0JobFiles(input: Task0JobFilesInput): Task0JobFiles {
   }
   const params = gcode.params;
 
-  const exposure = buildTask0Exposure(layerCount, lh, input.exposure ?? {});
-  const exposureSettings = resolveTask0ExposureSettings(input.exposure ?? {});
+  const mat = task0JobMaterialExposure(gcode, lh, input.exposure ?? {}, input.exposureB);
+  const exposure = mat.exposure;
+  const exposureSettings = mat.settingsA;
+  const toolChangeCount = gcode.totals.toolChanges;
   const estimate = buildTask0Estimate(gcode.layers, params, exposure.exposureSecByLayer, {
-    toolChangeCount: 0,
+    toolChangeCount,
     time: input.time,
   });
   const manifest = buildTask0Manifest({
@@ -680,7 +805,16 @@ export function buildTask0JobFiles(input: Task0JobFilesInput): Task0JobFiles {
       bottomExposureSec: exposureSettings.bottomExposureSec,
       retractMm: params.retractMm,
     },
-    toolChangeCount: 0,
+    materialB:
+      mat.settingsB === null
+        ? undefined
+        : {
+            name: input.materialNameB,
+            exposureSec: mat.settingsB.exposureSec,
+            bottomExposureSec: mat.settingsB.bottomExposureSec,
+            retractMm: params.retractMm,
+          },
+    toolChangeCount,
     generator: input.generator,
     generatedAt: input.generatedAt,
     frame: input.frame,
@@ -722,7 +856,9 @@ export async function buildTask0JobZip(input: Task0JobZipInput): Promise<Task0Jo
     layerHeightMm: lh,
     images,
     exposure: input.exposure,
+    exposureB: input.exposureB,
     materialName: input.materialName,
+    materialNameB: input.materialNameB,
     generator: input.generator,
     generatedAt: input.generatedAt,
     time: input.time,

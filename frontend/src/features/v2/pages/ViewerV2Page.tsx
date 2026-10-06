@@ -31,6 +31,7 @@ import { useTransformCommit } from "./viewer/hooks/useTransformCommit";
 import { useSupportEditing } from "./viewer/hooks/useSupportEditing";
 import { useDentalWorkflow } from "./viewer/hooks/useDentalWorkflow";
 import { useSliceExport } from "./viewer/hooks/useSliceExport";
+import { useTask0Material } from "./viewer/hooks/useTask0Material";
 import { previewLayerCount } from "./viewer/utils/layer-count";
 import { useStlDropImport } from "./viewer/hooks/useStlDropImport";
 import ViewerHeader from "./viewer/components/ViewerHeader";
@@ -51,7 +52,8 @@ import ViewerSidePanel from "./viewer/components/ViewerSidePanel";
 const ViewerV2Page: React.FC = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
-  const { project, loading, error } = useProjectV2(projectId);
+  const { project, loading, error, update: updateProject } =
+    useProjectV2(projectId);
 
   const {
     files,
@@ -59,6 +61,7 @@ const ViewerV2Page: React.FC = () => {
     add: addStlFile,
     remove: removeStlFile,
     updateTransform,
+    updateMaterialSlot,
   } = useStlFilesV2(projectId);
 
   const {
@@ -137,6 +140,18 @@ const ViewerV2Page: React.FC = () => {
     sceneHandleRef,
     // P-1: 출력영역을 벗어난 모델이 있으면 내보내기 전에 확인을 받는다.
     volumeIssues,
+  });
+
+  // Task0 2재료 (D1b) — 재료 모드·파일별 재료 슬롯(repo 경유) + 슬라이스 화면 3D 재료 색.
+  //   미리보기 상태(slicePreview.on) 때문에 useSliceExport 뒤에 둔다.
+  const task0Material = useTask0Material({
+    project,
+    updateProject,
+    files,
+    updateMaterialSlot,
+    printerProfile,
+    sceneHandleRef,
+    sliceOn: slicePreview.on,
   });
 
   // 파일 선택/클립보드/undo·redo 단축키.
@@ -571,6 +586,7 @@ const ViewerV2Page: React.FC = () => {
             onAdd={() => fileInputRef.current?.click()}
             onRemove={handleRemove}
             loading={filesLoading}
+            materialSlot={task0Material.listSlots}
           />
         )}
 
@@ -853,6 +869,7 @@ const ViewerV2Page: React.FC = () => {
             onExportTask0JobZip={() => void handleExportTask0JobZip()}
             onExportTask0Gcode={() => void handleExportTask0Gcode()}
             task0Report={task0Report}
+            task0Material={task0Material.card}
             batchBusy={batchExport.busy}
             batchDone={batchExport.done}
             batchTotal={batchExport.total}
