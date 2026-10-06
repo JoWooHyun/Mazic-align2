@@ -821,8 +821,8 @@ function wiringChecks(src) {
       repoFn.indexOf("pickRemoveIds(existing)") > repoFn.indexOf("openCursor("),
   );
   check(
-    "replaceSupportsInProject: abort 시 reject(onabort)",
-    repoFn.includes("tx.onabort"),
+    "replaceSupportsInProject: 완료·에러·중단 처리를 공용 settleTx 로(abort 시 reject — pickError 우선)",
+    repoFn.includes("settleTx(tx, () => resolve(removed), (err) => reject(pickError ?? err))"),
   );
   return checks;
 }

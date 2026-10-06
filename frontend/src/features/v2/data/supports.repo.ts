@@ -177,10 +177,8 @@ export async function replaceSupportsInProject(
         tx.abort();
       }
     };
-    tx.oncomplete = () => resolve(removed);
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () =>
-      reject(pickError ?? tx.error ?? new Error("transaction aborted"));
+    // 고르는 함수가 던져 직접 abort 한 경우는 그 원인(pickError)을 우선한다 — 나머지는 공용 settleTx(C2).
+    settleTx(tx, () => resolve(removed), (err) => reject(pickError ?? err));
   });
 }
 
