@@ -88,7 +88,8 @@ export async function loadStlIntoScene(
   if (meshes.length === 0) {
     throw new Error("STL 로드 결과에 메쉬가 없습니다.");
   }
-  const mesh = meshes[0];
+  // 바이너리·단일 솔리드 STL 은 메시 1개 — 종전과 같은 객체를 그대로 쓴다.
+  const mesh = meshes.length === 1 ? meshes[0] : mergeStlSolids(meshes);
   mesh.name = meshName;
 
   // 0) Babylon STL 로더가 face normal 을 (0,0,0) 영벡터로 import
@@ -128,6 +129,34 @@ export async function loadStlIntoScene(
   mesh.material = mat;
 
   return mesh;
+}
+
+/**
+ * 다중 솔리드 ASCII STL(`solid … endsolid` 블록 여러 개)을 메시 하나로 합친다 (C7).
+ *
+ * Babylon STL 로더는 블록마다 Mesh 를 따로 만든다(loaders stlFileLoader importMesh).
+ * 종전에는 meshes[0] 만 추적해 나머지 솔리드가 씬에 **떠돌았다** — 화면엔 보이지만
+ * 이동·슬라이스·내보내기·삭제 어디에도 잡히지 않고 씬 정리 때까지 남았다.
+ * 한 파일 = 한 모델이므로 전부 합친다(원본 메시는 MergeMeshes 가 dispose).
+ * 이 시점의 메시들은 머티리얼·변환이 없는 로더 원본이라 합쳐도 정점 데이터만 이어진다.
+ * 면이 없는 빈 블록은 합치기 전에 버린다.
+ */
+function mergeStlSolids(meshes: Mesh[]): Mesh {
+  const solids: Mesh[] = [];
+  for (const m of meshes) {
+    if (m.getTotalVertices() > 0) solids.push(m);
+    else m.dispose();
+  }
+  if (solids.length === 0) {
+    throw new Error("STL 로드 결과에 메쉬가 없습니다.");
+  }
+  if (solids.length === 1) return solids[0];
+  const merged = Mesh.MergeMeshes(solids, true, true);
+  if (!merged) {
+    for (const m of solids) m.dispose();
+    throw new Error("다중 솔리드 STL 을 하나로 합치지 못했습니다.");
+  }
+  return merged;
 }
 
 /**

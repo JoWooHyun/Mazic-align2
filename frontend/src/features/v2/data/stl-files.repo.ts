@@ -1,4 +1,4 @@
-import { openDb, STORE_STL_FILES } from "./db";
+import { openDb, settleTx, STORE_STL_FILES } from "./db";
 import type { STLFileV2 } from "../types/stl";
 
 /** 프로젝트의 STL 파일을 추가된 순서대로 반환. */
@@ -17,9 +17,11 @@ export async function listStlFilesByProject(
         cursor.continue();
       }
     };
-    tx.oncomplete = () =>
-      resolve(out.sort((a, b) => a.addedAt - b.addedAt));
-    tx.onerror = () => reject(tx.error);
+    settleTx(
+      tx,
+      () => resolve(out.sort((a, b) => a.addedAt - b.addedAt)),
+      reject,
+    );
   });
 }
 
@@ -28,8 +30,7 @@ export async function getStlFile(id: string): Promise<STLFileV2 | undefined> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_STL_FILES, "readonly");
     const req = tx.objectStore(STORE_STL_FILES).get(id);
-    req.onsuccess = () => resolve(req.result as STLFileV2 | undefined);
-    req.onerror = () => reject(req.error);
+    settleTx(tx, () => resolve(req.result as STLFileV2 | undefined), reject);
   });
 }
 
@@ -50,8 +51,7 @@ export async function createStlFile(
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE_STL_FILES, "readwrite");
     tx.objectStore(STORE_STL_FILES).add(stlFile);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
   return stlFile;
 }
@@ -76,8 +76,7 @@ export async function updateStlFile(
       next = { ...existing, ...patch };
       store.put(next);
     };
-    tx.oncomplete = () => resolve(next as STLFileV2);
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(next as STLFileV2), reject);
   });
 }
 
@@ -90,8 +89,7 @@ export async function putStlFile(file: STLFileV2): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_STL_FILES, "readwrite");
     tx.objectStore(STORE_STL_FILES).put(file);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }
 
@@ -100,8 +98,7 @@ export async function deleteStlFile(id: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_STL_FILES, "readwrite");
     tx.objectStore(STORE_STL_FILES).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }
 
@@ -120,7 +117,6 @@ export async function deleteStlFilesByProject(
         cursor.continue();
       }
     };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }

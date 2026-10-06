@@ -1,4 +1,4 @@
-import { openDb, STORE_SUPPORTS } from "./db";
+import { openDb, settleTx, STORE_SUPPORTS } from "./db";
 import type { SupportPointV2 } from "../support/types";
 
 /**
@@ -27,8 +27,7 @@ export async function listSupportsByProject(
         cursor.continue();
       }
     };
-    tx.oncomplete = () => resolve(out);
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(out), reject);
   });
 }
 
@@ -48,8 +47,7 @@ export async function listSupportsByStl(
         cursor.continue();
       }
     };
-    tx.oncomplete = () => resolve(out);
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(out), reject);
   });
 }
 
@@ -73,8 +71,7 @@ export async function addSupports(
     for (const p of points) {
       store.put(p);
     }
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }
 
@@ -98,8 +95,7 @@ export async function updateSupport(
       }
       store.put({ ...existing, ...patch });
     };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }
 
@@ -108,8 +104,7 @@ export async function deleteSupport(id: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_SUPPORTS, "readwrite");
     tx.objectStore(STORE_SUPPORTS).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }
 
@@ -128,8 +123,7 @@ export async function deleteSupportsByIds(ids: string[]): Promise<void> {
     for (const id of ids) {
       store.delete(id);
     }
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }
 
@@ -146,8 +140,7 @@ export async function deleteSupportsByProject(projectId: string): Promise<void> 
         cursor.continue();
       }
     };
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }
 
@@ -187,7 +180,6 @@ export async function deleteSupportsByStl(stlId: string): Promise<void> {
       }
     };
 
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }

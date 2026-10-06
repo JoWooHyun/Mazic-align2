@@ -1,11 +1,13 @@
 // 씬 부트스트랩 effect 의 cleanup 본문 순수 이동.
 //   ★ dispose 순서는 원본과 한 줄도 다르면 안 된다: isUnmounting 플래그 → resize
 //   해제 → gizmo 3종 → utilityLayer → support mesh → material → slice/bridge → STL
-//   mesh → dental clear → furniture → highlight → scene.dispose() → engine.dispose()
+//   mesh(+그 manifold WASM) → dental clear → furniture → highlight → scene.dispose() →
+//   engine.dispose()
 //   (engine 이 맨 마지막). React 는 언마운트 시 이 cleanup 을 브러쉬 cleanup 보다
 //   먼저 실행하므로 isUnmountingRef 를 여기서 true 로 세팅한다.
 import type { Engine, HighlightLayer, Scene } from "@babylonjs/core";
 import type { SceneCtx } from "../scene-refs";
+import { releaseAllStlManifolds } from "../resource-release";
 
 export function disposeScene(
   ctx: SceneCtx,
@@ -60,6 +62,11 @@ export function disposeScene(
     mesh.dispose();
   }
   ctx.meshMapRef.current.clear();
+  // STL manifold(WASM) 캐시도 STL 메시와 **같은 단계**에서 해제한다(C3 — 새 단계 아님,
+  //   useFileMeshSync 모델 삭제의 "메시 dispose → manifold delete" 짝과 같은 순서).
+  //   WASM 객체는 scene.dispose() 도 JS GC 도 회수하지 않아 뷰어를 들락날락할 때마다
+  //   모델 크기만큼 쌓였다. 씬과 무관한 해제라 scene.dispose() 앞 어디든 안전하다.
+  releaseAllStlManifolds(ctx.stlManifoldMapRef.current);
   // dental-brush painted 오버레이/점 정리 (scene.dispose 로도 mesh 는
   // 사라지지만 ref 는 명시적으로 비운다).
   ctx.paintOverlaysRef.current = [];

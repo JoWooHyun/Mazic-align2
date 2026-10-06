@@ -70,6 +70,8 @@ export function useSupportMeshSync(
     const newIds = new Set(supports.map((s) => s.id));
     for (const [id, mesh] of Array.from(map)) {
       if (!newIds.has(id)) {
+        // 머티리얼은 해제하지 않는다 — 서포트 메시는 전부 공유 supportMaterialRef 를
+        //   쓴다(C7 정책, resource-release.ts). 씬 정리(dispose-scene)가 한 번 지운다.
         mesh.dispose();
         map.delete(id);
         // Bridge subtract 결과 캐시도 함께 정리 (감사 B9). 캐시는 point.id 키라
