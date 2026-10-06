@@ -38,10 +38,10 @@ cd frontend && npm run build      # vite build
 ```
 
 ```
-cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-02 기준 24종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-02 기준 25종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
 ```
 
-- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/2 기준 24종)가 상시 PASS여야 한다
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/2 기준 25종)가 상시 PASS여야 한다
   (**Node 20.6 이상** — `verify-head-normal.mjs` 가 `node:module` register 로더 훅을 쓴다)
   (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
   확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
@@ -87,6 +87,14 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 - tsc **0건** (2026-10-02 정리 — 12건이 전부 v2 타입 표기 문제였고 타입만 고쳐 build 산출물 바이트 동일). **이제 새 tsc 에러는 1건도 허용 안 됨**
 - lint 34건: exhaustive-deps·no-explicit-any 등 (2026-09-15 재집계, 10-02 재실측 동일 — 24 errors, 10 warnings. v1 25 + v2 8 + 공용 1)
 - 이 때문에 작업을 중단하지 말 것. 단 **새 코드에서 추가 금지.**
+
+## 함정 (반복 사고 방지)
+
+- **Tailwind 가 `src/**/*.{ts,tsx}` 의 주석·문자열 단어도 클래스로 읽는다.** `inline`·`hidden`·`block`·`fixed`·`table` 같은 단어가 TS 에 새로 들어가면
+  CSS 가 늘어 build 산출물 해시가 바뀐다(Z1-a1 에서 실측 — 내부 키 `"inline"` → `trailing_comment` 로 회피). "build 산출물 동일" 을 주장하는 PR 은 이 단어를 피할 것.
+- **build 산출물 비교는 같은 체크아웃 안에서**(수정 전 build 를 떠 두고 sha256 비교). `git archive` 판과 작업 트리를 비교하면 autocrlf 때문에 `index.html` 이 거짓으로 달라진다.
+- **Task0 파서 이식(`utils/task0/task0-gcode-parser.ts`)을 고치면** `verify-task0-parser.mjs` 출력이 "SKIP(차분 검사)" 가 아니라 "불일치 0건" 인지 확인할 것 —
+  Task0 리포·Python 이 없는 PC 에서는 차분 검사가 SKIP 되고, 그때는 미묘한 이식 오류를 못 잡는다.
 
 ## Git / PR
 
