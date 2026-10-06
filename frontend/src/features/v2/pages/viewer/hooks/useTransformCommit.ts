@@ -20,7 +20,8 @@ import { proportionalMoveCps } from "../utils/support-transform";
 import type { PatchSupport, UpdateTransform } from "./types";
 
 type Vec3 = [number, number, number];
-type Cps3 = [Vec3, Vec3, Vec3];
+// 변곡점은 추가/삭제로 개수가 변한다(가변 길이) — bridge-path 의 Cps 와 같은 타입.
+type Cps = Vec3[];
 
 interface UseTransformCommitArgs {
   supports: SupportPointV2[];
@@ -53,7 +54,7 @@ interface UseTransformCommitResult {
   followAttachedChildren: (
     parentId: string,
     parentBase: Vec3,
-    parentCps: Cps3 | undefined,
+    parentCps: Cps | undefined,
     parentContact: Vec3,
   ) => Promise<void>;
 }
@@ -81,7 +82,7 @@ export function useTransformCommit({
     async (
       parentId: string,
       parentBase: Vec3,
-      parentCps: Cps3 | undefined,
+      parentCps: Cps | undefined,
       parentContact: Vec3,
     ) => {
       // closure stale 방지: 최신 supports 사용.

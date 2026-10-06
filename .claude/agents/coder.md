@@ -34,14 +34,14 @@ model: opus
 5. `pages/ViewerV2Page.tsx` 에 기능을 더하지 말고 `pages/viewer/` 하위 훅·컴포넌트로 분리하세요(계획이 달리 지시하면 그대로).
 6. `CLAUDE.md` 는 수정하지 마세요 — 사실이 틀렸으면 보고만 하세요(플래너가 고칩니다).
 7. 기존 코드 스타일(네이밍, 주석 밀도, Tailwind 클래스 패턴)을 그대로 따르세요. 주석·커밋은 한국어, 식별자는 영어.
-8. 새 타입 에러·lint 경고를 만들지 마세요. 알려진 기존 건(tsc 12 / lint 34)은 무시.
+8. 새 타입 에러·lint 경고를 만들지 마세요. 알려진 기존 건(lint 34)은 무시. tsc 는 기준선 0 — 1건도 만들지 말 것.
 9. 새 헤드리스 검증 스크립트를 만들면 **대조군 원칙**: 수정 전 구현·변조 구현에서 실제로 FAIL(exit ≠ 0) 나는 것을 확인하세요.
 
 ## 완료 전 검증 (전부 직접 실행)
 
 ```
 cd frontend
-npx tsc --noEmit                          # 12건 그대로(새 에러 0)
+npx tsc --noEmit                          # 0건
 npm run lint                              # 34건 그대로(새 경고 0)
 for f in scripts/verify-*.mjs; do npx tsx "$f" >/dev/null 2>&1 || echo "FAIL $f"; done   # 전부 exit 0
 npm run build                             # 성공

@@ -21,7 +21,7 @@ model: inherit
 3. **자동 검증을 직접 재실행** (구현자 수치를 옮겨 적지 말 것):
    ```
    cd frontend
-   npx tsc --noEmit        # 알려진 12건 외 새 에러 0
+   npx tsc --noEmit        # 0건 (기준선 0)
    npm run lint            # 알려진 34건 외 새 경고 0
    for f in scripts/verify-*.mjs; do npx tsx "$f" >/dev/null 2>&1 || echo "FAIL $f"; done   # 전부 exit 0
    npm run build           # 성공
