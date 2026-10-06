@@ -38,3 +38,33 @@ export function task0LayerPolygonsBed(
   }
   return out;
 }
+
+// ==================== 2재료 (D1a) ====================
+
+/**
+ * 재료 슬롯 — 규격서 v0.3.4 §6·§11: A = T0, B = T1. 계획 `docs/계획_하이브리드슬라이서설정_20260928.md` §5-2:
+ * 서포트는 항상 A (어느 메시가 어느 슬롯인지는 호출자가 정한다 — D1b 에서 파일별 지정·앱 배선).
+ */
+export type Task0MaterialSlot = 'A' | 'B';
+
+/** 슬롯 → 툴 번호 (T0/T1) */
+export const TASK0_SLOT_TOOL: Readonly<Record<Task0MaterialSlot, number>> = Object.freeze({ A: 0, B: 1 });
+
+/**
+ * 메시를 슬롯별로 나눈다 (순서 유지). slots 는 meshes 와 같은 길이, 값은 'A' | 'B' — 아니면 RangeError.
+ * 두 슬롯 단면을 합친 것(PA ∪ PB, nonzero)이 모든 메시 단면과 같다 — 노광 마스크는 그대로 모든 메시로 그린다.
+ */
+export function task0SplitMeshesBySlot(
+  meshes: readonly Float32Array[],
+  slots: readonly Task0MaterialSlot[],
+): Record<Task0MaterialSlot, Float32Array[]> {
+  if (slots.length !== meshes.length) {
+    throw new RangeError(`재료 슬롯 수 ${slots.length} ≠ 메시 수 ${meshes.length}`);
+  }
+  const out: Record<Task0MaterialSlot, Float32Array[]> = { A: [], B: [] };
+  slots.forEach((s, i) => {
+    if (s !== 'A' && s !== 'B') throw new RangeError(`재료 슬롯은 'A' 또는 'B' (메시 ${i}: ${String(s)})`);
+    out[s].push(meshes[i]);
+  });
+  return out;
+}

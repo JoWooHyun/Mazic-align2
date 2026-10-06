@@ -22,6 +22,8 @@
  *     (출력 가능 영역 검사는 Z2 몫 — 여기서는 사실만 알린다).
  *   - ROI: 'full'(기본, 1920×1080 전체 — Z3 PNG 용) / 'bbox'(단면 bbox 를 덮는 픽셀 + marginPx — 검사 속도용) /
  *     직접 지정. ROI 는 프레임 밖으로 나가도 된다(그 칸은 0 — 커버리지 검사기가 "프레임 밖 = 비흰" 으로 쓴다).
+ *   - (D1a) 재료 영역 rasterizeTask0Region = 한 재료 마스크에서 다른 재료 마스크를 뺀 것(2재료 우선순위 차집합).
+ *     층 노광 PNG 는 여전히 두 재료 합집합 PA ∪ PB 한 장(rasterizeTask0Mask 에 모든 메시 단면) — LED 는 하나다.
  *
  * 순수 TS — DOM/Node/Babylon 의존 없음.
  */
@@ -284,4 +286,29 @@ export function rasterizeTask0Mask(
     }
   }
   return { ...roi, data, whitePixels, clippedPixels };
+}
+
+/**
+ * 재료 영역 마스크 (2재료 D1a) — raster(polygons) AND NOT raster(excludePolygons), 같은 ROI·같은 픽셀 중심 규칙.
+ * 계획 `docs/계획_하이브리드슬라이서설정_20260928.md` §5-3 우선순위 차집합 R_A = PA − R_B 를 다각형 연산 없이 픽셀로 —
+ *   writer 의 행 구간 차집합(A 구간 − B 구간, 같은 nonzero·반열림 규칙)과 같은 판정을 낸다.
+ * excludePolygons 가 비면 rasterizeTask0Mask 결과 그대로(같은 객체). ROI 는 polygons 기준(options.roi) — 뺄 쪽은 그 ROI 로만 그린다.
+ * clippedPixels 는 polygons 의 값 그대로(프레임 밖 통계 — 뺄 쪽에 덮인 잘린 픽셀도 센다).
+ */
+export function rasterizeTask0Region(
+  polygonsBed: readonly Task0BedPolygon[],
+  excludePolygonsBed: readonly Task0BedPolygon[],
+  options: Task0MaskOptions = {},
+): Task0Mask {
+  const base = rasterizeTask0Mask(polygonsBed, options);
+  if (excludePolygonsBed.length === 0 || base.whitePixels === 0) return base;
+  const roi: Task0PixelRoi = { col0: base.col0, row0: base.row0, width: base.width, height: base.height };
+  const ex = rasterizeTask0Mask(excludePolygonsBed, { frame: options.frame, roi });
+  let whitePixels = 0;
+  for (let k = 0; k < base.data.length; k++) {
+    if (base.data[k] === 0) continue;
+    if (ex.data[k] !== 0) base.data[k] = 0;
+    else whitePixels++;
+  }
+  return { ...base, whitePixels };
 }
