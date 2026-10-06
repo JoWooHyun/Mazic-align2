@@ -47,10 +47,23 @@
  *   자리 후 끝 0 정리), F 정수 — 지수 표기·`-0` 없음. 이동 줄마다 F. 명령 줄 끝 주석 없음, END 마커 없음.
  *   줄바꿈 `\n`, 파일 끝 개행 1개, 같은 입력 → 같은 바이트.
  *
+ * 얇은 부분 채움 (Z1-b2 — 규격 §3 (b)(c)(d)·§7 "얇은 부분 채움"):
+ *   층마다 B안 행을 만든 뒤 커버리지 검사기(task0-coverage, 1 µm 격자 행 선분 그대로)로 본다.
+ *   - 통과하면 위 1~7 그대로 낸다 — **채움이 필요 없는 층의 출력 바이트는 Z1-a2 와 같다**(파일 A·C).
+ *   - 실패하면 task0-thin-fill 이 실패 성분의 중심선·점 도포를 만들고(통과할 때까지 반복), task0-fill-route 가
+ *     띠 분해(띠 번호 비감소·띠마다 방향 번갈아·띠 안 X 순서)와 교차 검사 통과 트래블(L자·A* 우회)로 순서를 정한다.
+ *     리트랙트·E·숫자 표기·층 머리는 위와 같은 함수로 낸다(1 mm 미만 트래블 생략도 경로 길이 기준 그대로).
+ *   - 그래도 커버리지 실패이거나 경로 없는 항목이 있으면 그 층을 thinFill 'failed' 로 남긴다 — 파일을 쓰는 쪽
+ *     (gen-task0-dryrun, Z2 내보내기)이 totals.thinFillFailedLayers 를 보고 막는다.
+ *   - 채움이 있는 파일만 START 앞 메타에 채움 통계 줄을 더한다(없는 파일은 메타도 그대로).
+ *
  * 순수 TS — DOM/Node/Babylon 의존 없음(slice-geometry 순수 코어만 사용).
  */
+import { checkTask0LayerCoverage, type Task0DepositSegment } from './task0-coverage';
+import { routeTask0FillLayer, type Task0RouteResult } from './task0-fill-route';
 import { TASK0_DEFAULTS, task0LayerCount, task0LayerZ } from './task0-frame';
 import { task0LayerPolygonsBed, type Task0BedPolygon } from './task0-slice';
+import { findTask0ThinFills } from './task0-thin-fill';
 
 // ==================== 타입 ====================
 
@@ -68,6 +81,10 @@ export interface Task0WriterOptions {
   bedDepthMm?: number;
   parkXMm?: number;
   parkYMm?: number;
+  /** 얇은 부분 채움 (기본 true). false 는 대조군·실험용 — 앱은 기본값만 쓴다 */
+  thinFill?: boolean;
+  /** 채움 층 트래블 우회 (기본 true). false 는 대조군 전용 — 교차하는 트래블을 그대로 낸다 */
+  thinFillDetour?: boolean;
 }
 
 /** 기본값을 채우고 검사한 writer 설정 (F 는 mm/min 정수) */
@@ -117,6 +134,16 @@ export interface Task0LayerStats {
   unretracts: number;
   /** 이 층 도포 줄 E 의 출력값 합 (mm) */
   extrusionMm: number;
+  /** 얇은 부분 채움 — none: 행만으로 커버리지 통과, filled: 채움으로 통과, failed: 채움 후에도 실패(파일 쓰면 안 됨) */
+  thinFill: 'none' | 'filled' | 'failed';
+  /** 띠로 자른 중심선 채움 조각 수 */
+  fillPieces: number;
+  /** 점 도포 수 */
+  fillDots: number;
+  /** 채움(중심선·점) 도포 줄 수 — 행 도포 줄이 아닌 것 */
+  fillSegments: number;
+  /** 우회 트래블 수 (X 먼저 L자 + A* — B안 직선·L자가 칠한 곳을 가로지를 때) */
+  detourTravels: number;
 }
 
 export interface Task0GcodeTotals {
@@ -137,6 +164,14 @@ export interface Task0GcodeTotals {
   extrusionMm: number;
   /** 도포 E 정확 합 (mm) — extrusionMm 과의 차이 ≤ 0.5e-5 */
   extrusionExactMm: number;
+  /** 채움이 들어간 층 번호 (thinFill 'filled') */
+  thinFillLayers: number[];
+  /** 채움 후에도 커버리지 실패이거나 경로 없는 항목이 남은 층 — 비어 있어야 파일을 쓴다 */
+  thinFillFailedLayers: number[];
+  fillPieces: number;
+  fillDots: number;
+  fillSegments: number;
+  detourTravels: number;
   /** 파일 줄 수 (끝 개행 기준) */
   lineCount: number;
   /** 출력한 XY 좌표 범위 (이동이 하나도 없으면 null) */
@@ -322,6 +357,8 @@ function nonzeroSpans(active: ScanEdge[], y: number): [number, number][] {
 interface FillRow {
   /** 행 높이 (µm) */
   yUm: number;
+  /** 행 자리 번호 k (y = 최소 Y + (k+0.5)·w) — 채움 층의 띠 번호와 같다 */
+  slot: number;
   /** 도포 구간 [시작, 끝] (µm, 오름차순) */
   spans: [number, number][];
 }
@@ -353,12 +390,97 @@ function fillRows(
       if (b > a) spans.push([a, b]);
       else narrowDropped++;
     }
-    if (spans.length > 0) rows.push({ yUm: toUm(y), spans });
+    if (spans.length > 0) rows.push({ yUm: toUm(y), slot: slots, spans });
   }
   const rowRemainderMm = Number.isFinite(section.yMin)
     ? Math.max(0, toUm(section.yMax - section.yMin - slots * w)) / UM_PER_MM
     : 0;
   return { rows, narrowDropped, rowRemainderMm };
+}
+
+// ==================== 얇은 부분 채움 (Z1-b2) ====================
+
+/** 우회 격자 범위 = 단면 bbox + 이 여유 (mm) — 형상 바깥을 돌아갈 자리. 출력 가능 영역으로 자른다 */
+const DETOUR_REGION_MARGIN_MM = 1.5;
+
+/**
+ * 정확 E 가 1 눈금(1e-5 mm) 이상인 도포 선분만 — 잔차 이월이라 그보다 짧은 줄은 출력 E 가 0 일 수 있고,
+ * 커버리지 검사기는 G-code 에서 E 증가 > 0 인 줄만 도포로 본다. 그래서 writer 안의 검사는 이런 줄을 빼고(보수적)
+ * 판정한다 — 빼고 통과하면 실제 출력(그 줄이 E 1 눈금으로 나와도)도 통과한다(도포가 늘면 (a)(b)(c)(d) 는 나빠지지 않고,
+ * 행 구간은 단면 안이라 넘침도 그대로).
+ */
+function countedSegments(segs: readonly Task0DepositSegment[], eRatePerMm: number): Task0DepositSegment[] {
+  return segs.filter((s) => Math.hypot(s.x1 - s.x0, s.y1 - s.y0) * eRatePerMm * E_TICKS_PER_MM >= 1);
+}
+
+/** 행 → 검사기 도포 선분 (1 µm 격자 좌표 그대로 — G-code 를 다시 읽은 값과 같은 double) */
+function rowSegments(rows: FillRow[]): Task0DepositSegment[] {
+  const out: Task0DepositSegment[] = [];
+  for (const row of rows) {
+    const y = row.yUm / UM_PER_MM;
+    for (const [a, b] of row.spans) out.push({ x0: a / UM_PER_MM, y0: y, x1: b / UM_PER_MM, y1: y, e: 1, tool: 0 });
+  }
+  return out;
+}
+
+interface ThinFillPlan {
+  status: 'filled' | 'failed';
+  /** 낼 순서 (채움을 하나도 못 만들었으면 null — 행만 낸다) */
+  route: Task0RouteResult | null;
+}
+
+/**
+ * 층 하나의 얇은 부분 채움 계획 — 행만으로 커버리지를 통과하면 null(B안 행 그대로).
+ * 통과 못 하면 채움을 만들고(task0-thin-fill) 순서·트래블을 정한 뒤(task0-fill-route), 낼 도포 선분 그대로 다시 검사한다.
+ */
+function planThinFill(
+  polys: Task0BedPolygon[],
+  section: LayerSection,
+  rows: FillRow[],
+  w: number,
+  eRatePerMm: number,
+  startUm: [number, number],
+  detour: boolean,
+): ThinFillPlan | null {
+  const all = rowSegments(rows);
+  const counted = countedSegments(all, eRatePerMm);
+  const fills = findTask0ThinFills(
+    polys,
+    counted,
+    { depositWidthMm: w, eRatePerMm, bandOriginMm: section.yMin },
+    all.filter((sg) => !counted.includes(sg)),
+  );
+  if (fills.iterations === 0 && fills.pass) return null;
+  if (fills.centerlines.length === 0 && fills.dots.length === 0) return { status: 'failed', route: null };
+
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  for (const pts of polys) {
+    for (const [x] of pts) {
+      if (x < xMin) xMin = x;
+      if (x > xMax) xMax = x;
+    }
+  }
+  const d = TASK0_DEFAULTS;
+  const m = DETOUR_REGION_MARGIN_MM;
+  const route = routeTask0FillLayer({
+    rows,
+    centerlines: fills.centerlines,
+    dots: fills.dots,
+    bandOriginMm: section.yMin,
+    depositWidthMm: w,
+    regionMm: {
+      xMin: Math.max(d.printableXMinMm, xMin - m),
+      xMax: Math.min(d.printableXMaxMm, xMax + m),
+      yMin: Math.max(d.printableYMinMm, section.yMin - m),
+      yMax: Math.min(d.printableYMaxMm, section.yMax + m),
+    },
+    startUm,
+    detour,
+  });
+  const final = checkTask0LayerCoverage(polys, countedSegments(route.painted, eRatePerMm), { depositWidthMm: w });
+  const ok = fills.pass && final.pass && route.unreachable === 0;
+  return { status: ok ? 'filled' : 'failed', route };
 }
 
 // ==================== 본체 ====================
@@ -388,6 +510,8 @@ export function generateTask0Gcode(
   const unretractLine = `G1 E${fixedFromInt(retractTicks, 5)} F${params.retractF}`;
   const parkXUm = toUm(params.parkXMm);
   const parkYUm = toUm(params.parkYMm);
+  const thinFillOn = options.thinFill ?? true;
+  const detourOn = options.thinFillDetour ?? true;
 
   const layerCount = task0LayerCount(topY, lh);
   const zDecimals = layerNumberDecimals(lh);
@@ -420,7 +544,13 @@ export function generateTask0Gcode(
 
     // 1) 단면 — 마스크와 같은 절차 (메시마다 자르고 잇기, task0-slice 공유 함수)
     const polys = task0LayerPolygonsBed(meshes, n, lh, params.bedWidthMm, params.bedDepthMm);
-    const { rows, narrowDropped, rowRemainderMm } = fillRows(buildSection(polys), w);
+    const section = buildSection(polys);
+    const { rows, narrowDropped, rowRemainderMm } = fillRows(section, w);
+    // 1-b) 얇은 부분 채움 — 행만으로 커버리지 통과면 null (아래 B안 행 그대로)
+    const plan =
+      thinFillOn && polys.length > 0
+        ? planThinFill(polys, section, rows, w, eRatePerMm, [parkXUm, parkYUm], detourOn)
+        : null;
 
     const stat: Task0LayerStats = {
       index: n,
@@ -436,6 +566,11 @@ export function generateTask0Gcode(
       retracts: 0,
       unretracts: 0,
       extrusionMm: 0,
+      thinFill: plan === null ? 'none' : plan.status,
+      fillPieces: plan?.route?.fillPieces ?? 0,
+      fillDots: plan?.route?.dots ?? 0,
+      fillSegments: 0,
+      detourTravels: plan?.route?.detourTravels ?? 0,
     };
 
     // 2) 경로 — Task0 가 층 사이에 파킹하므로 층 시작 위치 = 파킹 (통계용)
@@ -493,20 +628,31 @@ export function generateTask0Gcode(
       posY = y;
     };
 
-    let firstMove = true;
-    rows.forEach((row, rowIdx) => {
-      const forward = rowIdx % 2 === 0; // 서펜타인: 도포한 첫 행 +X
-      const spans = forward ? row.spans : [...row.spans].reverse();
-      spans.forEach(([a, b], spanIdx) => {
-        const sx = forward ? a : b;
-        const ex = forward ? b : a;
-        if (firstMove) travel([[sx, row.yUm]]); // 층 첫 트래블 = 직선
-        else if (spanIdx === 0) travel([[posX, row.yUm], [sx, row.yUm]]); // 행 사이 L자 (Y 먼저)
-        else travel([[sx, row.yUm]]); // 같은 행 안 — 행 선을 따라
-        firstMove = false;
-        deposit(ex, row.yUm);
+    if (plan !== null && plan.route !== null) {
+      // 채움 층 — 띠 순서·트래블은 task0-fill-route 가 정했다 (첫 트래블은 파킹에서 직선)
+      for (const step of plan.route.steps) {
+        if (step.travel.length > 0) travel(step.travel);
+        for (const [x, y] of step.deposit) {
+          deposit(x, y);
+          if (step.kind !== 'row') stat.fillSegments++;
+        }
+      }
+    } else {
+      let firstMove = true;
+      rows.forEach((row, rowIdx) => {
+        const forward = rowIdx % 2 === 0; // 서펜타인: 도포한 첫 행 +X
+        const spans = forward ? row.spans : [...row.spans].reverse();
+        spans.forEach(([a, b], spanIdx) => {
+          const sx = forward ? a : b;
+          const ex = forward ? b : a;
+          if (firstMove) travel([[sx, row.yUm]]); // 층 첫 트래블 = 직선
+          else if (spanIdx === 0) travel([[posX, row.yUm], [sx, row.yUm]]); // 행 사이 L자 (Y 먼저)
+          else travel([[sx, row.yUm]]); // 같은 행 안 — 행 선을 따라
+          firstMove = false;
+          deposit(ex, row.yUm);
+        });
       });
-    });
+    }
 
     // 3) 층 끝 — 도포했으면 항상 리트랙트 (§5)
     if (stat.segments > 0) {
@@ -530,6 +676,12 @@ export function generateTask0Gcode(
     segments: layers.reduce((acc, s) => acc + s.segments, 0),
     narrowDropped: layers.reduce((acc, s) => acc + s.narrowDropped, 0),
     rowRemainderMaxMm: layers.reduce((acc, s) => Math.max(acc, s.rowRemainderMm), 0),
+    thinFillLayers: layers.filter((s) => s.thinFill === 'filled').map((s) => s.index),
+    thinFillFailedLayers: layers.filter((s) => s.thinFill === 'failed').map((s) => s.index),
+    fillPieces: layers.reduce((acc, s) => acc + s.fillPieces, 0),
+    fillDots: layers.reduce((acc, s) => acc + s.fillDots, 0),
+    fillSegments: layers.reduce((acc, s) => acc + s.fillSegments, 0),
+    detourTravels: layers.reduce((acc, s) => acc + s.detourTravels, 0),
     extrusionMm: eTicks / E_TICKS_PER_MM,
     extrusionExactMm: eExact,
     lineCount: 0,
@@ -558,6 +710,17 @@ export function generateTask0Gcode(
     `; depositTotalMm: ${totals.depositMm.toFixed(3)}`,
     `; extrusionTotalMm: ${fixedFromInt(eTicks, 5)}`,
   ];
+  // 채움이 있는 파일만 (없는 파일의 메타·바이트는 Z1-a2 그대로)
+  if (totals.thinFillLayers.length > 0 || totals.thinFillFailedLayers.length > 0) {
+    header.push(
+      '; thinFill: Z1-b2 centerline and dot fill where rows miss (bands of width w, band index non-decreasing, detour travels)',
+      `; thinFillLayerCount: ${totals.thinFillLayers.length}`,
+      `; thinFillFailedLayerCount: ${totals.thinFillFailedLayers.length}`,
+      `; thinFillPieceCount: ${totals.fillPieces}`,
+      `; thinFillDotCount: ${totals.fillDots}`,
+      `; detourTravelCount: ${totals.detourTravels}`,
+    );
+  }
 
   const lines = header.concat(body);
   totals.lineCount = lines.length;
