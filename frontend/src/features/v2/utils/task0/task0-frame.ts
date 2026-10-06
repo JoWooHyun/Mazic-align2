@@ -188,3 +188,26 @@ export function task0LayerZ(layerIndex: number, layerHeightMm: number): number {
 export function task0SliceY(layerIndex: number, layerHeightMm: number): number {
   return (layerIndex + 0.5) * layerHeightMm;
 }
+
+/**
+ * 시간 추정 상수 (s) — 규격서 v0.3.3 §13 (잠정). job.zip manifest `estimate` 계산에 쓴다(task0-jobzip.ts).
+ * 층당 시간 = 도포 + 트래블 + 툴전환 횟수 × toolChangeSec + parkSec + bladeSec + layerOverheadSec + 노광.
+ */
+export interface Task0TimeConstants {
+  /** 툴 전환 1회 (퍼지 도입 시 5~15) */
+  readonly toolChangeSec: number;
+  /** 층당 노즐 파킹 */
+  readonly parkSec: number;
+  /** 층당 블레이드 (스윕 140 mm @ 20 mm/s 왕복 + 리프트) */
+  readonly bladeSec: number;
+  /** 층당 오버헤드 */
+  readonly layerOverheadSec: number;
+}
+
+/** 시간 추정 상수 — 규격서 §13 값 그대로 (바뀌면 규격서와 함께) */
+export const TASK0_TIME_CONSTANTS: Task0TimeConstants = Object.freeze({
+  toolChangeSec: 0.5,
+  parkSec: 3,
+  bladeSec: 15,
+  layerOverheadSec: 2,
+});
