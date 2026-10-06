@@ -16,17 +16,31 @@
 //   경고를 mesh 색으로 칠하면 두 표시가 같은 채널을 두고 싸운다. 그래서 **별도의
 //   외곽선 박스 메시**로 그린다 — 오버행 색을 보존하면서 "이 모델이 범위를 벗어남"이
 //   한눈에 보인다.
+//
+//   ## Task0 출력 가능 영역 (Z2)
+//   printableArea 를 주면(Task0 프로파일) 대칭 플레이트 검사 대신 **비대칭 출력 가능 영역**
+//   (투사 ∩ 노즐 범위)으로 **모델과 서포트**를 함께 본다 — Task0 는 서포트도 도포·노광하기 때문.
+//   판정은 순수 함수 `checkItemsInPrintableArea`(utils/build-volume.ts, 검증 스크립트와 공유).
+//   서포트는 붙은 모델별로 묶어 한 건으로 올린다(kind "support"). printableArea 가 없으면 기존 검사
+//   그대로(모델만, 대칭) — 서포트 신호도 deps 에 넣지 않아 재실행 빈도까지 종전과 같다.
+//   영역 테두리는 이 훅 끝에서 usePrintableAreaOutline 으로 그린다(BabylonScene 훅 목록 불변).
 import { useEffect, useRef } from "react";
 import { Color3, MeshBuilder, VertexBuffer, Vector3 } from "@babylonjs/core";
-import type { LinesMesh, Mesh } from "@babylonjs/core";
+import type { LinesMesh, Mesh, Scene } from "@babylonjs/core";
 
 import type { SceneCtx } from "../scene-refs";
 import type { STLFileV2 } from "../../../types/stl";
+import type { SupportParams, SupportPointV2 } from "../../../support/types";
+import { usePrintableAreaOutline } from "./usePrintableAreaOutline";
 import {
   checkBuildVolume,
+  checkItemsInPrintableArea,
   describeViolation,
   hasViolation,
+  type AreaCheckModel,
+  type AreaCheckSupport,
   type BuildVolumeViolation,
+  type PrintableAreaMm,
 } from "../../../utils/build-volume";
 
 /** 페이지로 올려보내는 위반 1건. */
@@ -44,7 +58,23 @@ export interface BuildVolumeIssue {
    * 제공할 수 있게 한다. 사용자가 ty 를 손으로 계산할 필요가 없다.
    */
   sinkDepthMm: number;
+  /**
+   * 위반 대상 (Z2). 없거나 "model" = 모델(기존). "support" = Task0 출력 가능 영역을 벗어난 서포트 묶음 —
+   * stlId 는 `<붙은 모델 id>#supports`(모델을 못 찾으면 `none#supports`)라 모델 id 와 겹치지 않고,
+   * sinkDepthMm 은 항상 0(플레이트 위로 올리기 대상 아님).
+   */
+  kind?: "model" | "support";
 }
+
+/** Task0 서포트 검사에 쓰는 신호 — 서포트 메시가 바뀌면(목록·파라미터·부품 로드) 다시 검사한다. */
+export interface BuildVolumeSupportSignal {
+  supports: SupportPointV2[];
+  supportParams: SupportParams;
+  partsReady: boolean;
+}
+
+/** Task0 위반 문구의 영역 이름 */
+const TASK0_AREA_LABEL = "출력 가능 영역";
 
 /** 경고 외곽선 색 — 오버행 빨강(255,82,82)과 구분되도록 더 진한 주황빨강. */
 const WARN_COLOR = new Color3(1.0, 0.25, 0.1);
@@ -68,6 +98,13 @@ export function useBuildVolumeCheck(
    * 제 목적에 안 동작). 로드 완료 신호를 받아 다시 돈다.
    */
   meshLoadTick?: number,
+  /**
+   * Task0 출력 가능 영역 (world, 비대칭 — Z2). 주면 이 영역으로 모델과 서포트를 검사한다.
+   * null/undefined 면 기존 검사(모델만, 대칭 플레이트) 그대로.
+   */
+  printableArea?: PrintableAreaMm | null,
+  /** printableArea 가 있을 때만 쓰는 서포트 재검사 신호. */
+  supportSignal?: BuildVolumeSupportSignal,
 ): void {
   // onIssues 를 ref 로 미러링한다 (M3).
   //   deps 에서 제외하면 effect 가 **첫 렌더의 콜백을 영구 캡처**한다. 지금은
@@ -76,6 +113,16 @@ export function useBuildVolumeCheck(
   //   전부 `scene-refs.ts` 에서 ref 미러링되는 것과 같은 이유로 구조적으로 막는다.
   const onIssuesRef = useRef(onIssues);
   onIssuesRef.current = onIssues;
+
+  // Task0 영역은 값(숫자 4개)으로 비교 — 호출부가 새 객체를 넘겨도 값이 같으면 재실행하지 않는다.
+  //   서포트 신호는 Task0 일 때만 deps 에 들어간다(기존 프로파일은 재실행 빈도도 종전과 같게).
+  const area = printableArea ?? null;
+  const areaKey = area
+    ? `${area.minX},${area.maxX},${area.minZ},${area.maxZ}`
+    : "";
+  const supportsDep = area ? supportSignal?.supports : undefined;
+  const supportParamsDep = area ? supportSignal?.supportParams : undefined;
+  const partsReadyDep = area ? supportSignal?.partsReady : undefined;
 
   useEffect(() => {
     const scene = ctx.sceneRef.current;
@@ -86,9 +133,13 @@ export function useBuildVolumeCheck(
       if (m.name.startsWith(WARN_MESH_PREFIX)) m.dispose();
     }
 
-    const issues: BuildVolumeIssue[] = [];
+    // Task0 (Z2) — 비대칭 출력 가능 영역, 모델 + 서포트. 아니면 아래 기존 검사(대칭 플레이트, 모델만).
+    const issues: BuildVolumeIssue[] = area
+      ? collectPrintableAreaIssues(ctx, scene, files, area, plateHeightMm)
+      : [];
+    const plateCheckFiles = area ? [] : files; // Task0 면 기존 검사는 건너뛴다
 
-    for (const f of files) {
+    for (const f of plateCheckFiles) {
       const mesh = ctx.meshMapRef.current.get(f.id);
       if (!mesh) continue;
 
@@ -135,7 +186,92 @@ export function useBuildVolumeCheck(
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files, plateWidthMm, plateDepthMm, plateHeightMm, meshLoadTick]);
+  }, [
+    files,
+    plateWidthMm,
+    plateDepthMm,
+    plateHeightMm,
+    meshLoadTick,
+    areaKey,
+    supportsDep,
+    supportParamsDep,
+    partsReadyDep,
+  ]);
+
+  // Task0 출력 가능 영역 테두리 (Z2). 검사 effect 뒤에 붙인다 — BabylonScene 의 훅 호출 목록
+  //   (불변식 1, verify-support-follow 가 고정)을 바꾸지 않으려고 이 훅 안에서 부른다.
+  //   영역이 없으면(기존 프로파일) 아무것도 그리지 않는다.
+  usePrintableAreaOutline(ctx, area);
+}
+
+/**
+ * Task0 출력 가능 영역 검사 (Z2) — 모델·서포트 world AABB 를 모아 순수 판정(checkItemsInPrintableArea)에
+ * 넘기고, 위반 항목마다 경고 박스를 그린 뒤 BuildVolumeIssue 로 돌려준다.
+ * 서포트의 붙은 모델은 supportsRef(서포트 점의 stlId)로 찾는다 — 메시 맵 키 = 서포트 점 id.
+ */
+function collectPrintableAreaIssues(
+  ctx: SceneCtx,
+  scene: Scene,
+  files: STLFileV2[],
+  area: PrintableAreaMm,
+  heightMm: number,
+): BuildVolumeIssue[] {
+  const names = new Map<string, string>();
+  const models: AreaCheckModel[] = [];
+  for (const f of files) {
+    names.set(f.id, f.fileName);
+    const mesh = ctx.meshMapRef.current.get(f.id);
+    if (!mesh) continue;
+    mesh.computeWorldMatrix(true);
+    const aabb = worldVertexAabb(mesh);
+    if (aabb) models.push({ id: f.id, aabb });
+  }
+
+  const parentOf = new Map<string, string>();
+  for (const p of ctx.supportsRef.current) parentOf.set(p.id, p.stlId);
+  const supports: AreaCheckSupport[] = [];
+  for (const [id, sm] of ctx.supportMeshMapRef.current) {
+    sm.computeWorldMatrix(true);
+    const aabb = worldVertexAabb(sm);
+    if (!aabb) continue;
+    const parent = parentOf.get(id);
+    supports.push({
+      parentId: parent !== undefined && names.has(parent) ? parent : null,
+      aabb,
+    });
+  }
+
+  const issues: BuildVolumeIssue[] = [];
+  for (const e of checkItemsInPrintableArea(models, supports, area, heightMm)) {
+    const what = describeViolation(e.violation, TASK0_AREA_LABEL) ?? "";
+    const parentName = e.id !== null ? names.get(e.id) : undefined;
+    const issue: BuildVolumeIssue =
+      e.kind === "model" && e.id !== null
+        ? {
+            stlId: e.id,
+            fileName: parentName ?? e.id,
+            message: what,
+            violation: e.violation,
+            sinkDepthMm: e.aabb.minY < 0 ? -e.aabb.minY : 0,
+            kind: "model",
+          }
+        : {
+            stlId: `${e.id ?? "none"}#supports`,
+            fileName: parentName ? `${parentName} 서포트` : "서포트",
+            message: `서포트 ${e.count}개 — ${what}`,
+            violation: e.violation,
+            sinkDepthMm: 0,
+            kind: "support",
+          };
+    issues.push(issue);
+
+    // 위반 항목(서포트는 묶음 합집합)을 같은 빨간 와이어박스로 감싼다.
+    const box = buildAabbWireframe(e.aabb, `${WARN_MESH_PREFIX}${issue.stlId}`, scene);
+    box.color = WARN_COLOR;
+    box.isPickable = false;
+    box.renderingGroupId = 1;
+  }
+  return issues;
 }
 
 /**

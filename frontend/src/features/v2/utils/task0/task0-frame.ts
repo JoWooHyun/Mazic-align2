@@ -5,8 +5,9 @@
  * 설계: `docs/계획_Z1_task0출력_20261002.md` S2·S4·S6.
  *
  * writer(task0-gcode-writer.ts)·검증 스크립트·(Z3) 마스크 래스터가 **같은 변환**을 쓰도록 여기 한 곳에 둔다.
- * ★ 지금은 TASK0_DEFAULTS 가 Task0 값의 단일 소스다. Z2 에서 Task0 프린터 프로파일(types/printer.ts 쪽)로
- *   이관할 예정 — 그때 이 상수는 프로파일 기본값으로 옮기고 여기서는 지운다(규칙 6: 기본값 단일 소스).
+ * ★ TASK0_DEFAULTS 가 Task0 값의 단일 소스다(규칙 6: 기본값 단일 소스). Z2 에서 Task0 프린터 프로파일을
+ *   붙였지만 값은 옮기지 않았다 — 빌트인 Task0 프로파일(task0-profile.ts)은 이 상수를 그대로 참조하고,
+ *   프로파일의 Task0 선택 필드(types/printer.ts Task0ProfileFields)가 비면 여기로 폴백한다.
  *
  * 좌표계:
  *   - world: Babylon Y-up. 빌드플레이트 중심이 (X, Z) = (0, 0), 높이는 Y (기존 슬라이스 규약 그대로).
@@ -28,6 +29,11 @@ export interface Task0Defaults {
   readonly bedWidthMm: number;
   /** 베드 세로(노즐 Y 범위) mm — §1 */
   readonly bedDepthMm: number;
+  /**
+   * Z 이송 상한 mm — §1 "Z 범위 0~2000" (외팔보 플레이트). 빌트인 Task0 프로파일의 출력 높이로 쓴다.
+   * 뷰어에서 높이는 출력영역 검사의 높이 상한에만 쓰이고(격자·카메라는 가로·세로만 씀) 2000 이어도 화면에 영향 없다.
+   */
+  readonly zTravelMaxMm: number;
   /** 투사 가로 픽셀 수 — §1·§11 */
   readonly projectorWidthPx: number;
   /** 투사 세로 픽셀 수 — §1·§11 */
@@ -66,10 +72,11 @@ export interface Task0Defaults {
   readonly parkYMm: number;
 }
 
-/** Task0 기본값 — 단일 소스 (Z2 에서 프린터 프로파일로 이관 예정) */
+/** Task0 기본값 — 단일 소스 (빌트인 Task0 프로파일·프로파일 선택 필드 폴백이 여기를 참조) */
 export const TASK0_DEFAULTS: Task0Defaults = Object.freeze({
   bedWidthMm: 150,
   bedDepthMm: 85,
+  zTravelMaxMm: 2000,
   projectorWidthPx: 1920,
   projectorHeightPx: 1080,
   pixelPitchUm: 73,
@@ -168,6 +175,29 @@ export function isInPrintableArea(
     bedY >= frame.printableYMinMm &&
     bedY <= frame.printableYMaxMm
   );
+}
+
+/** world 기준 출력 가능 영역 (mm) — X ∈ [minX, maxX], Z ∈ [minZ, maxZ]. 플레이트 중심 원점 기준이라 비대칭일 수 있다 */
+export interface Task0PrintableWorldRect {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+/**
+ * 출력 가능 영역(베드 좌표)을 world (X, Z) 로 — bedToWorld 로 두 모서리를 옮긴다(상수를 따로 두지 않는다).
+ * 기본값이면 X 10~150 × Y 10~85 → world X −65~75 × Z −32.5~42.5 (플레이트 원점 = 베드 (75, 42.5) 라서
+ * 출력 가능 영역 중심 (80, 47.5) 과 어긋난다 — 계획서 §4 Z2 인계).
+ */
+export function task0PrintableWorldRect(
+  frame: Task0PrintableFrame = TASK0_DEFAULTS,
+  bedWidthMm: number = TASK0_DEFAULTS.bedWidthMm,
+  bedDepthMm: number = TASK0_DEFAULTS.bedDepthMm,
+): Task0PrintableWorldRect {
+  const [minX, minZ] = bedToWorld(frame.printableXMinMm, frame.printableYMinMm, bedWidthMm, bedDepthMm);
+  const [maxX, maxZ] = bedToWorld(frame.printableXMaxMm, frame.printableYMaxMm, bedWidthMm, bedDepthMm);
+  return { minX, maxX, minZ, maxZ };
 }
 
 /**

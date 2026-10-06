@@ -90,7 +90,11 @@ export function checkBuildVolume(
  *   Z-up 이므로(B-13, `types/axis-display.ts`) 내부 Y-up 명칭을 그대로 쓰면
  *   "높이가 Y"라고 읽혀 혼란스럽다. 내부 Y(높이) = 표시 Z.
  */
-export function describeViolation(v: BuildVolumeViolation): string | null {
+export function describeViolation(
+  v: BuildVolumeViolation,
+  /** 영역 이름 — 기본 "출력영역"(기존 문구 그대로). Task0 는 "출력 가능 영역"(Z2). */
+  areaLabel = "출력영역",
+): string | null {
   if (!hasViolation(v)) return null;
   const parts: string[] = [];
   if (v.minX || v.maxX) parts.push("X");
@@ -99,8 +103,120 @@ export function describeViolation(v: BuildVolumeViolation): string | null {
   const axes = parts.length > 0 ? `${parts.join("·")} 방향` : "";
   if (v.belowPlate) {
     return axes
-      ? `출력영역을 벗어남 (${axes}) + 플레이트 아래로 내려감`
+      ? `${areaLabel}을 벗어남 (${axes}) + 플레이트 아래로 내려감`
       : "모델이 플레이트 아래로 내려감";
   }
-  return `출력영역을 벗어남 (${axes})`;
+  return `${areaLabel}을 벗어남 (${axes})`;
+}
+
+// ── Task0 출력 가능 영역 (Z2) ─────────────────────────────────────────────
+//   Task0 는 플레이트(= 노즐 범위 150 × 85) 안에서도 **투사 ∩ 노즐 범위**(X 10~150 × Y 10~85)만 출력된다.
+//   그 영역은 플레이트 중심 원점 기준으로 비대칭이라(world X −65~75 × Z −32.5~42.5) 위의 대칭 판정
+//   (checkBuildVolume)으로는 잡을 수 없다. 또 서포트도 도포·노광되므로 **모델과 서포트를 함께** 본다.
+//   영역 값은 utils/task0/task0-frame.ts task0PrintableWorldRect 가 베드 좌표에서 변환해 준다(여기에 상수 없음).
+//   기존 프로파일은 이 경로를 쓰지 않는다 — checkBuildVolume 은 그대로다.
+
+/** world 출력 가능 영역 (mm). X ∈ [minX, maxX], Z ∈ [minZ, maxZ] — 비대칭 가능. */
+export interface PrintableAreaMm {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+}
+
+/**
+ * world AABB 가 출력 가능 영역(비대칭)을 벗어났는지 — checkBuildVolume 과 같은 모양·같은 경계 규칙
+ * (경계에 딱 맞은 것은 위반 아님, epsMm 여유). 높이는 Y ∈ [0, heightMm] (heightMm ≤ 0 이면 상한 검사 안 함).
+ */
+export function checkPrintableArea(
+  aabb: WorldAabbMm,
+  area: PrintableAreaMm,
+  heightMm: number,
+  epsMm = 1e-6,
+): BuildVolumeViolation {
+  return {
+    minX: aabb.minX < area.minX - epsMm,
+    maxX: aabb.maxX > area.maxX + epsMm,
+    minZ: aabb.minZ < area.minZ - epsMm,
+    maxZ: aabb.maxZ > area.maxZ + epsMm,
+    belowPlate: aabb.minY < -epsMm,
+    aboveMax: heightMm > 0 && aabb.maxY > heightMm + epsMm,
+  };
+}
+
+/** 영역 검사 대상 모델 하나 */
+export interface AreaCheckModel {
+  id: string;
+  aabb: WorldAabbMm;
+}
+
+/** 영역 검사 대상 서포트 하나 — parentId = 붙은 모델 id (모델을 못 찾으면 null) */
+export interface AreaCheckSupport {
+  parentId: string | null;
+  aabb: WorldAabbMm;
+}
+
+/**
+ * 영역 밖 항목 하나. 서포트는 **붙은 모델별로 묶는다**(모델 하나에 서포트가 수백 개라 하나씩 띄우면
+ * 경고 목록이 의미를 잃는다) — count = 묶음 안 위반 서포트 수, aabb = 그들의 합집합, violation = 방향 OR.
+ */
+export interface AreaCheckEntry {
+  kind: "model" | "support";
+  /** model: 모델 id / support: 붙은 모델 id (없으면 null) */
+  id: string | null;
+  count: number;
+  aabb: WorldAabbMm;
+  violation: BuildVolumeViolation;
+}
+
+/**
+ * 모델 + 서포트를 출력 가능 영역으로 검사한다 (순수 — useBuildVolumeCheck 와 검증 스크립트가 함께 쓴다).
+ *   - 모델: checkPrintableArea 전부(가로·세로·플레이트 아래·높이).
+ *   - 서포트: **가로·세로(X/Z)만** 본다. 서포트 바닥은 플레이트(Y = 0)에 세우는 구조라 Y 하한 검사는
+ *     부품 조립의 부동소수 잡음으로 오탐만 내고, 플레이트 아래로 파고든 모델은 모델 검사가 이미 잡는다.
+ * 순서: 모델(입력 순서) → 서포트 묶음(그 묶음의 첫 위반이 나온 순서).
+ */
+export function checkItemsInPrintableArea(
+  models: readonly AreaCheckModel[],
+  supports: readonly AreaCheckSupport[],
+  area: PrintableAreaMm,
+  heightMm: number,
+  epsMm = 1e-6,
+): AreaCheckEntry[] {
+  const out: AreaCheckEntry[] = [];
+  for (const m of models) {
+    const violation = checkPrintableArea(m.aabb, area, heightMm, epsMm);
+    if (hasViolation(violation)) out.push({ kind: "model", id: m.id, count: 1, aabb: { ...m.aabb }, violation });
+  }
+  const groups = new Map<string | null, AreaCheckEntry>();
+  for (const s of supports) {
+    const full = checkPrintableArea(s.aabb, area, 0, epsMm);
+    const violation: BuildVolumeViolation = { ...full, belowPlate: false, aboveMax: false };
+    if (!hasViolation(violation)) continue;
+    const g = groups.get(s.parentId);
+    if (!g) {
+      const entry: AreaCheckEntry = { kind: "support", id: s.parentId, count: 1, aabb: { ...s.aabb }, violation };
+      groups.set(s.parentId, entry);
+      out.push(entry);
+      continue;
+    }
+    g.count++;
+    g.aabb = {
+      minX: Math.min(g.aabb.minX, s.aabb.minX),
+      minY: Math.min(g.aabb.minY, s.aabb.minY),
+      minZ: Math.min(g.aabb.minZ, s.aabb.minZ),
+      maxX: Math.max(g.aabb.maxX, s.aabb.maxX),
+      maxY: Math.max(g.aabb.maxY, s.aabb.maxY),
+      maxZ: Math.max(g.aabb.maxZ, s.aabb.maxZ),
+    };
+    g.violation = {
+      minX: g.violation.minX || violation.minX,
+      maxX: g.violation.maxX || violation.maxX,
+      minZ: g.violation.minZ || violation.minZ,
+      maxZ: g.violation.maxZ || violation.maxZ,
+      belowPlate: false,
+      aboveMax: false,
+    };
+  }
+  return out;
 }

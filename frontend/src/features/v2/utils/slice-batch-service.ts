@@ -7,11 +7,13 @@
 import SliceBatchWorker from "../workers/slice-batch.worker?worker";
 
 import type { FdmSettings } from "./gcode/types";
+import type { Task0ExportResult } from "./task0/task0-export";
 import type {
   GcodeRequest,
   PngZipRequest,
   SliceBatchRequest,
   SliceBatchResponse,
+  Task0GcodeRequest,
   WorkerMeshGeometry,
   WorkerSliceOptions,
 } from "../workers/slice-batch.messages";
@@ -85,9 +87,23 @@ class SliceBatchService {
   }
 
   /**
-   * 워커 요청을 실행하고 종료 응답(done / gcode-done)을 결과로 resolve 한다.
-   * PNG-ZIP 은 Blob|null, G-code 는 string|null 을 돌려주므로 반환 타입은
-   * 요청 종류에서 추론한다(오버로드).
+   * Task0 G-code(run.gcode) 내보내기 (Z2). 워커에서 writer → 채움 실패 층 확인 → Task0 파서 검사를 돌린다.
+   * 결과는 통과(gcode + 요약) 또는 막힘(gcode null + 이유) — 막힘은 reject 가 아니라 정상 resolve 다.
+   * 진행률(층 단위)·취소는 다른 경로와 같은 인프라(onProgress / cancel).
+   */
+  exportTask0Gcode(
+    meshes: WorkerMeshGeometry[],
+    input: Omit<Task0GcodeRequest, "kind" | "meshes">,
+    onProgress?: BatchProgress,
+  ): Promise<Task0ExportResult> {
+    const req: Task0GcodeRequest = { kind: "task0-gcode", meshes, ...input };
+    return this.run(req, transfersOf(meshes), onProgress);
+  }
+
+  /**
+   * 워커 요청을 실행하고 종료 응답(done / gcode-done / task0-done)을 결과로 resolve 한다.
+   * PNG-ZIP 은 Blob|null, G-code 는 string|null, Task0 는 Task0ExportResult 를 돌려주므로
+   * 반환 타입은 요청 종류에서 추론한다(오버로드).
    */
   private run(
     req: PngZipRequest,
@@ -100,10 +116,15 @@ class SliceBatchService {
     onProgress?: BatchProgress,
   ): Promise<string | null>;
   private run(
+    req: Task0GcodeRequest,
+    transfer: Transferable[],
+    onProgress?: BatchProgress,
+  ): Promise<Task0ExportResult>;
+  private run(
     req: SliceBatchRequest,
     transfer: Transferable[],
     onProgress?: BatchProgress,
-  ): Promise<Blob | string | null> {
+  ): Promise<Blob | string | Task0ExportResult | null> {
     return new Promise((resolve, reject) => {
       this.terminate(); // 이전 작업이 남아 있으면 정리(고아 Promise reject 포함).
       const worker = new SliceBatchWorker();
@@ -130,6 +151,11 @@ class SliceBatchService {
             this.pendingReject = null;
             this.terminate();
             resolve(msg.gcode);
+            break;
+          case "task0-done":
+            this.pendingReject = null;
+            this.terminate();
+            resolve(msg.result);
             break;
           case "error":
             this.pendingReject = null;

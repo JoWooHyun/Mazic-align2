@@ -20,6 +20,7 @@ import StlFileList from "../components/StlFileList";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM } from "../types/transform";
 import { SAMPLE_MODELS } from "../utils/sample-models";
+import { task0PrintableAreaForProfile } from "../utils/task0/task0-profile";
 
 import { useClipboardActions } from "./viewer/hooks/useClipboardActions";
 import { useViewerShortcuts } from "./viewer/hooks/useViewerShortcuts";
@@ -122,6 +123,8 @@ const ViewerV2Page: React.FC = () => {
     handleExportMasksZip,
     handleExportGcode,
     handleExportStl,
+    handleExportTask0Gcode,
+    task0Report,
   } = useSliceExport({
     files,
     project,
@@ -602,6 +605,9 @@ const ViewerV2Page: React.FC = () => {
             plateWidthMm={printerProfile.buildVolumeMm[0]}
             plateDepthMm={printerProfile.buildVolumeMm[1]}
             plateHeightMm={printerProfile.buildVolumeMm[2]}
+            // Task0 프로파일이면 비대칭 출력 가능 영역(테두리 + 모델·서포트 검사), 아니면 null (Z2).
+            //   매 렌더 새 객체지만 씬 훅이 숫자로 비교하므로 재실행은 값이 바뀔 때만.
+            printableAreaMm={task0PrintableAreaForProfile(printerProfile)}
             onBuildVolumeIssues={setVolumeIssues}
             editMode={editMode}
             onAddSupportAt={support.handleAddSupportAt}
@@ -828,6 +834,8 @@ const ViewerV2Page: React.FC = () => {
             }
             onExportMasksZip={() => void handleExportMasksZip()}
             onExportGcode={() => void handleExportGcode()}
+            onExportTask0Gcode={() => void handleExportTask0Gcode()}
+            task0Report={task0Report}
             batchBusy={batchExport.busy}
             batchDone={batchExport.done}
             batchTotal={batchExport.total}

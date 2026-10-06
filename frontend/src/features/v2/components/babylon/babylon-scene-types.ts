@@ -14,6 +14,7 @@ import type { STLFileV2 } from "../../types/stl";
 import type { LayerGraphParams } from "../../support/detect/types";
 import type { PlacePointsParams } from "../../support/detect/place-points";
 import type { BuildVolumeIssue } from "./hooks/useBuildVolumeCheck";
+import type { PrintableAreaMm } from "../../utils/build-volume";
 
 export type { BuildVolumeIssue };
 
@@ -51,6 +52,13 @@ export interface BabylonSceneProps {
    *   ⚠️ 격자·카메라 등 기존 용도에는 쓰지 않는다 — 신규 프롭이라 옵셔널.
    */
   plateHeightMm?: number;
+  /**
+   * Task0 출력 가능 영역 (world X/Z mm, 비대칭 — Z2). Task0 프로파일일 때만 준다
+   *   (utils/task0/task0-profile.ts task0PrintableAreaForProfile). 주면 ① 플레이트 위에 영역 테두리를 그리고
+   *   ② 출력영역 검사를 대칭 플레이트 대신 이 영역으로, 모델과 서포트를 함께 한다.
+   *   null/미지정이면 기존 동작 그대로.
+   */
+  printableAreaMm?: PrintableAreaMm | null;
   /**
    * 출력영역을 벗어난 모델이 생기거나 사라질 때 호출된다 (C-2).
    *   빈 배열 = 전부 정상. 페이지가 이 값으로 경고 배너를 띄운다.

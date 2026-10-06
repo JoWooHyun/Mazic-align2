@@ -10,6 +10,11 @@
  * 번들에 @babylonjs/core 를 끌어오지 않는다 (type-only import).
  */
 import type { FdmSettings } from "../utils/gcode/types";
+import type {
+  Task0ExportResult,
+  Task0ExportWriterOptions,
+} from "../utils/task0/task0-export";
+import type { Task0ExposureSettings } from "../utils/task0/task0-jobzip";
 
 /** 워커가 자를 대상 메시 하나 — world 좌표 삼각형 flat 배열. */
 export interface WorkerMeshGeometry {
@@ -55,7 +60,24 @@ export interface GcodeRequest {
   range: { yMin: number; yMax: number };
 }
 
-export type SliceBatchRequest = PngZipRequest | GcodeRequest;
+/**
+ * Task0 G-code(run.gcode) 산출 요청 (Z2). 워커가 utils/task0/task0-export.ts runTask0GcodeExport 를
+ * 그대로 부른다 — 검증 스크립트(verify-task0-export)가 같은 함수를 불러 앱 경로 = 스크립트 경로를 확인한다.
+ */
+export interface Task0GcodeRequest {
+  kind: "task0-gcode";
+  /** world 삼각형 배열들 (transferable) — 마스크 ZIP 과 같은 mesh 집합(STL + 서포트). */
+  meshes: WorkerMeshGeometry[];
+  /** 씬 최상단 Y (mm, 서포트 포함) — 마스크 경로와 같은 값. 층 수 = task0LayerCount(topY, lh). */
+  topY: number;
+  layerHeightMm: number;
+  /** writer 옵션 (베드 크기 등 — 프로파일에서). 층 진행 콜백은 워커가 붙인다. */
+  writer: Task0ExportWriterOptions;
+  /** 예상 시간의 노광 항목용 (선택 — 빠지면 types/printer.ts DEFAULT_*). */
+  exposure?: Task0ExposureSettings;
+}
+
+export type SliceBatchRequest = PngZipRequest | GcodeRequest | Task0GcodeRequest;
 
 /** 진행률 알림 (done / total 레이어). */
 export interface WorkerProgress {
@@ -79,6 +101,15 @@ export interface WorkerGcodeDone {
   gcode: string | null;
 }
 
+/**
+ * 완료 — Task0 G-code 결과 (Z2). 통과면 gcode + 요약, 막혔으면 gcode null + 이유(층 번호·문구).
+ * 막힌 것은 오류(error)가 아니라 정상 응답이다 — 사용자에게 이유를 보여 줄 대상.
+ */
+export interface WorkerTask0Done {
+  type: "task0-done";
+  result: Task0ExportResult;
+}
+
 /** 오류. */
 export interface WorkerError {
   type: "error";
@@ -89,4 +120,5 @@ export type SliceBatchResponse =
   | WorkerProgress
   | WorkerDone
   | WorkerGcodeDone
+  | WorkerTask0Done
   | WorkerError;

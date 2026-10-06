@@ -85,6 +85,11 @@ export interface Task0WriterOptions {
   thinFill?: boolean;
   /** 채움 층 트래블 우회 (기본 true). false 는 대조군 전용 — 교차하는 트래블을 그대로 낸다 */
   thinFillDetour?: boolean;
+  /**
+   * 층 진행 콜백 (Z2 — 앱 워커 진행률). 층 하나를 다 쓸 때마다 (끝낸 층 수, 전체 층 수) 로 부른다.
+   * 출력 바이트·통계에는 영향이 없다(읽기만 하는 알림).
+   */
+  onLayerDone?: (done: number, total: number) => void;
 }
 
 /** 기본값을 채우고 검사한 writer 설정 (F 는 mm/min 정수) */
@@ -663,6 +668,7 @@ export function generateTask0Gcode(
     }
     stat.extrusionMm = layerTicks / E_TICKS_PER_MM;
     layers.push(stat);
+    options.onLayerDone?.(n + 1, layerCount);
   }
 
   const totals: Task0GcodeTotals = {

@@ -8,6 +8,8 @@ import {
 } from "../types/printer";
 import { estimatePrintTimeSec } from "../utils/print-time";
 import { sliceBatchService } from "../utils/slice-batch-service";
+import type { Task0ExportReport } from "../utils/task0/task0-export";
+import { isTask0Profile } from "../utils/task0/task0-profile";
 import type { BabylonSceneHandle } from "./BabylonScene";
 import NumberInput from "./common/NumberInput";
 import SliceMaskPreview from "./SliceMaskPreview";
@@ -41,6 +43,13 @@ interface Props {
 
   onExportMasksZip: () => void;
   onExportGcode: () => void;
+  /**
+   * Task0 G-code(run.gcode) 내보내기 (Z2). 현재 프로파일이 Task0 일 때만 버튼이 보인다 —
+   * 그때는 마스크 ZIP·FDM G-code 버튼을 숨긴다(아래 내보내기 카드 주석).
+   */
+  onExportTask0Gcode?: () => void;
+  /** 마지막 Task0 내보내기 결과 — 요약(성공) 또는 이유(막힘). 없으면 표시 안 함. */
+  task0Report?: Task0ExportReport | null;
   batchBusy: boolean;
   batchDone: number;
   batchTotal: number;
@@ -76,6 +85,8 @@ const SliceSidePanel: React.FC<Props> = ({
   hideMaskPreview = false,
   onExportMasksZip,
   onExportGcode,
+  onExportTask0Gcode,
+  task0Report = null,
   batchBusy,
   batchDone,
   batchTotal,
@@ -85,6 +96,8 @@ const SliceSidePanel: React.FC<Props> = ({
 
   // 예상 출력 시간 추정에 쓰는 현재 프린터 프로파일 (노광 + 리프트/딜레이).
   const printerProfile = useCurrentProfile();
+  // Task0 프로파일 (Z2) — 내보내기 카드가 Task0 G-code 하나만 보여 준다.
+  const task0 = isTask0Profile(printerProfile);
 
   // 모델 리프트(mm) — STL 은 바닥이 y=liftMm 에 오도록 올려 놓이므로
   //   (stl-loader 의 alignMeshToPlate), 씬 최고점에는 이 값이 포함돼 있다.
@@ -175,6 +188,12 @@ const SliceSidePanel: React.FC<Props> = ({
             {(printerProfile.bottomExposureSec ?? DEFAULT_BOTTOM_EXPOSURE_SEC).toFixed(1)}s · 레진 ~1.1
             g/cm³
           </p>
+          {task0 && (
+            <p className="text-xs text-amber-700 mt-1">
+              Task0 는 층마다 도포·파킹·블레이드 시간이 더해져 위 출력 시간과 다릅니다 — Task0 G-code 를
+              내보낸 뒤 아래 요약의 예상 시간을 보세요.
+            </p>
+          )}
         </Card>
 
         <Card title="레이어 두께">
@@ -271,6 +290,25 @@ const SliceSidePanel: React.FC<Props> = ({
                 취소
               </button>
             </div>
+          ) : task0 ? (
+            // Task0 프로파일 (Z2) — Task0 G-code 하나만. 기존 마스크 ZIP 은 플레이트를 LCD 에 늘린
+            //   래스터라 Task0 투사 규약(시작 (10,10)·73 µm 정사각 픽셀)과 맞지 않고, FDM G-code 는
+            //   Task0 형식이 아니다(종합 D4: Task0 선택 시 G-code 는 Task0 형식) → 둘 다 숨긴다.
+            //   마스크는 Z3 에서 job.zip(run.gcode + 투사 프레임 마스크)으로 대체한다.
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={onExportTask0Gcode}
+                disabled={modelCount === 0 || !onExportTask0Gcode}
+                className="px-3 py-2 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Task0 G-code (run.gcode)
+              </button>
+              <p className="text-xs text-gray-400">
+                Task0 프로파일에서는 마스크 ZIP·FDM G-code 를 숨깁니다 (마스크는 다음 단계
+                job.zip 에 포함).
+              </p>
+              {task0Report && <Task0ReportView report={task0Report} />}
+            </div>
           ) : (
             <div className="flex flex-col gap-2">
               <button
@@ -294,6 +332,52 @@ const SliceSidePanel: React.FC<Props> = ({
     </aside>
   );
 };
+
+/**
+ * 마지막 Task0 내보내기 결과 (Z2). 성공 = 파일 이름 + 층·길이·예상 시간 요약, 막힘 = 이유(층 번호·문구).
+ * 예상 시간 = 규격서 §11·§13 estimate (도포 + 트래블 + 파킹 + 블레이드 + 층 오버헤드 + 노광, 가속 무시).
+ */
+function Task0ReportView({ report }: { report: Task0ExportReport }) {
+  if (!report.ok) {
+    return (
+      <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+        <div className="font-medium">내보내지 않았습니다 — 이유:</div>
+        <ul className="list-disc pl-4 mt-1 space-y-0.5">
+          {report.issues.map((msg) => (
+            <li key={msg}>{msg}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  const s = report.summary;
+  const e = s.estimate;
+  return (
+    <div className="text-xs text-gray-700 bg-white border border-gray-200 rounded px-3 py-2">
+      <div className="font-medium text-green-700">내보냄 · {report.fileName}</div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-1">
+        <span className="text-gray-500">층</span>
+        <span className="font-mono text-right">
+          {s.layerCount}개 (빈 층 {s.emptyLayerCount})
+        </span>
+        <span className="text-gray-500">얇은 부분 채움 층</span>
+        <span className="font-mono text-right">{s.thinFillLayerCount}개</span>
+        <span className="text-gray-500">도포 / 트래블 길이</span>
+        <span className="font-mono text-right">
+          {s.depositMm.toFixed(0)} / {s.travelMm.toFixed(0)} mm
+        </span>
+        <span className="text-gray-500">예상 시간</span>
+        <span className="font-mono text-right">{formatDuration(e.totalSec)}</span>
+      </div>
+      <p className="text-gray-400 mt-1">
+        도포 {formatDuration(e.depositSec)} · 트래블 {formatDuration(e.travelSec)} · 파킹{" "}
+        {formatDuration(e.parkSec)} · 블레이드 {formatDuration(e.bladeSec)} · 층 오버헤드{" "}
+        {formatDuration(e.layerOverheadSec)} · 노광 {formatDuration(e.exposureSec)} (층두께{" "}
+        {s.layerHeightMm} mm, 규격서 §13 잠정 상수)
+      </p>
+    </div>
+  );
+}
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (

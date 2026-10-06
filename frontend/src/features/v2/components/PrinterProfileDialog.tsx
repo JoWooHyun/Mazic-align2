@@ -18,6 +18,10 @@ import {
   PROFILE_FIELD_LIMITS,
   type PrinterProfileV2,
 } from "../types/printer";
+import {
+  isTask0Profile,
+  resolveTask0ProfileFrame,
+} from "../utils/task0/task0-profile";
 // 로컬 NumberInput 래퍼와 이름이 겹치지 않게 별칭으로 받는다 (B-14).
 import CommitNumberInput from "./common/NumberInput";
 
@@ -136,11 +140,13 @@ function validateDraft(d: Draft): { errors: string[]; warnings: string[] } {
       `빌드 볼륨 Y(세로)는 ${bv.min}~${bv.max} mm 사이여야 합니다.`,
     ),
   );
+  // 높이는 가로·세로와 한계가 다르다 (Task0 Z 이송 2000 mm — types/printer.ts 주석).
+  const bh = L.buildHeightMm;
   push(
     checkRange(
       d.bvZ,
-      bv,
-      `빌드 볼륨 Z(높이)는 ${bv.min}~${bv.max} mm 사이여야 합니다.`,
+      bh,
+      `빌드 볼륨 Z(높이)는 ${bh.min}~${bh.max} mm 사이여야 합니다.`,
     ),
   );
 
@@ -285,6 +291,15 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
   }, [open]);
 
   const readOnly = !isNew && selectedId !== null && isBuiltIn(selectedId);
+  // 선택한 프로파일이 Task0 출력이면 그 좌표 값 (Z2 — 읽기 전용 안내용). 새 프로파일 작성 중엔 없음.
+  const selectedProfile =
+    !isNew && selectedId !== null
+      ? all.find((p) => p.id === selectedId)
+      : undefined;
+  const selectedTask0Frame =
+    selectedProfile && isTask0Profile(selectedProfile)
+      ? resolveTask0ProfileFrame(selectedProfile)
+      : null;
 
   const { errors, warnings } = validateDraft(draft);
   const canSave = !readOnly && errors.length === 0;
@@ -515,6 +530,25 @@ const PrinterProfileDialog: React.FC<Props> = ({ open, onClose }) => {
                 X = 가로 · Y = 세로 · Z = 출력 가능 높이
               </p>
             </FormRow>
+
+            {/* Task0 프로파일 (Z2) — 읽기 전용 안내. 값은 프로파일 선택 필드 → 없으면 TASK0_DEFAULTS. */}
+            {selectedTask0Frame && (
+              <FormRow label="Task0 출력">
+                <p className="text-xs text-gray-600">
+                  출력 가능 영역 X {selectedTask0Frame.printableXMinMm}~
+                  {selectedTask0Frame.printableXMaxMm} × Y{" "}
+                  {selectedTask0Frame.printableYMinMm}~
+                  {selectedTask0Frame.printableYMaxMm} mm · 투사 시작 (
+                  {selectedTask0Frame.projectorOffsetXMm},{" "}
+                  {selectedTask0Frame.projectorOffsetYMm}) mm
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  슬라이스 미리보기에서 Task0 G-code(run.gcode)를 냅니다. 빌드 볼륨 X·Y = 노즐
+                  이동 범위, Z = 플레이트 이송 범위. 노광 값은 Task0 예상 시간의 노광 항목에만,
+                  리프트 값은 쓰지 않습니다(층 경계 동작은 Task0 가 함).
+                </p>
+              </FormRow>
+            )}
 
             <FormRow label="노광 시간 (초)">
               <div className="flex items-center gap-2">

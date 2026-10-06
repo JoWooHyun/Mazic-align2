@@ -39,6 +39,36 @@ export interface PrinterProfileV2 {
   retractSpeedMmS?: number;
   /** 노광 후 대기 시간 (초). light-off delay. */
   lightOffDelaySec?: number;
+
+  // ---- 출력 종류 (선택 — 없으면 'masks', 기존 프로파일·저장값 하위 호환) ----
+  /**
+   * 이 프로파일이 내는 출력. 'masks' = 기존 마스크 ZIP·FDM G-code 경로(기본),
+   * 'task0' = Task0 하이브리드 출력(run.gcode — Z3 에서 job.zip). 판정은 utils/task0/task0-profile.ts isTask0Profile.
+   */
+  outputKind?: PrinterOutputKind;
+  /**
+   * Task0 전용 값 (outputKind 'task0' 일 때만 읽는다). 빠진 값은 utils/task0/task0-frame.ts
+   * TASK0_DEFAULTS 로 폴백한다 — Task0 기본값의 단일 소스는 그쪽 한 곳(규칙 6).
+   */
+  task0?: Task0ProfileFields;
+}
+
+/** 프로파일 출력 종류 — PrinterProfileV2.outputKind */
+export type PrinterOutputKind = "masks" | "task0";
+
+/**
+ * Task0 프로파일 선택 필드 (모두 선택, 베드 좌표 mm — 코너 원점, 규격서 v0.3.3 §1).
+ * 베드 크기는 buildVolumeMm[0]·[1], 투사 해상도·피치는 lcdWidthPx·lcdHeightPx·pixelPitchUm 을 그대로 쓴다.
+ */
+export interface Task0ProfileFields {
+  /** 출력 가능 영역(투사 ∩ 노즐 범위) — 기본 X 10~150 × Y 10~85 */
+  printableXMinMm?: number;
+  printableXMaxMm?: number;
+  printableYMinMm?: number;
+  printableYMaxMm?: number;
+  /** 투사 시작점 — 기본 (10, 10) */
+  projectorOffsetXMm?: number;
+  projectorOffsetYMm?: number;
 }
 
 /**
@@ -72,7 +102,9 @@ export const DEFAULT_LIGHT_OFF_DELAY_SEC = 1.0;
 export const PROFILE_FIELD_LIMITS = {
   lcdPx: { min: 1, max: 20000 }, // 현존 최대 ~15K, 여유 포함
   pixelPitchUm: { min: 1, max: 200 },
-  buildVolumeMm: { min: 1, max: 1000 },
+  buildVolumeMm: { min: 1, max: 1000 }, // 가로·세로
+  // 높이(Z)만 따로 — Task0 Z 이송 범위 0~2000 mm(규격서 v0.3.3 §1)를 담는다. 가로·세로 한계는 그대로.
+  buildHeightMm: { min: 1, max: 2000 },
   exposureSec: { min: 0.1, max: 600 },
   bottomExposureSec: { min: 0, max: 600 },
   layerCount: { min: 0, max: 50 }, // 바닥·전환 공통
