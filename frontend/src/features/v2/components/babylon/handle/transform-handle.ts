@@ -6,21 +6,25 @@ import {
   worldToStlLocal as worldToStlLocalUtil,
   stlLocalToWorld as stlLocalToWorldUtil,
 } from "../../../utils/coord-space";
-import { meshWorldBBoxCenter } from "../../../utils/transform";
 import type { BabylonSceneHandle } from "../babylon-scene-types";
 import type { SceneCtx } from "../scene-refs";
+import { createModelBoundsCache } from "../model-bounds-cache";
 
 type TransformHandle = Pick<
   BabylonSceneHandle,
   | "worldToStlLocal"
   | "stlLocalToWorld"
   | "getModelWorldPivot"
+  | "getModelWorldAabb"
   | "autoRouteBridge"
   | "findSurfaceBelow"
   | "projectToStlSurface"
 >;
 
 export function buildTransformHandle(ctx: SceneCtx): TransformHandle {
+  // Transform 패널이 렌더마다 묻는 피벗·크기 상자 캐시 (데모 빈칸 #1 검수 3). 값은 캐시 없이 구한 것과
+  //   같다 — 키·근거는 model-bounds-cache.ts. 핸들은 씬당 한 번 조립되므로(deps []) 캐시도 씬당 하나.
+  const bounds = createModelBoundsCache();
   return {
     worldToStlLocal(stlId, world) {
       const stlMesh = ctx.meshMapRef.current.get(stlId);
@@ -35,8 +39,15 @@ export function buildTransformHandle(ctx: SceneCtx): TransformHandle {
     getModelWorldPivot(id) {
       const mesh = ctx.meshMapRef.current.get(id);
       if (!mesh) return null;
-      const c = meshWorldBBoxCenter(mesh);
-      return [c.x, c.y, c.z];
+      // meshWorldBBoxCenter 와 같은 값 — 같은 정점이면 로컬 상자 재계산(정점 순회)을 건너뛴다.
+      return bounds.pivot(mesh);
+    },
+    getModelWorldAabb(id) {
+      // 데모 빈칸 #1 — 출력영역 검사(useBuildVolumeCheck worldVertexAabb)와 같은 순회·같은 값(실제 정점,
+      //   서포트 제외). 정점·회전·배율이 그대로면 다시 훑지 않는다(이동만 바뀌면 더하기만).
+      const mesh = ctx.meshMapRef.current.get(id);
+      if (!mesh) return null;
+      return bounds.worldAabb(mesh);
     },
     autoRouteBridge(base, contact, cps, excludeStlIds) {
       const SAFETY_MM = 5;

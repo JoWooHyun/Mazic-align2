@@ -24,6 +24,23 @@ import {
   toDisplayPosition,
   transformPointBetween,
 } from "../utils/transform";
+import type { WorldAabbMm } from "../utils/build-volume";
+import {
+  FIT_MARGIN_MM,
+  SCALE_PERCENT_DECIMALS,
+  SCALE_PERCENT_MAX,
+  SCALE_PERCENT_MIN,
+  SIZE_DECIMALS,
+  axisAlignedLocalAxes,
+  describeFitFailure,
+  isScalePercentInputChange,
+  isSizeInputChange,
+  isValidSizeInput,
+  planFit,
+  sizeInputToScale,
+  toDisplaySize,
+  type ModelFitRegion,
+} from "../utils/model-size";
 
 /**
  * 선택 모델의 현재 world 바운딩박스 중심 = 회전·스케일 피벗 (B-9).
@@ -61,11 +78,25 @@ interface TransformPanelProps {
    */
   getPivot?: PivotGetter;
 
+  /**
+   * 선택 모델의 현재 world AABB (실제 정점, 서포트 제외) — "크기 (mm)" 표시·입력과
+   * "출력 영역에 맞춤" 이 쓴다(데모 빈칸 #1). getPivot 처럼 호출 시점 메쉬를 읽는
+   * **라이브** 게터라야 한다(씬 핸들 getModelWorldAabb). 미제공·null 이면 크기 섹션을 숨긴다.
+   */
+  getAabb?: () => WorldAabbMm | null;
+
+  /**
+   * "출력 영역에 맞춤" 영역 — 빨간 박스 판정과 같은 출처(utils/model-size modelFitRegionForProfile:
+   * Task0 면 출력 가능 영역, 아니면 빌드 크기). 미제공이면 버튼을 끈다.
+   */
+  fitRegion?: ModelFitRegion | null;
+
   className?: string;
 }
 
 /**
  * 단일 선택 STL 의 Position / Rotation / Scale 슬라이더 + 숫자 입력.
+ * + 크기 (mm) 표시·입력과 "출력 영역에 맞춤" (데모 빈칸 #1 — 계산은 utils/model-size.ts).
  *
  * 내부 좌표계는 Babylon (Y 가 "위") 이지만 **표시는 프린터 관례대로 Z-up**
  * 으로 환산한다 (B-13). 즉 패널의 Z 가 높이다. 매핑·근거는
@@ -98,6 +129,8 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
   onPreview,
   onCommit,
   getPivot,
+  getAabb,
+  fitRegion,
   className = "",
 }) => {
   // 패널 내부 표시값. selected 가 바뀌면 그 값으로 동기화.
@@ -153,7 +186,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
       >
         <h3 className="text-lg font-semibold text-gray-900 mb-2">Transform</h3>
         <p>
-          모델을 하나만 선택하면 위치 / 회전 / 스케일을 조정할 수 있습니다.
+          모델을 하나만 선택하면 위치 / 회전 / 스케일 / 크기를 조정할 수 있습니다.
         </p>
       </div>
     );
@@ -284,24 +317,87 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
    */
   function applyScaleField(axis: 0 | 1 | 2, value: number) {
     if (Number.isNaN(value)) return;
+    applyScale((src) => {
+      // 세 축 동일 값이면 축 교환이 항등이라 환산이 필요 없다.
+      if (uniformScale) return [value, value, value];
+      const disp = swapScaleAxes([src.sx, src.sy, src.sz]);
+      disp[axis] = value;
+      return swapScaleAxes(disp);
+    });
+  }
+
+  /**
+   * 배율 적용 공통 경로 — Scale(%) 칸과 크기(mm) 칸이 **같이** 탄다(데모 빈칸 #1).
+   * `nextScale(src)` 가 새 내부 배율 (sx, sy, sz) 을 주면 피벗 보정(withPivot) → latestRef →
+   * 미리보기까지 기존 Scale 흐름 그대로다. undo 묶음(beginDrag → 여기 → endDrag 의 onCommit 1회)도 같다.
+   * null 이면 아무것도 바꾸지 않는다(endDrag 가 start === end 로 보고 커밋하지 않는다).
+   */
+  function applyScale(
+    nextScale: (src: TransformV2) => [number, number, number] | null,
+  ) {
     setLocal((prev) => {
       const base = startRef.current;
       const src = base ?? prev;
-      let raw: TransformV2;
-      if (uniformScale) {
-        // 세 축 동일 값이면 축 교환이 항등이라 환산이 필요 없다.
-        raw = { ...src, sx: value, sy: value, sz: value };
-      } else {
-        const disp = swapScaleAxes([src.sx, src.sy, src.sz]);
-        disp[axis] = value;
-        const [sx, sy, sz] = swapScaleAxes(disp);
-        raw = { ...src, sx, sy, sz };
-      }
+      const s = nextScale(src);
+      if (!s) return prev;
+      const raw: TransformV2 = { ...src, sx: s[0], sy: s[1], sz: s[2] };
       const next = base ? withPivot(base, raw) : raw;
       latestRef.current = next;
       onPreview(selected!.id, next);
       return next;
     });
+  }
+
+  /**
+   * 크기(mm) 한 축의 **표시값** 입력 → 배율 (데모 빈칸 #1). `axis` 는 표시 축 인덱스.
+   *
+   * 비율 = 새 크기 / 지금 크기 를 Scale 과 같은 경로(applyScale)로 적용한다 — 새 커밋 경로를 만들지 않는다.
+   * "비율 유지" 가 켜져 있거나 회전이 축 정렬(90° 배수)이 아니면 세 축 같은 비율, 아니면 그 축만
+   * (utils/model-size sizeInputToScale 주석 참고). 지금 크기는 라이브 게터로 **지금 메쉬**에서 읽는다 —
+   * 숫자칸 커밋은 beginDrag 직후라 메쉬 = startRef 시점이다.
+   */
+  function applySizeField(axis: 0 | 1 | 2, valueMm: number) {
+    const aabb = getAabb ? getAabb() : null;
+    if (!aabb) return;
+    const displaySize = toDisplaySize(aabb);
+    applyScale((src) =>
+      sizeInputToScale({
+        scale: [src.sx, src.sy, src.sz],
+        rotationDeg: [src.rx, src.ry, src.rz],
+        displaySize,
+        axis,
+        valueMm,
+        uniform: uniformScale,
+      }),
+    );
+  }
+
+  /**
+   * "출력 영역에 맞춤" (데모 빈칸 #1) — 균일 배율 + 이동으로 영역 안에 최대한 크게, 바닥은 지금 높이
+   * (기존 리프트) 그대로. 계산은 utils/model-size planFit.
+   * 회전 버튼·Reset 과 같은 즉시 적용 패턴: 미리보기 1회 + **onCommit 1회 = undo 1회**.
+   * 커밋은 handleCommitTransform 으로 가므로 부착 서포트 추종·재설계 서포트 무효화(배율 변경)도 그대로 걸린다.
+   *   · 이미 맞춰져 있으면(연타·재맞춤 — 재측정 잡음뿐) 아무것도 하지 않는다 → undo 1회로 복귀가 유지된다.
+   *   · 맞출 수 없으면 짧은 안내(window.alert — 뷰어의 기존 알림 수단)를 띄우고 끝낸다.
+   */
+  function fitToRegion() {
+    if (!fitRegion || !getAabb) return;
+    const aabb = getAabb();
+    if (!aabb) return;
+    const start = { ...local };
+    const plan = planFit(start, aabb, fitRegion);
+    if (plan.status === "impossible") {
+      window.alert(describeFitFailure(plan.reason, fitRegion));
+      return;
+    }
+    if (plan.status === "unchanged") return;
+    const end = plan.result.transform;
+    if (transformsEqual(start, end)) return;
+    // 진행 중이던 편집 흔적을 지운다 — Reset 과 같은 이유 (B-14).
+    latestRef.current = null;
+    setLocal(end);
+    onPreview(selected!.id, end);
+    onCommit(selected!.id, start, end);
   }
 
   /**
@@ -347,6 +443,14 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
   );
   const displayRotation = toDisplayEulerDeg([local.rx, local.ry, local.rz]);
   const displayScale = swapScaleAxes([local.sx, local.sy, local.sz]);
+  // 크기(mm) 표시 (데모 빈칸 #1) — 렌더 시점의 **라이브** world AABB(실제 정점, 서포트 제외)를
+  //   Z-up 축 규약으로 보여 준다. POSITION 이 라이브 피벗을 매 렌더 다시 읽는 것과 같은 방식이다.
+  const liveAabb = getAabb ? getAabb() : null;
+  const displaySize = liveAabb ? toDisplaySize(liveAabb) : null;
+  // 축 정렬(90° 배수)이 아닌 회전이면 크기 입력은 "비율 유지" 와 상관없이 세 축 같은 비율 — 안내 문구용.
+  const sizeUniformForced =
+    !uniformScale &&
+    axisAlignedLocalAxes([local.rx, local.ry, local.rz]) === null;
 
   return (
     <div className={`p-4 bg-white rounded-lg shadow ${className}`}>
@@ -485,13 +589,17 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
               <NumberInput
                 // 표시 축 배율 (B-13) — 부호 없이 축만 교환한 값 × 100.
                 value={displayScale[i] * 100}
-                min={1}
-                max={10000}
+                // 배율 한계는 utils/model-size 한 곳 — 크기(mm) 입력·맞춤도 같은 한계를 따른다.
+                min={SCALE_PERCENT_MIN}
+                max={SCALE_PERCENT_MAX}
                 step={1}
-                decimals={1}
+                decimals={SCALE_PERCENT_DECIMALS}
                 onBegin={beginDrag}
                 onChange={(v) => applyScaleField(i as 0 | 1 | 2, v / 100)}
                 onEnd={endDrag}
+                // 보인 값 그대로(포커스 후 빠져나오기)는 커밋하지 않는다 — 맞춤·크기 입력이 만든 둥글지 않은
+                //   배율(222.05 % → "222.1")이 다시 들어가 배율이 바뀌고 재설계 서포트가 지워지던 것(검수 1).
+                isValid={(v) => isScalePercentInputChange(v, displayScale[i] * 100)}
                 ariaLabel={`${label} 배율(%)`}
                 className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
               />
@@ -503,6 +611,67 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
           100% = 원본 크기 · 50% = 절반 · 200% = 두 배
         </p>
       </Section>
+
+      {/*
+        ★ 크기 (mm) — 데모 빈칸 #1 (프루사 Size ↔ Scale 연동).
+          표시 = 모델(서포트 제외)의 world 상자 크기, 입력 = 그 크기가 되도록 배율을 바꾼다(Scale 과 같은
+          경로·같은 undo 단위). "비율 유지" 는 위 Scale 의 체크를 함께 쓴다. 0·음수는 거부(원래 값으로 복귀).
+          ⚠️ 배율은 Scale 칸처럼 bbox 중심 기준이라, 키우면 바닥이 플레이트 아래로 내려갈 수 있다
+          (기존 Scale 동작 그대로 — 경고 배너의 "플레이트에 내리기" 로 해소).
+      */}
+      {displaySize && (
+        <Section
+          title="크기 (mm)"
+          right={
+            <button
+              onClick={fitToRegion}
+              disabled={!fitRegion}
+              title={
+                fitRegion
+                  ? `${fitRegion.task0 ? "Task0 출력 가능 영역" : "출력영역(빌드 크기)"} 안에 비율 유지로 최대한 크게 맞추고 가운데에 둡니다 — 가장자리 여유 ${FIT_MARGIN_MM} mm, 바닥 높이는 그대로`
+                  : undefined
+              }
+              className="px-2 py-0.5 text-xs border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              출력 영역에 맞춤
+            </button>
+          }
+        >
+          <div className="space-y-1.5">
+            {DISPLAY_AXIS_LABELS.map((label, i) => (
+              <div key={label} className="flex items-center space-x-2">
+                <span className="w-4 text-xs font-bold text-gray-600">
+                  {label}
+                </span>
+                <NumberInput
+                  // 표시 축 크기 (B-13) — 부호 없이 축만 교환한 world 상자 크기.
+                  value={displaySize[i]}
+                  step={1}
+                  decimals={SIZE_DECIMALS}
+                  onBegin={beginDrag}
+                  onChange={(v) => applySizeField(i as 0 | 1 | 2, v)}
+                  onEnd={endDrag}
+                  // 0·음수·두께 없는 축은 거부 — 클램프하지 않고 원래 값으로 되돌린다.
+                  //   보인 값 그대로(포커스 후 빠져나오기·Tab 통과)도 받지 않는다 — 실제 크기 12.3456… 이
+                  //   "12.35" 로 다시 들어가 배율이 1.00035 배 되던 것(검수 1).
+                  isValid={(v) =>
+                    isValidSizeInput(v, displaySize[i]) &&
+                    isSizeInputChange(v, displaySize[i])
+                  }
+                  ariaLabel={`${label} 크기(mm)`}
+                  className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                />
+                <span className="w-6 text-xs text-gray-400">mm</span>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-gray-400">
+            {sizeUniformForced
+              ? "축에 맞지 않게 회전된 모델은 크기를 세 축 같은 비율로만 바꿉니다"
+              : "서포트 제외 모델 크기 · 위 \"비율 유지\" 를 함께 따릅니다"}
+          </p>
+        </Section>
+      )}
     </div>
   );
 };
