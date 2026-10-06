@@ -12,6 +12,7 @@
  * 층 N (규격 §3 — 마스크 PNG 와 같은 단면·같은 채움 규칙):
  *   1. 단면 = (N+0.5)·lh 에서 **메시마다** sliceTrianglesAtY → chainSegments (워커 sliceLayerMask 와 같은 절차).
  *   2. 점을 베드 좌표로(task0-frame worldToBed). 아래 계산은 전부 베드 좌표 mm.
+ *      (1·2 는 task0-slice.ts task0LayerPolygonsBed 한 곳 — 마스크 래스터·커버리지 검사기와 같은 단면을 쓴다.)
  *   3. 행 y_k = (층 폴리곤 최소 Y) + w/2 + k·w, y_k < (최대 Y) − w/2 + 1e-9 동안.
  *      층 Y 폭이 w 의 배수가 아니면 마지막 행 띠 위에 w 미만 띠가 남는다(Z1-b 대상 — 통계 rowRemainderMm).
  *   4. 각 행에서 모든 폴리곤 변과의 교차점을 감김 부호와 함께 모아 x 순 정렬 → **감김수 ≠ 0 구간**
@@ -48,8 +49,8 @@
  *
  * 순수 TS — DOM/Node/Babylon 의존 없음(slice-geometry 순수 코어만 사용).
  */
-import { chainSegments, sliceTrianglesAtY, type SlicePolygon } from '../slice-geometry';
-import { TASK0_DEFAULTS, task0LayerCount, task0LayerZ, task0SliceY, worldToBed } from './task0-frame';
+import { TASK0_DEFAULTS, task0LayerCount, task0LayerZ } from './task0-frame';
+import { task0LayerPolygonsBed, type Task0BedPolygon } from './task0-slice';
 
 // ==================== 타입 ====================
 
@@ -265,13 +266,12 @@ interface LayerSection {
   yMax: number;
 }
 
-/** 단면 폴리곤(world X,Z) → 베드 좌표 변 목록 + Y 범위 */
-function buildSection(polys: SlicePolygon[], bedW: number, bedD: number): LayerSection {
+/** 단면 폴리곤(베드 좌표) → 변 목록 + Y 범위 */
+function buildSection(polys: Task0BedPolygon[]): LayerSection {
   const edges: ScanEdge[] = [];
   let yMin = Infinity;
   let yMax = -Infinity;
-  for (const poly of polys) {
-    const pts = poly.points.map(([x, z]) => worldToBed(x, z, bedW, bedD));
+  for (const pts of polys) {
     const n = pts.length;
     for (let i = 0; i < n; i++) {
       const a = pts[i];
@@ -418,14 +418,9 @@ export function generateTask0Gcode(
     const zText = trimmedFixed(z, zDecimals);
     body.push(';LAYER_CHANGE', `;Z:${zText}`, `;HEIGHT:${heightText}`, `G1 Z${zText}`);
 
-    // 1) 단면 — 마스크와 같은 절차 (메시마다 자르고 잇기)
-    const sliceY = task0SliceY(n, lh);
-    const polys: SlicePolygon[] = [];
-    for (const tris of meshes) polys.push(...chainSegments(sliceTrianglesAtY(tris, sliceY)));
-    const { rows, narrowDropped, rowRemainderMm } = fillRows(
-      buildSection(polys, params.bedWidthMm, params.bedDepthMm),
-      w,
-    );
+    // 1) 단면 — 마스크와 같은 절차 (메시마다 자르고 잇기, task0-slice 공유 함수)
+    const polys = task0LayerPolygonsBed(meshes, n, lh, params.bedWidthMm, params.bedDepthMm);
+    const { rows, narrowDropped, rowRemainderMm } = fillRows(buildSection(polys), w);
 
     const stat: Task0LayerStats = {
       index: n,

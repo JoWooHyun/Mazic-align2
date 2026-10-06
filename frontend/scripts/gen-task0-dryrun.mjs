@@ -6,19 +6,23 @@
 //     파일 C  task0_C_gap_5L_lh0.1.gcode   10×10 판 두 장(Y 0~0.2, 0.3~0.5), lh 0.1 → 5층, 층 2(0-based)가 빈 층
 //     (파일 B — 얇은 링·띠 — 는 Z1-b 의 중심선 도포가 필요해서 아직 만들지 않는다.)
 //
-//   쓰기 전에 verify-task0-writer.mjs 의 출력 검사(c1~c7 + c8 참조 구간)와 통계 검사를 그대로 돌린다.
+//   쓰기 전에 verify-task0-writer.mjs 의 출력 검사(c1~c7 + c8 참조 구간)와 통계 검사를 그대로 돌리고,
+//   (Z1-b1) 커버리지 검사기(task0-coverage.ts checkTask0GcodeCoverage)로 **전 층** (a)(b)(c)(d)·넘침 통과를 본다
+//   (규격 §3 "도포 영역 = 노광 영역" — G-code 텍스트에서 도포 선분을 다시 뽑아 같은 단면의 마스크와 맞댄다).
 //   하나라도 실패하면 **어떤 파일도 쓰지 않고** exit 1.
-//   이 스크립트는 검증 목록(verify-*)이 아니다 — 상시 검증은 verify-task0-writer.mjs 가 맡는다.
+//   이 스크립트는 검증 목록(verify-*)이 아니다 — 상시 검증은 verify-task0-writer.mjs·verify-task0-coverage.mjs 가 맡는다.
 //
 //   실행: npx tsx scripts/gen-task0-dryrun.mjs [--out <폴더>]
 //     기본 폴더 = OS 임시 폴더/mazicalign-task0. 쓴 경로와 파일별 통계(층 수·빈 층·도포/트래블 길이·
-//     리트랙트 수·E 합·줄 수)를 출력한다.
+//     리트랙트 수·E 합·줄 수·sha256)와 커버리지 층별 최악값 요약을 출력한다.
 //   ⚠️ plain node 로 돌리면 확장자 없는 TS import 를 못 풀어 오탐이 난다(CLAUDE.md).
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { checkTask0GcodeCoverage } from "../src/features/v2/utils/task0/task0-coverage.ts";
 import { generateTask0Gcode, resolveTask0WriterParams } from "../src/features/v2/utils/task0/task0-gcode-writer.ts";
 import {
   CHECK_LABELS,
@@ -44,6 +48,18 @@ function parseArgs(argv) {
     }
   }
   return { out };
+}
+
+/** 커버리지 층별 최악값 요약 한 줄 */
+function coverageSummary(rep) {
+  const w = rep.worst;
+  const pct = (v) => (Number.isNaN(v) ? "—" : `${(v * 100).toFixed(3)}%`);
+  const at = (n) => (n === null ? "" : ` (층 ${n})`);
+  return (
+    `(a) 최소 ${pct(w.aMinRatio)}${at(w.aLayer)} · (b) 도포점 없는 섬 ${w.bWithoutDeposit}${at(w.bLayer)} · ` +
+    `(c) 최대 ${w.cMaxAreaMm2.toFixed(4)} mm²${at(w.cLayer)} · (d) 최대 ${w.dMaxAreaMm2.toFixed(4)} mm²${at(w.dLayer)} · ` +
+    `넘침 최소 ${pct(w.overflowMinRatio)}${at(w.overflowLayer)} · 프레임 밖 잘림 ${w.clippedPixels}px`
+  );
 }
 
 const FILES = [
@@ -89,10 +105,22 @@ function main() {
       problems.push(`빈 층 ${JSON.stringify(t.emptyLayers)} ≠ 기대 ${JSON.stringify(spec.expectEmpty)}`);
     }
     if (t.sectionWithoutDeposit.length) problems.push(`단면은 있는데 도포 0 인 층 ${JSON.stringify(t.sectionWithoutDeposit)}`);
+    // 커버리지 (규격 §3) — writer 와 같은 meshes·topY·lh·w 로 G-code 텍스트를 다시 읽어 검사
+    const coverage = checkTask0GcodeCoverage(meshes, topY, spec.lh, result.gcode, { depositWidthMm: params.depositWidthMm });
+    if (coverage.gcodeLayerCount !== coverage.expectedLayerCount) {
+      problems.push(`커버리지: G-code 층 ${coverage.gcodeLayerCount} ≠ 기대 ${coverage.expectedLayerCount}`);
+    }
+    if (coverage.preambleSegments) problems.push(`커버리지: 프리앰블 도포 ${coverage.preambleSegments}줄`);
+    for (const l of coverage.layers.filter((x) => !x.pass).slice(0, 10)) {
+      const which = ["a", "b", "c", "d", "overflow"].filter((k) => !l[k].pass).join("·");
+      problems.push(`커버리지: 층 ${l.index} FAIL (${which})`);
+    }
+    if (coverage.failedLayers.length > 10) problems.push(`커버리지: FAIL 층 ${coverage.failedLayers.length}개 (앞 10개만 표시)`);
     console.log(`\n  [${spec.file}] 검사 ${problems.length === 0 ? "통과" : `실패 ${problems.length}건`}`);
+    console.log(`    커버리지 ${coverage.pass ? "전 층 통과" : "FAIL"}: ${coverageSummary(coverage)}`);
     for (const p of problems.slice(0, 20)) console.error(`    FAIL: ${p}`);
     if (problems.length) bad++;
-    built.push({ spec, result, ctx });
+    built.push({ spec, result, ctx, coverage });
   }
   if (bad) {
     console.error(`\n검사 실패 ${bad}개 파일 — 아무 파일도 쓰지 않음`);
@@ -102,7 +130,7 @@ function main() {
   // 2) 쓰기 (\n 줄바꿈 그대로, BOM 없음)
   fs.mkdirSync(out, { recursive: true });
   console.log(`\n출력 폴더: ${out}`);
-  for (const { spec, result, ctx } of built) {
+  for (const { spec, result, ctx, coverage } of built) {
     const file = path.join(out, spec.file);
     fs.writeFileSync(file, result.gcode, "utf8");
     const t = result.totals;
@@ -112,6 +140,8 @@ function main() {
     console.log(`    리트랙트 E-r ${t.retracts} / 언리트랙트 E+r ${t.unretracts}, 도포 E 합 ${t.extrusionMm.toFixed(5)} mm (정확 ${t.extrusionExactMm.toFixed(7)})`);
     console.log(`    줄 수 ${t.lineCount}, 크기 ${Buffer.byteLength(result.gcode, "utf8")} B, XY 범위 ` +
       (t.xyBounds ? `X ${t.xyBounds.xMin}~${t.xyBounds.xMax} × Y ${t.xyBounds.yMin}~${t.xyBounds.yMax}` : "없음"));
+    console.log(`    sha256 ${createHash("sha256").update(result.gcode, "utf8").digest("hex")}`);
+    console.log(`    커버리지(전 층 통과): ${coverageSummary(coverage)}`);
   }
   console.log("\n완료");
 }
