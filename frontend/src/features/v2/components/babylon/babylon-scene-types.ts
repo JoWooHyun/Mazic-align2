@@ -9,6 +9,7 @@ import type { FindMarginStats } from "../../utils/dental/margin-detect";
 import type { SupportParams, SupportPointV2 } from "../../support/types";
 import type { RouteReport } from "../../support/route-plan";
 import type { RedesignDetectStats } from "./redesign-detect-actions";
+import type { RedesignTarget } from "./redesign-target";
 import type { EditMode } from "../EditModeControls";
 import type { ViewPreset } from "../../utils/camera-views";
 import type { STLFileV2 } from "../../types/stl";
@@ -207,11 +208,16 @@ export interface BabylonSceneHandle {
   /**
    * 모든 STL 메쉬에 대해 자동 서포트 점을 생성해서 반환한다.
    * 저장은 호출 측에서 IndexedDB 에 commit.
+   *
+   * targetStlIds = 이번 생성이 **실제로 다룬** STL(씬에 메시가 올라온 것 전부).
+   *   재실행 = 교체(신규 8 / D5)에서 "어느 모델의 기존 자동 서포트를 바꿀지" 의
+   *   기준이다 — 새 점이 0개인 모델도 다뤘으면 포함되고, 아직 로딩 중이라 메시가
+   *   없는 STL 은 빠진다(안 다룬 모델의 서포트를 지우지 않게).
    */
   generateAutoSupports: (
     projectId: string,
     params: SupportParams,
-  ) => SupportPointV2[];
+  ) => { points: SupportPointV2[]; targetStlIds: string[] };
   /**
    * 현재 씬의 STL + 서포트 메쉬를 합쳐 binary STL Blob 으로 반환.
    * 모델이 0 개면 null.
@@ -459,9 +465,11 @@ export interface BabylonSceneHandle {
   /**
    * 서포트 검출(S-2 워커 경로)에 넘길 입력을 만든다 — world 삼각형 + 활성 STL id.
    *   ⚠️ triangles 는 transferable 로 워커에 넘어가므로 호출 뒤 재사용 금지.
+   *   worldMatrix 는 삼각형을 뽑은 시점의 활성 STL world 행렬 사본 — stlId 와 함께
+   *   생성의 대상 모델로 고정해 `routeAndFinalizeRedesignPoints` 에 넘긴다(신규 9).
    */
   prepareRedesignDetectInput: () =>
-    | { ok: true; triangles: Float32Array; stlId: string }
+    | { ok: true; triangles: Float32Array; stlId: string; worldMatrix: number[] }
     | { ok: false; reason: string };
   /** 워커가 돌려준 서포트 점을 뷰어에 표시한다 (S-2). */
   renderRedesignPoints: (points: SupportPointV2[]) => void;
@@ -474,12 +482,18 @@ export interface BabylonSceneHandle {
    *   coordSpace='stl-local' 로 반환하고, 닿을 곳이 없는 점은 **저장 목록에서
    *   빼고 report 에 카운트**한다(조용히 버리지 않는다 — 연구 7절-6).
    *   반환 점을 저장하면 useSupportMeshSync 가 경로별 형상을 세운다.
-   *   report 는 활성 STL 이 없어 라우팅을 못 돌린 경우 null.
+   *
+   *   대상 모델은 **현재 선택이 아니라** 생성 시작 시점에 고정한 target 이다
+   *   (신규 9). 그 모델이 사라졌거나 움직였으면, 또는 씬이 없으면 `ok:false` —
+   *   라우팅 전 원시 점을 그대로 돌려주는 폴백은 없다(신규 11).
    */
   routeAndFinalizeRedesignPoints: (
     points: SupportPointV2[],
     params: SupportParams,
-  ) => { points: SupportPointV2[]; report: RouteReport | null };
+    target: RedesignTarget,
+  ) =>
+    | { ok: true; points: SupportPointV2[]; report: RouteReport }
+    | { ok: false; reason: string };
 }
 
 /** 아일랜드 검출 요약 통계 (패널 표시용). 원본 onIslandDetectionComplete 페이로드 축약. */

@@ -127,6 +127,61 @@ export async function deleteSupportsByIds(ids: string[]): Promise<void> {
   });
 }
 
+/**
+ * 프로젝트 서포트 **교체** — 지울 점 고르기·삭제·추가를 **한 transaction** 으로
+ * 처리한다 (자동 서포트 재실행 = 교체, 정리_20261001 신규 8 / D5).
+ *
+ *   교체는 "기존 세트 삭제 + 새 세트 추가" 인데, 둘을 따로 부르면 그 사이에서
+ *   실패했을 때 반쯤 바뀐 상태(옛 세트만 지워짐 등)가 남는다. IndexedDB 는 같은
+ *   transaction 안의 요청 하나라도 실패하면 전체를 abort 하므로, 여기서 한 tx 로
+ *   묶으면 "전부 바뀜 / 전혀 안 바뀜" 둘 중 하나만 남는다.
+ *
+ *   지울 점은 **tx 안에서 읽은 최신 목록**으로 고른다(`pickRemoveIds` — 동기 함수).
+ *   호출 측 React state 로 고르면 그 사이 다른 생성 경로가 저장한 점을 못 보고
+ *   두 세트가 겹칠 수 있다. 고르는 함수가 throw 하면 tx 를 abort 하고 reject 한다.
+ *
+ *   undo/redo 도 이 함수로 되돌린다(고르는 함수 = 고정 id 목록) — 같은 원자성.
+ *
+ * @returns 실제로 지운 레코드 — DB 에 있던 그대로(undo 복원용 스냅샷).
+ */
+export async function replaceSupportsInProject(
+  projectId: string,
+  pickRemoveIds: (existing: SupportPointV2[]) => readonly string[],
+  add: readonly SupportPointV2[],
+): Promise<SupportPointV2[]> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_SUPPORTS, "readwrite");
+    const store = tx.objectStore(STORE_SUPPORTS);
+    const existing: SupportPointV2[] = [];
+    let removed: SupportPointV2[] = [];
+    let pickError: unknown = null;
+    const idx = store.index("by_project");
+    idx.openCursor(IDBKeyRange.only(projectId)).onsuccess = (e) => {
+      const cursor = (e.target as IDBRequest<IDBCursorWithValue | null>).result;
+      if (cursor) {
+        if (!isDiscRecord(cursor.value)) {
+          existing.push(cursor.value as SupportPointV2);
+        }
+        cursor.continue();
+        return;
+      }
+      // 목록 끝 — 같은 tx 안에서 삭제·추가 (사이에 다른 쓰기가 끼어들 틈 없음).
+      try {
+        const ids = new Set(pickRemoveIds(existing));
+        removed = existing.filter((s) => ids.has(s.id));
+        for (const s of removed) store.delete(s.id);
+        for (const p of add) store.put(p);
+      } catch (err) {
+        pickError = err;
+        tx.abort();
+      }
+    };
+    // 고르는 함수가 던져 직접 abort 한 경우는 그 원인(pickError)을 우선한다 — 나머지는 공용 settleTx(C2).
+    settleTx(tx, () => resolve(removed), (err) => reject(pickError ?? err));
+  });
+}
+
 /** 한 프로젝트의 모든 서포트 삭제. */
 export async function deleteSupportsByProject(projectId: string): Promise<void> {
   const db = await openDb();

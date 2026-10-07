@@ -1,7 +1,8 @@
 // 서포트 생성 핸들 그룹 — generateAutoSupports/autoSupportIslands.
 //   원본 useImperativeHandle 의 자동 서포트 메서드를 순수 이동. 검출 영역 자동 서포트
 //   (autoSupportIslands)는 island faceFilter + 마진 가드 + 이동 후 표면 재검증 포함.
-//   로직·수치·문자열 무변경.
+//   로직·수치·문자열 무변경. (신규 8: generateAutoSupports 는 교체 범위용으로 다룬
+//   STL 목록 targetStlIds 를 함께 돌려준다 — 점 생성 자체는 그대로.)
 import { Ray, Vector3 } from "@babylonjs/core";
 import { autoGenerateSupportPoints } from "../../../support/utils/auto-generate";
 import { guardContactAgainstMargin } from "../../../utils/dental/margin-guard";
@@ -19,9 +20,11 @@ export function buildSupportGenHandle(ctx: SceneCtx): SupportGenHandle {
   return {
     generateAutoSupports(projectId, params) {
       const scene = ctx.sceneRef.current;
-      if (!scene) return [];
+      if (!scene) return { points: [], targetStlIds: [] };
       const out: SupportPointV2[] = [];
       const all = Array.from(ctx.meshMapRef.current.entries());
+      // 이번 생성이 다룬 STL — 재실행 = 교체(신규 8)의 교체 범위. 점 생성 로직 무변경.
+      const targetStlIds = all.map(([stlId]) => stlId);
       for (const [stlId, mesh] of all) {
         const others = all
           .filter(([id]) => id !== stlId)
@@ -36,7 +39,7 @@ export function buildSupportGenHandle(ctx: SceneCtx): SupportGenHandle {
         );
         out.push(...pts);
       }
-      return out;
+      return { points: out, targetStlIds };
     },
     autoSupportIslands(projectId, params) {
       const scene = ctx.sceneRef.current;

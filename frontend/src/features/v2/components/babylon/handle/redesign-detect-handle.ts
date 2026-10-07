@@ -28,8 +28,8 @@ export function buildRedesignDetectHandle(ctx: SceneCtx): RedesignDetectHandle {
     clearRedesignDetect() {
       disposeRedesignVisualization(ctx);
     },
-    routeAndFinalizeRedesignPoints(points, params) {
-      return routeAndFinalizePoints(ctx, points, params);
+    routeAndFinalizeRedesignPoints(points, params, target) {
+      return routeAndFinalizePoints(ctx, points, params, target);
     },
     // S-2 워커 경로 — 씬 접근(삼각형 추출)과 시각화만 담당.
     prepareRedesignDetectInput() {

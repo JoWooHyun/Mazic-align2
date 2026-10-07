@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, Navigate } from "react-router-dom";
 
 import { useProjectV2 } from "../hooks/useProjectsV2";
@@ -176,19 +176,23 @@ const ViewerV2Page: React.FC = () => {
   );
 
   // 재설계 서포트 무효화 안내 (B-1). 5초 뒤 자동 소멸.
+  //   자동 서포트 교체 안내(신규 8)도 같은 자리를 쓴다(showViewportNotice).
   const [redesignInvalidNotice, setRedesignInvalidNotice] = useState<
     string | null
   >(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleRedesignInvalidated = (count: number) => {
+  const showViewportNotice = useCallback((message: string) => {
     if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
-    setRedesignInvalidNotice(
-      `모델 변형으로 재설계 서포트 ${count}개가 제거되었습니다. ` +
-        `서포트 생성을 다시 실행하세요. (Ctrl+Z로 되돌리기 가능)`,
-    );
+    setRedesignInvalidNotice(message);
     noticeTimerRef.current = setTimeout(
       () => setRedesignInvalidNotice(null),
       5000,
+    );
+  }, []);
+  const handleRedesignInvalidated = (count: number) => {
+    showViewportNotice(
+      `모델 변형으로 재설계 서포트 ${count}개가 제거되었습니다. ` +
+        `서포트 생성을 다시 실행하세요. (Ctrl+Z로 되돌리기 가능)`,
     );
   };
   // 언마운트 시 타이머 정리 (setState 누수 방지).
@@ -254,6 +258,7 @@ const ViewerV2Page: React.FC = () => {
     followAttachedChildren,
     setCtxMenu,
     editLocked: slicePreview.on,
+    onNotice: showViewportNotice,
   });
 
   // Dental 색칠/마진/아일랜드/검출→서포트 상태·핸들러.
@@ -262,8 +267,8 @@ const ViewerV2Page: React.FC = () => {
     supportParams,
     sceneHandleRef,
     layerHeightMm: slicePreview.layerHeightMm,
-    addSupports,
     refreshSupports,
+    onNotice: showViewportNotice,
   });
 
   // 네이티브 열기 + 드래그앤드롭.
