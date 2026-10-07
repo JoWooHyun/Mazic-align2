@@ -26,6 +26,7 @@
  *      Douglas–Peucker(허용 오차 = 피치 p) → 띠 경계 붙이기 → 최소 선분 길이 → 베드 µm.
  *   4. 다시 검사해 통과할 때까지 반복(상한 maxIterations). 칠한 곳은 U 에서 빠지므로 다음 회차는 남은 곳만 본다.
  *      그래도 실패면 pass=false 로 돌려준다(writer 가 층 실패로 남기고 gen 은 파일을 안 쓴다).
+ *   (D1a 2재료) excludePolygonsBed 를 주면 흰 = 재료 영역(raster(polys) − raster(뺄 쪽)) — 대상 찾기·U·검사가 모두 그 영역.
  *
  * 문턱과 근거 (w = 도포폭, p = 투사 피치):
  *   - 점 도포 문턱 = 중심선 총길이 < w/2: 성분은 중심선 양옆으로 반폭씩 퍼져 있어 실제 크기 ≈ 중심선 + 폭이다.
@@ -53,7 +54,7 @@ import {
 } from './task0-coverage';
 import { squaredDistanceTransform } from './task0-distance';
 import { TASK0_DEFAULTS, bedToPixel, pixelCenterToBed } from './task0-frame';
-import { rasterizeTask0Mask, type Task0RasterFrame } from './task0-mask';
+import { rasterizeTask0Region, type Task0RasterFrame } from './task0-mask';
 import type { Task0BedPolygon } from './task0-slice';
 
 // ==================== 타입 ====================
@@ -71,6 +72,13 @@ export interface Task0ThinFillOptions {
   frame?: Task0RasterFrame;
   /** 채움 회차 상한 (기본 4) */
   maxIterations?: number;
+  /**
+   * (D1a 2재료) 흰에서 뺄 단면 — 재료 영역 R_A = PA − PB 에서 채움을 찾는다(task0-mask rasterizeTask0Region).
+   * 검사도 같은 영역으로(task0-coverage excludePolygonsBed). 없으면 지금과 같은 결과.
+   */
+  excludePolygonsBed?: readonly Task0BedPolygon[];
+  /** (D1a 2재료) 넘침 기준 단면 — 합집합 PA ∪ PB (task0-coverage overflowPolygonsBed). 없으면 지금과 같은 결과 */
+  overflowPolygonsBed?: readonly Task0BedPolygon[];
 }
 
 export interface Task0ThinFillResult {
@@ -394,13 +402,14 @@ function finishPolyline(pts: MmPoint[], origin: number, w: number, minSegMm: num
  */
 function innerUncoveredTargets(
   polys: readonly Task0BedPolygon[],
+  exclude: readonly Task0BedPolygon[],
   segments: readonly Task0DepositSegment[],
   w: number,
   frame: Task0RasterFrame,
 ): Task0CoverageComponent[] {
   const rules = TASK0_COVERAGE_RULES;
   const p = frame.pixelPitchUm / UM_PER_MM;
-  const mask = rasterizeTask0Mask(polys, { frame, roi: 'bbox', marginPx: 2 });
+  const mask = rasterizeTask0Region(polys, exclude, { frame, roi: 'bbox', marginPx: 2 });
   const roi = { col0: mask.col0, row0: mask.row0, width: mask.width, height: mask.height };
   const nPix = roi.width * roi.height;
   if (nPix === 0) return [];
@@ -444,14 +453,14 @@ function fillOnce(
   polys: readonly Task0BedPolygon[],
   segments: readonly Task0DepositSegment[],
   targets: readonly Task0CoverageComponent[],
-  opts: Required<Omit<Task0ThinFillOptions, 'maxIterations'>>,
+  opts: Required<Omit<Task0ThinFillOptions, 'maxIterations' | 'overflowPolygonsBed'>>,
   dotKeys: Set<string>,
 ): { centerlines: Task0UmPoint[][]; dots: Task0UmPoint[][] } {
   const { frame, depositWidthMm: w, bandOriginMm: origin } = opts;
   const p = frame.pixelPitchUm / UM_PER_MM;
   const minSegMm = task0MinFillSegmentMm(opts.eRatePerMm);
   const dotHalfUm = Math.round((task0DotLengthMm(w, opts.eRatePerMm) * UM_PER_MM) / 2);
-  const mask = rasterizeTask0Mask(polys, { frame, roi: 'bbox', marginPx: 2 });
+  const mask = rasterizeTask0Region(polys, opts.excludePolygonsBed, { frame, roi: 'bbox', marginPx: 2 });
   const roi = { col0: mask.col0, row0: mask.row0, width: mask.width, height: mask.height };
   const nPix = roi.width * roi.height;
   const bead = new Uint8Array(nPix);
@@ -463,15 +472,33 @@ function fillOnce(
 
   const centerlines: Task0UmPoint[][] = [];
   const dots: Task0UmPoint[][] = [];
+  // (D1a 2재료) 뺄 단면(다른 재료 PB)이 있으면 점 도포 끝이 그 영역 픽셀 안으로 들어가지 않게 줄인다 — 재료 경계에 붙은 가는
+  //   조각의 점 도포(길이 w/2)가 B 우선 영역으로 최대 w/4 파고들던 것(리뷰 재작업 — 구 + 기둥에서 실측 0.11 mm). 가운데는 그대로,
+  //   양 끝을 픽셀 한 칸씩 안으로, 최소 길이(E 2 눈금)까지. 단일 재료는 뺄 단면이 없어 그대로다.
+  const exMask =
+    opts.excludePolygonsBed.length > 0 ? rasterizeTask0Region(opts.excludePolygonsBed, [], { frame, roi }).data : null;
+  const inExclude = (xUm: number, yUm: number): boolean => {
+    if (exMask === null) return false;
+    const [c, r] = bedToPixel(xUm / UM_PER_MM, yUm / UM_PER_MM, frame);
+    const i = c - roi.col0;
+    const j = r - roi.row0;
+    return i >= 0 && j >= 0 && i < roi.width && j < roi.height && exMask[j * roi.width + i] !== 0;
+  };
+  const minDotHalfUm = Math.ceil(((2 * E_TICK_MM) / opts.eRatePerMm / 2) * UM_PER_MM);
+  const stepUm = Math.max(1, Math.round(p * UM_PER_MM));
   const addDot = (t: Task0CoverageComponent): void => {
     const cx = toUm(t.innerXMm);
     const cy = toUm(t.innerYMm);
     const key = `${cx},${cy}`;
     if (dotKeys.has(key)) return;
     dotKeys.add(key);
+    let left = dotHalfUm;
+    let right = dotHalfUm;
+    while (left > minDotHalfUm && inExclude(cx - left, cy)) left = Math.max(minDotHalfUm, left - stepUm);
+    while (right > minDotHalfUm && inExclude(cx + right, cy)) right = Math.max(minDotHalfUm, right - stepUm);
     dots.push([
-      [cx - dotHalfUm, cy],
-      [cx + dotHalfUm, cy],
+      [cx - left, cy],
+      [cx + right, cy],
     ]);
   };
 
@@ -582,10 +609,17 @@ export function findTask0ThinFills(
     eRatePerMm: options.eRatePerMm,
     bandOriginMm: options.bandOriginMm,
     frame: options.frame ?? TASK0_DEFAULTS,
+    excludePolygonsBed: options.excludePolygonsBed ?? [],
   };
   const maxIterations = options.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const check = (segs: readonly Task0DepositSegment[]): Task0LayerCoverage =>
-    checkTask0LayerCoverage(polys, segs, { depositWidthMm: opts.depositWidthMm, frame: opts.frame, detail: true });
+    checkTask0LayerCoverage(polys, segs, {
+      depositWidthMm: opts.depositWidthMm,
+      frame: opts.frame,
+      detail: true,
+      excludePolygonsBed: options.excludePolygonsBed,
+      overflowPolygonsBed: options.overflowPolygonsBed,
+    });
 
   const segments: Task0DepositSegment[] = baseSegments.slice();
   const centerlines: Task0UmPoint[][] = [];
@@ -596,7 +630,9 @@ export function findTask0ThinFills(
   while (!coverage.pass && iterations < maxIterations) {
     const u = coverage.uncovered;
     const targets = u ? [...u.b, ...u.c, ...u.d] : [];
-    if (!coverage.a.pass) targets.push(...innerUncoveredTargets(polys, segments, opts.depositWidthMm, opts.frame));
+    if (!coverage.a.pass) {
+      targets.push(...innerUncoveredTargets(polys, opts.excludePolygonsBed, segments, opts.depositWidthMm, opts.frame));
+    }
     if (targets.length === 0) break; // 넘침만 실패 — 채움으로 고칠 대상이 아님
     iterations++;
     const added = fillOnce(polys, segments.concat(uncountedSegments), targets, opts, dotKeys);

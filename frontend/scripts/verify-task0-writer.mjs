@@ -23,6 +23,11 @@
 //          상태), ≥ retractMinTravel 트래블(경로 길이 — 파킹 → 첫 도포점 포함)을 언리트랙트로 하지 않음, 모든 층 블록 끝
 //          리트랙트, 층마다 E 단독 순변화 0·E+r 수 = E−r 수(첫 층 포함), 파일 전체 순변화 0, 빈 층 E 줄 0,
 //          인접 규칙 — E+r 바로 다음 줄은 도포, E−r 다음 이동 줄은 트래블 또는 층 블록 끝(§5 "트래블을 마친 뒤 도포 직전")
+//          (D1a) 상태·순변화는 **툴별** — T 줄을 따라 지금 툴이 바뀌고 T 전환 직전 지금 툴 리트랙트, E−r 바로 다음 T 줄 허용.
+//          이 스크립트의 단일 재료 출력은 T 줄이 프리앰블 T0 뿐이라 판정이 예전과 같다(2재료 출력은 verify-task0-dual.mjs 가
+//          이 함수를 쓴다). c6 잔차 이월 누적도 같은 식으로 툴별, c2 는 ctx.dual 일 때만 층 안 T0/T1 줄 허용,
+//          c5 는 ctx.relaxTravelShape(2재료 두 번째 툴 패스)일 때 트래블 모양을 보지 않고, ctx.relaxRowDirection(2재료 패스)일 때
+//          행 방향·띠 방향 번갈아를 보지 않는다(대신 띠 안 항목은 한 방향 X 순서, 한 행 구간끼리 간격 ≥ w — 띠 비감소는 그대로).
 //       c4 트래블 교차 0 — 트래블 경로(연속 트래블 = 한 경로)를 양 끝 w/2 씩 줄인 나머지가 그 층에서
 //          이미 칠한 줄(폭 w)에서 w/2 − 1e-6 미만으로 다가가지 않음
 //       c4b (Z1-b2 보강) 트래블 다리(선분)와 그 시점까지 칠한 중심선의 **실제 교차 0** — 잘라내기 없이 정수 µm 로.
@@ -103,9 +108,9 @@ import {
   resolveTask0WriterParams,
 } from "../src/features/v2/utils/task0/task0-gcode-writer.ts";
 
-const START = "; EXECUTABLE_BLOCK_START";
-const LAYER = ";LAYER_CHANGE";
-const SNAP_TOL = 0.0011; // 1 µm 격자 반올림 차이 허용 (mm)
+export const START = "; EXECUTABLE_BLOCK_START";
+export const LAYER = ";LAYER_CHANGE";
+export const SNAP_TOL = 0.0011; // 1 µm 격자 반올림 차이 허용 (mm)
 
 // ── assert 유틸 ──────────────────────────────────────────────────────────
 let failed = 0;
@@ -119,7 +124,7 @@ function assert(cond, msg) {
 }
 
 /** 위반 집계 — 메시지별 개수 + 앞 5개 줄 번호 */
-class Viol {
+export class Viol {
   constructor() {
     this.map = new Map();
   }
@@ -394,10 +399,10 @@ export function buildModel(gcode, park = [TASK0_DEFAULTS.parkXMm, TASK0_DEFAULTS
   return { lines, startIdx, layers };
 }
 
-const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
+export const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
 
 /** 층 안 트래블 묶음 — 도포 사이(또는 층 시작~첫 도포)의 연속 트래블·E 단독 줄 */
-function travelGroups(layer) {
+export function travelGroups(layer) {
   const groups = [];
   let g = null;
   let depositsBefore = 0;
@@ -562,7 +567,7 @@ function sameSpans(p, q, tol) {
 // ── 검사 c1~c8 ───────────────────────────────────────────────────────────
 
 /** c1 — Task0 파서 이식판 3모드 */
-function checkParser(gcode, ctx) {
+export function checkParser(gcode, ctx) {
   const v = new Viol();
   const expectLayers = task0LayerCount(ctx.topY, ctx.lh);
   const modes = [
@@ -591,13 +596,13 @@ const NUM_Z = "(?:0|[1-9][0-9]*)(?:\\.[0-9]*[1-9])?"; // 끝 0 정리된 양수 
 const RE_ZMARK = new RegExp(`^;Z:(${NUM_Z})$`);
 const RE_HEIGHT = new RegExp(`^;HEIGHT:(${NUM_Z})$`);
 const RE_ZMOVE = new RegExp(`^G1 Z(${NUM_Z})$`);
-const RE_TRAVEL = /^G1 X(-?[0-9]+\.[0-9]{3}) Y(-?[0-9]+\.[0-9]{3}) F([1-9][0-9]*)$/;
-const RE_DEPOSIT = /^G1 X(-?[0-9]+\.[0-9]{3}) Y(-?[0-9]+\.[0-9]{3}) E([0-9]+\.[0-9]{5}) F([1-9][0-9]*)$/;
-const RE_EONLY = /^G1 E(-?[0-9]+\.[0-9]{5}) F([1-9][0-9]*)$/;
+export const RE_TRAVEL = /^G1 X(-?[0-9]+\.[0-9]{3}) Y(-?[0-9]+\.[0-9]{3}) F([1-9][0-9]*)$/;
+export const RE_DEPOSIT = /^G1 X(-?[0-9]+\.[0-9]{3}) Y(-?[0-9]+\.[0-9]{3}) E([0-9]+\.[0-9]{5}) F([1-9][0-9]*)$/;
+export const RE_EONLY = /^G1 E(-?[0-9]+\.[0-9]{5}) F([1-9][0-9]*)$/;
 const RE_FORBIDDEN = /^(G28|G91|G92|M82|M104|M109|M140|M190|M106|M107|M84|M400|G4|G10|G11|M204|MANUAL_STEPPER|SET_VELOCITY_LIMIT)\b/i;
 
 /** c2 — 줄 형식 */
-function checkFormat(gcode, ctx) {
+export function checkFormat(gcode, ctx) {
   const v = new Viol();
   const p = ctx.params;
   const expectLayers = task0LayerCount(ctx.topY, ctx.lh);
@@ -649,6 +654,8 @@ function checkFormat(gcode, ctx) {
       continue;
     }
     if (n < 0) v.add("첫 ;LAYER_CHANGE 전에 프리앰블 외 줄", ln);
+    // (D1a) 2재료 출력만 층 블록 안 T0/T1 줄 허용 (규격 §6 — 툴 전환). 단일 재료면 아래에서 "허용되지 않은 줄 모양"
+    if (ctx.dual && n >= 0 && (l === "T0" || l === "T1")) continue;
     if (l === "") v.add("빈 줄", ln);
     if (l.includes(";")) v.add(l.startsWith(";") ? "층 안 주석 줄(마커 외)" : "명령 줄 끝 주석", ln);
     if (/[0-9.][eE][+-]?[0-9]/.test(l)) v.add("지수 표기 숫자", ln);
@@ -672,25 +679,33 @@ function checkFormat(gcode, ctx) {
   return v.list;
 }
 
+/** 툴 전환 줄(T0/T1)이면 툴 번호, 아니면 -1 */
+export const toolOfOp = (op) => (op.kind === "other" && (op.cmd === "T0" || op.cmd === "T1") ? Number(op.cmd[1]) : -1);
+
 /**
- * c3 — 리트랙트 상태 기계 (규격 v0.3.4 §5·§10, 툴 T0 — writer 는 단일 재료).
+ * c3 — 리트랙트 상태 기계 (규격 v0.3.4 §5·§6·§10). (D1a) **툴별** — T 줄을 따라 지금 툴이 바뀌고, 상태·순변화를 툴마다 본다.
+ *   단일 재료 출력(T 줄이 프리앰블 T0 뿐)이면 툴 T0 하나라 예전 판정과 같다.
  *   시작 = **모든 툴 리트랙트**(Task0 가 프라이밍 후 E−r 까지 하고 넘김). 그래서 툴의 첫 도포 앞에도 E+r 이 있어야 하고
  *   (예외 없음 — v0.3.3 의 "처음 쓸 때 E+r 생략" 삭제), 파킹 → 첫 도포점 트래블도 리트랙트 상태여야 한다.
- *   층마다: 도포 줄은 언리트랙트 상태, ≥ retractMinTravel 트래블(경로 길이)은 리트랙트 상태, 층 블록 끝은 리트랙트,
- *   E 단독 줄 순변화 0(첫 층 포함 — E+r 수 = E−r 수), 빈 층 E 줄 0. 파일 전체 순변화 0.
- *   인접: E+r 바로 다음 줄 = 도포, E−r 다음 이동 줄 = 트래블 또는 층 블록 끝 (§5 문구 그대로 — 순변화 0 인 쓸모없는 쌍 금지).
+ *   층마다: 도포 줄은 (지금 툴이) 언리트랙트 상태, ≥ retractMinTravel 트래블(경로 길이)은 리트랙트 상태, 층 블록 끝은 모든 툴
+ *   리트랙트, 툴마다 E 단독 줄 순변화 0(첫 층 포함 — E+r 수 = E−r 수), 빈 층 E 줄 0. 파일 전체도 툴마다 순변화 0.
+ *   T 전환 직전 지금 툴은 리트랙트 상태(§5 "T 전환 직전은 항상 리트랙트" — 언리트랙트였으면 E−r 이 있어야).
+ *   인접: E+r 바로 다음 줄 = 도포, E−r 다음 = T 줄 또는 (이동 줄이) 트래블 또는 층 블록 끝 (§5 문구 그대로 — 순변화 0 인
+ *   쓸모없는 쌍 금지, 전환 순서 E−r → T → 트래블 → E+r → 도포).
  */
-function checkRetract(model, ctx) {
+export function checkRetract(model, ctx) {
   const v = new Viol();
   const r = ctx.params.retractMm;
   const minTravel = ctx.params.retractMinTravelMm;
-  let retracted = true; // 시작 = 리트랙트 (v0.3.4 §10)
-  let used = false;
-  let fileNet = 0;
+  const retracted = [true, true]; // 시작 = 모든 툴 리트랙트 (v0.3.4 §10)
+  const used = [false, false];
+  const fileNet = [0, 0];
+  const tag = (t) => (t === 0 ? "" : ` (T${t})`);
+  let tool = 0; // 프리앰블 T0
   for (const layer of model.layers) {
-    let net = 0;
-    let plus = 0;
-    let minus = 0;
+    const net = [0, 0];
+    const plus = [0, 0];
+    const minus = [0, 0];
     let deposited = false;
     let eLines = 0;
     let group = null;
@@ -701,37 +716,41 @@ function checkRetract(model, ctx) {
       group = null;
     };
     for (const op of layer.ops) {
-      if (op.kind === "eonly") {
+      const t = toolOfOp(op);
+      if (t >= 0) {
+        if (!retracted[tool]) v.add(`T 전환 직전 E−r 없음 (규격 §5: T 전환 직전은 항상 리트랙트)${tag(tool)}`, op.lineNo);
+        tool = t;
+      } else if (op.kind === "eonly") {
         eLines++;
         const e = op.args.E;
-        net += e;
+        net[tool] += e;
         if (Math.abs(Math.abs(e) - r) > 0.5e-5 + 1e-12) v.add(`E 단독 줄 크기 ≠ r(${r})`, op.lineNo);
         if (e < 0) {
-          minus++;
-          if (retracted) v.add("이중 리트랙트", op.lineNo);
-          retracted = true;
+          minus[tool]++;
+          if (retracted[tool]) v.add(`이중 리트랙트${tag(tool)}`, op.lineNo);
+          retracted[tool] = true;
         } else if (e > 0) {
-          plus++;
-          if (!retracted) v.add("이중 언리트랙트", op.lineNo);
-          retracted = false;
+          plus[tool]++;
+          if (!retracted[tool]) v.add(`이중 언리트랙트${tag(tool)}`, op.lineNo);
+          retracted[tool] = false;
         } else {
           v.add("E0 단독 줄", op.lineNo);
         }
       } else if (op.kind === "travel") {
         if (!group) group = { len: 0, unretracted: false, line: op.lineNo };
         group.len += dist(op.from, op.to);
-        if (!retracted) group.unretracted = true;
+        if (!retracted[tool]) group.unretracted = true;
       } else if (op.kind === "deposit") {
         closeGroup();
-        if (retracted) {
+        if (retracted[tool]) {
           v.add(
-            used
-              ? "리트랙트 상태에서 도포 (E+r 없음)"
-              : "툴 첫 도포 앞 E+r 없음 (v0.3.4: 리트랙트 상태로 시작 — 첫 도포도 예외 없음)",
+            used[tool]
+              ? `리트랙트 상태에서 도포 (E+r 없음)${tag(tool)}`
+              : `툴 첫 도포 앞 E+r 없음 (v0.3.4: 리트랙트 상태로 시작 — 첫 도포도 예외 없음)${tag(tool)}`,
             op.lineNo,
           );
         }
-        used = true;
+        used[tool] = true;
         deposited = true;
       }
     }
@@ -746,7 +765,8 @@ function checkRetract(model, ctx) {
         // E+r 바로 다음 줄은 도포 (사이에 트래블·다른 E 줄·T 금지)
         if (ops[k + 1]?.kind !== "deposit") v.add("E+r 바로 다음 줄이 도포가 아님 (규격 §5: 트래블을 마친 뒤 도포 직전)", op.lineNo);
       } else {
-        // E−r 다음 이동 줄은 트래블이거나 층 블록 끝 (T0/T1 은 건너뜀 — §6 전환 순서 E−r → T1 → 트래블)
+        // E−r 바로 다음이 T 줄이면 전환 순서(E−r → T → 트래블) — 아니면 다음 이동 줄이 트래블이거나 층 블록 끝
+        if (ops[k + 1] !== undefined && toolOfOp(ops[k + 1]) >= 0) continue;
         let j = k + 1;
         while (j < ops.length && ops[j].kind === "other") j++;
         if (j < ops.length && ops[j].kind !== "travel") {
@@ -754,18 +774,22 @@ function checkRetract(model, ctx) {
         }
       }
     }
-    if (!retracted) v.add("층 블록 끝이 리트랙트 상태가 아님", layer.lineNo);
-    if (Math.abs(net) > 1e-9) v.add(`층 E 단독 순변화 ${net.toFixed(5)} ≠ 0 (첫 층 포함)`, layer.lineNo);
-    if (plus !== minus) v.add(`층 E+r ${plus}줄 ≠ E−r ${minus}줄`, layer.lineNo);
+    for (const t of [0, 1]) {
+      if (!retracted[t]) v.add(`층 블록 끝이 리트랙트 상태가 아님${tag(t)}`, layer.lineNo);
+      if (Math.abs(net[t]) > 1e-9) v.add(`층 E 단독 순변화 ${net[t].toFixed(5)} ≠ 0 (첫 층 포함)${tag(t)}`, layer.lineNo);
+      if (plus[t] !== minus[t]) v.add(`층 E+r ${plus[t]}줄 ≠ E−r ${minus[t]}줄${tag(t)}`, layer.lineNo);
+      fileNet[t] += net[t];
+    }
     if (!deposited && eLines > 0) v.add("빈 층에 E 줄 (층 시작이 이미 리트랙트 상태 — 바꿀 것 없음)", layer.lineNo);
-    fileNet += net;
   }
-  if (Math.abs(fileNet) > 1e-9) v.add(`파일 전체 E 단독 순변화 ${fileNet.toFixed(5)} ≠ 0`);
+  for (const t of [0, 1]) {
+    if (Math.abs(fileNet[t]) > 1e-9) v.add(`파일 전체 E 단독 순변화 ${fileNet[t].toFixed(5)} ≠ 0${tag(t)}`);
+  }
   return v.list;
 }
 
 /** c4 — 트래블이 이미 칠한 줄을 가로지르지 않음 */
-function checkTravelCrossing(model, ctx) {
+export function checkTravelCrossing(model, ctx) {
   const v = new Viol();
   const half = ctx.params.depositWidthMm / 2;
   for (const layer of model.layers) {
@@ -825,7 +849,7 @@ const withinI = (p, a, b) =>
  * 다리 pq 와 칠한 선분 ab 의 접촉 — { kind: "none" } | { kind: "cross" } | { kind: "touch", points } |
  * { kind: "overlap", containsP } (같은 직선 위 겹침 길이 > 0, containsP = 겹침이 p 를 포함)
  */
-function legSegmentContact(p, q, a, b) {
+export function legSegmentContact(p, q, a, b) {
   const o1 = orientI(p, q, a);
   const o2 = orientI(p, q, b);
   const o3 = orientI(a, b, p);
@@ -855,7 +879,7 @@ function legSegmentContact(p, q, a, b) {
  * c4b — 트래블 다리가 칠한 중심선과 실제로 교차·접촉·겹침 0 (규칙은 위 머리 주석).
  * 되짚기(첫 다리가 직전 도포 방향과 90° 넘게 벌어짐, 그중 같은 직선 겹침) 수를 ctx.retraceReport 에 남긴다 — 위반 아님.
  */
-function checkTravelContact(model, ctx) {
+export function checkTravelContact(model, ctx) {
   const v = new Viol();
   const perLayer = [];
   for (const layer of model.layers) {
@@ -924,7 +948,7 @@ function checkTravelContact(model, ctx) {
  * 행 줄 분류 — 행 높이(참조 ySnap)의 수평 도포 중 x 범위가 참조 기대 구간(w/2 축소)과 같은 줄은 행 줄(op.rowK = 참조 행 번호),
  * 나머지는 채움 줄(op.rowK = -1). 참조가 없으면 전부 -1.
  */
-function classifyDeposits(layer, ref) {
+export function classifyDeposits(layer, ref) {
   for (const op of layer.ops) {
     if (op.kind !== "deposit") continue;
     op.rowK = -1;
@@ -946,7 +970,7 @@ const bandOf = (y, y0, w) => Math.floor((y - y0) / w);
  * c5 — +Y 단조(띠 해상도)·띠 방향·띠 안 X 순서·행 간격·트래블 모양 (Z1-b2 갱신 — 머리 주석 c5 참고).
  * 띠 원점 Y0 = 독립 참조 단면 최소 Y (ctx.refLayers). 참조가 없으면 띠 검사를 못 하므로 위반으로 센다.
  */
-function checkMonotone(model, ctx) {
+export function checkMonotone(model, ctx) {
   const v = new Viol();
   const w = ctx.params.depositWidthMm;
   for (const layer of model.layers) {
@@ -988,8 +1012,25 @@ function checkMonotone(model, ctx) {
         chained = true;
       } else if (op.kind === "travel") chained = false;
     }
+    if (ctx.relaxRowDirection) {
+      // (D1a 2재료 패스) 띠마다 방향은 자유(번갈아·첫 띠 +X 를 안 봄) — 대신 한 띠 안 항목은 한 방향 X 순서
+      //   (최소 x 비감소 또는 최대 x 비증가). 띠 번호 비감소·띠 경계 자르기((1))는 그대로.
+      const byBand = new Map();
+      for (const it of items) {
+        const xs = it.deps.flatMap((d) => [d.from[0], d.to[0]]);
+        const list = byBand.get(it.band) ?? [];
+        list.push({ min: Math.min(...xs), max: Math.max(...xs), line: it.deps[0].lineNo });
+        byBand.set(it.band, list);
+      }
+      for (const list of byBand.values()) {
+        const up = list.every((e, i) => i === 0 || e.min >= list[i - 1].min - SNAP_TOL);
+        const down = list.every((e, i) => i === 0 || e.max <= list[i - 1].max + SNAP_TOL);
+        if (!up && !down) v.add("띠 안 항목이 한 방향 X 순서가 아님 (2재료 패스)", list[0].line);
+      }
+    }
     const lastKey = new Map();
     for (const it of items) {
+      if (ctx.relaxRowDirection) break;
       const dir = dirOf.get(it.band);
       const xs = it.deps.flatMap((d) => [d.from[0], d.to[0]]);
       const key = dir > 0 ? Math.min(...xs) : -Math.max(...xs);
@@ -1002,6 +1043,7 @@ function checkMonotone(model, ctx) {
     // (4) 행 줄 — 띠 방향(서펜타인), 행 간격 = w 정수배, 한 행 안 구간 간격 ≥ w
     const rowDeps = deps.filter((d) => d.rowK >= 0);
     for (const d of rowDeps) {
+      if (ctx.relaxRowDirection) break; // (D1a 2재료 패스) 행 방향 자유 — 막힌 끝을 피해 반대 끝으로 들어갈 수 있다
       if (Math.sign(d.to[0] - d.from[0]) !== dirOf.get(d.band)) {
         v.add("서펜타인 아님 (도포한 띠마다 번갈아, 첫 띠 +X)", d.lineNo);
       }
@@ -1014,6 +1056,14 @@ function checkMonotone(model, ctx) {
     }
     for (const y of rowYs) {
       const row = rowDeps.filter((d) => d.to[1] === y);
+      if (ctx.relaxRowDirection) {
+        // (D1a 2재료 패스) 행 방향이 구간마다 다를 수 있어 구간 [최소, 최대] 끼리 겹치지 않고 간격 ≥ w 인지만
+        const iv = row.map((d) => [Math.min(d.from[0], d.to[0]), Math.max(d.from[0], d.to[0]), d.lineNo]).sort((a, b) => a[0] - b[0]);
+        for (let j = 1; j < iv.length; j++) {
+          if (iv[j][0] - iv[j - 1][1] < w - SNAP_TOL) v.add("한 행 안 구간이 겹치거나 간격 < w (2재료 패스)", iv[j][2]);
+        }
+        continue;
+      }
       const dir = Math.sign(row[0].to[0] - row[0].from[0]);
       for (let j = 1; j < row.length; j++) {
         const gap = (row[j].from[0] - row[j - 1].to[0]) * dir;
@@ -1030,9 +1080,11 @@ function checkMonotone(model, ctx) {
         continue; // E 단독 줄만 (층 끝 E-r 등)
       } else if (!g.beforeDeposit) {
         v.add("도포 없이 끝나는 트래블", line);
+      } else if (ctx.relaxTravelShape) {
+        continue; // (D1a) 층 안 두 번째 툴 패스 — 전환 트래블·패스 안 트래블은 교차 검사 통과 경로(모양 자유), 교차는 c4
       } else if (!g.afterDeposit) {
         if (legs.length !== 1) v.add("층 첫 트래블(파킹 → 첫 도포점)이 직선 1줄이 아님", line);
-      } else if (!rowOnly) {
+      } else if (!rowOnly || ctx.relaxRowDirection) {
         continue; // 채움 층 — 모양은 자유(우회), 교차는 c4 가 본다
       } else if (legs[0].from[1] === legs[legs.length - 1].to[1]) {
         if (legs.length !== 1) v.add("같은 행 안 트래블이 수평 1줄이 아님", line);
@@ -1047,32 +1099,38 @@ function checkMonotone(model, ctx) {
   return v.list;
 }
 
-/** c6 — E 잔차 이월·|E| ≤ 500 */
-function checkExtrusion(model, ctx) {
+/** c6 — E 잔차 이월·|E| ≤ 500. (D1a) 누적은 툴별(플런저가 따로) — T 줄을 따라 지금 툴의 누적에 더한다 */
+export function checkExtrusion(model, ctx) {
   const v = new Viol();
   const p = ctx.params;
   const rate = (p.depositWidthMm * ctx.lh * p.overfill) / p.syringeKMm3PerMm;
-  let exact = 0;
-  let printed = 0;
+  const exact = [0, 0];
+  const printed = [0, 0];
   let worst = 0;
+  let tool = 0;
   for (const layer of model.layers) {
     for (const op of layer.ops) {
+      const t = toolOfOp(op);
+      if (t >= 0) {
+        tool = t;
+        continue;
+      }
       if ("E" in op.args && Math.abs(op.args.E) > 500) v.add("|E| > 500", op.lineNo);
       if (op.kind !== "deposit") continue;
       if (!(op.args.E >= 0)) v.add("도포 E 가 음수/숫자 아님", op.lineNo);
-      exact += dist(op.from, op.to) * rate;
-      printed += op.args.E;
-      const diff = Math.abs(printed - exact);
+      exact[tool] += dist(op.from, op.to) * rate;
+      printed[tool] += op.args.E;
+      const diff = Math.abs(printed[tool] - exact[tool]);
       worst = Math.max(worst, diff);
       if (diff > 0.5e-5 + 1e-9) v.add("|출력 E 누적 − 정확 누적| > 0.5e-5 (잔차 이월 안 됨)", op.lineNo);
     }
   }
-  ctx.eReport = { exact, printed, worst };
+  ctx.eReport = { exact: exact[0] + exact[1], printed: printed[0] + printed[1], worst, byTool: { exact, printed } };
   return v.list;
 }
 
 /** c7 — 출력 가능 영역 */
-function checkArea(model) {
+export function checkArea(model) {
   const v = new Viol();
   for (const layer of model.layers) {
     for (const op of layer.ops) {
@@ -1084,7 +1142,7 @@ function checkArea(model) {
 }
 
 /** c8 — 독립 참조 nonzero 구간과 행 줄 일치 + 픽스처별 단언 (채움 줄은 커버리지 검사가 본다) */
-function checkReference(model, ctx) {
+export function checkReference(model, ctx) {
   const v = new Viol();
   if (!ctx.meshes) return v.list;
   const w = ctx.params.depositWidthMm;
@@ -1466,7 +1524,7 @@ function buildFixtures(minTravel) {
 }
 
 /** 채움 줄(행 줄이 아닌 도포) 중 pred 를 만족하는 것이 도포한 층마다 있어야 */
-function fillWhereCheck(label, pred) {
+export function fillWhereCheck(label, pred) {
   return (model) => {
     const out = [];
     let layers = 0;
@@ -1482,7 +1540,7 @@ function fillWhereCheck(label, pred) {
 }
 
 /** 여러 픽스처 단언을 한 번에 */
-const allChecks =
+export const allChecks =
   (...checks) =>
   (model, ctx) =>
     checks.flatMap((c) => c(model, ctx));
@@ -1507,7 +1565,7 @@ function rowLinesAt(label, y, x0, x1, count) {
 }
 
 /** 사각 구멍 (x0, x1) × (y0, y1) — 형상 구멍을 w/2 줄인 안쪽 — 을 지나는 도포 줄이 없어야 */
-function holeEmptyCheck(label, x0, x1, y0, y1) {
+export function holeEmptyCheck(label, x0, x1, y0, y1) {
   return (model) => {
     const out = [];
     for (const layer of model.layers) {
@@ -1868,10 +1926,10 @@ function sectionWriterControls(params) {
 
 // ── 대조군 ───────────────────────────────────────────────────────────────
 
-function linesOf(gcode) {
+export function linesOf(gcode) {
   return gcode.slice(0, -1).split("\n");
 }
-const joinLines = (lines) => lines.join("\n") + "\n";
+export const joinLines = (lines) => lines.join("\n") + "\n";
 const isDeposit = (l) => RE_DEPOSIT.test(l);
 
 /** 첫 층(층 0) 의 [첫 이동 줄 index, 다음 ;LAYER_CHANGE index) */

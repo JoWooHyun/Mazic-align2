@@ -31,6 +31,15 @@
  *   (인자 없으면 전 축 0). 층 블록 시작 위치 = 파킹 (Task0 가 층 사이에 파킹, 규격 §9 — writer 통계와 같은 가정).
  *   도포 = X/Y 가 있는 이동 + 그 줄의 E 증가 > 0 (X/Y 가 그대로여도 점 도포로 본다).
  *
+ * 2재료 (D1a — 규격서 v0.3.4 §3·§6, 계획 `docs/계획_하이브리드슬라이서설정_20260928.md` §5-3):
+ *   - 층 단면을 재료별로: PA = 슬롯 A 메시들(서포트 포함), PB = 슬롯 B 메시들. 우선순위 차집합 B > A —
+ *     R_B = PB, R_A = PA − PB. 노광 PNG(이번 조각에서는 만들지 않음)는 PA ∪ PB 한 장.
+ *   - 층 검사(checkTask0LayerCoverage)에 excludePolygonsBed·overflowPolygonsBed 를 주면: (a)(b)(c)(d) 는 재료 영역
+ *     R_m(= raster(Pm) AND NOT raster(뺄 쪽)) 과 그 툴의 도포 선분으로, 넘침은 합집합 PA ∪ PB 로 본다. 옵션이 없으면 지금과 같은 결과.
+ *   - 파일 전체(checkTask0DualGcodeCoverage): 층마다 A = (PA − PB, T0 선분), B = (PB, T1 선분) 두 번 + B 우선 검사
+ *     (T0 표본점이 PB 안쪽 깊이 > 투사 피치 p 인 곳 0 — 행 끝은 w/2 물려 있고, 채움 선은 R_A 픽셀에서 나와 피치 안에서만
+ *     어긋날 수 있다. 경계에서 w/2 안의 비드 물림은 규격 §3 이 허용하는 합집합 안 물림이다).
+ *
  * 순수 TS — DOM/Node/Babylon 의존 없음.
  */
 import { squaredDistanceTransform } from './task0-distance';
@@ -38,12 +47,21 @@ import { TASK0_DEFAULTS, bedToPixel, pixelCenterToBed, task0LayerCount } from '.
 import { parseGcodeText } from './task0-gcode-parser';
 import {
   rasterizeTask0Mask,
+  rasterizeTask0Region,
   task0ColsWithin,
+  task0RoiForBedBox,
   task0RowsWithin,
+  type Task0Mask,
   type Task0PixelRoi,
   type Task0RasterFrame,
 } from './task0-mask';
-import { task0LayerPolygonsBed, type Task0BedPolygon } from './task0-slice';
+import {
+  TASK0_SLOT_TOOL,
+  task0LayerPolygonsBed,
+  task0SplitMeshesBySlot,
+  type Task0BedPolygon,
+  type Task0MaterialSlot,
+} from './task0-slice';
 
 // ==================== 타입 ====================
 
@@ -105,6 +123,16 @@ export interface Task0CoverageOptions {
   rules?: Partial<Task0CoverageRules>;
   /** true 면 실패 성분 목록(uncovered)을 함께 돌려준다 — 얇은 부분 채움(Z1-b2)용 */
   detail?: boolean;
+  /**
+   * (D1a 2재료) 흰 영역에서 뺄 단면 — 재료 영역 R_A = PA − PB(B 우선). (a)(b)(c)(d) 는 뺀 영역 기준(task0-mask
+   * rasterizeTask0Region). 없으면 지금과 같은 결과.
+   */
+  excludePolygonsBed?: readonly Task0BedPolygon[];
+  /**
+   * (D1a 2재료) 넘침 기준 흰 영역 — 두 재료 합집합 PA ∪ PB(규격 §3 "2재료 경계 물림은 두 재료 합친 흰 영역 안이면 허용").
+   * 없으면 흰 영역 그대로(지금과 같은 결과). 주면 검사 영역(ROI)도 이 단면까지 덮는다.
+   */
+  overflowPolygonsBed?: readonly Task0BedPolygon[];
 }
 
 /** 성분 하나 — 좌표는 픽셀 중심 베드 mm */
@@ -235,6 +263,28 @@ export function stampTask0Coverage(
       out.fill(1, off + c0, off + c1 + 1);
     }
   }
+}
+
+/** 단면들의 점 bbox 를 덮는 ROI + 여유 (rasterizeTask0Mask 'bbox' 와 같은 식) — 점이 없으면 빈 ROI */
+function task0RoiForPolygons(
+  polygons: readonly Task0BedPolygon[],
+  marginPx: number,
+  frame: Task0RasterFrame,
+): Task0PixelRoi {
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  for (const pts of polygons) {
+    for (const [x, y] of pts) {
+      if (x < xMin) xMin = x;
+      if (x > xMax) xMax = x;
+      if (y < yMin) yMin = y;
+      if (y > yMax) yMax = y;
+    }
+  }
+  if (xMin === Infinity) return { col0: 0, row0: 0, width: 0, height: 0 };
+  return task0RoiForBedBox(xMin, xMax, yMin, yMax, marginPx, frame);
 }
 
 /** 선분 표본점 — p/2 이하 간격, 양 끝 포함 (길이 0 이면 1점) */
@@ -375,7 +425,30 @@ export function checkTask0LayerCoverage(
   // 항상 있음). 넘침 판정에는 ROI 밖 표본이 흰 영역에서 허용 거리보다 확실히 멀도록 허용 거리 + 2 칸.
   const overflowDist = rules.overflowDistFactor * w;
   const marginPx = Math.ceil(overflowDist / p) + 2;
-  const mask = rasterizeTask0Mask(polygonsBed, { frame, roi: 'bbox', marginPx });
+  const exclude = options.excludePolygonsBed ?? [];
+  const overflowPolys = options.overflowPolygonsBed ?? null;
+  let mask: Task0Mask;
+  // 넘침 기준 흰 (2재료 = 합집합). 옵션이 없으면 흰 영역 그대로 — 아래 판정이 지금과 같다
+  let overWhite: Uint8Array;
+  let overWhitePixels: number;
+  if (exclude.length === 0 && overflowPolys === null) {
+    mask = rasterizeTask0Mask(polygonsBed, { frame, roi: 'bbox', marginPx });
+    overWhite = mask.data;
+    overWhitePixels = mask.whitePixels;
+  } else {
+    // (D1a) 재료 영역 + 합집합 넘침 — ROI 는 두 단면 bbox 를 함께 덮는다(합집합 흰까지 거리를 ROI 안에서 정확히)
+    const roiPolys = overflowPolys === null ? polygonsBed : polygonsBed.concat(overflowPolys);
+    const roiAll = task0RoiForPolygons(roiPolys, marginPx, frame);
+    mask = rasterizeTask0Region(polygonsBed, exclude, { frame, roi: roiAll });
+    if (overflowPolys === null) {
+      overWhite = mask.data;
+      overWhitePixels = mask.whitePixels;
+    } else {
+      const over = rasterizeTask0Mask(overflowPolys, { frame, roi: roiAll });
+      overWhite = over.data;
+      overWhitePixels = over.whitePixels;
+    }
+  }
   const roi: Task0PixelRoi = { col0: mask.col0, row0: mask.row0, width: mask.width, height: mask.height };
   const nPix = roi.width * roi.height;
   const white = mask.data;
@@ -433,13 +506,14 @@ export function checkTask0LayerCoverage(
       const j = r - roi.row0;
       if (i < 0 || j < 0 || i >= roi.width || j >= roi.height) return; // ROI 밖 = 흰 영역에서 허용 거리 밖
       const k = j * roi.width + i;
-      if (white[k] !== 0) {
+      if (white[k] !== 0) hasDeposit[islands.labels[k]] = 1;
+      // 넘침 — 기준 흰(기본 = 흰 영역 그대로, 2재료 = 합집합) 위이거나 거기서 w 이내
+      if (overWhite[k] !== 0) {
         okSamples++;
-        hasDeposit[islands.labels[k]] = 1;
         return;
       }
-      if (mask.whitePixels === 0) return;
-      if (distToWhite2 === null) distToWhite2 = squaredDistanceTransform(white, roi.width, roi.height, 1);
+      if (overWhitePixels === 0) return;
+      if (distToWhite2 === null) distToWhite2 = squaredDistanceTransform(overWhite, roi.width, roi.height, 1);
       if (distToWhite2[k] <= okThr2) okSamples++;
     });
   }
@@ -602,6 +676,48 @@ export interface Task0CoverageReport {
   pass: boolean;
 }
 
+/** 최악값 초기값 */
+function newCoverageWorst(): Task0CoverageWorst {
+  return {
+    aMinRatio: NaN,
+    aLayer: null,
+    bWithoutDeposit: 0,
+    bLayer: null,
+    cMaxAreaMm2: 0,
+    cLayer: null,
+    dMaxAreaMm2: 0,
+    dLayer: null,
+    overflowMinRatio: NaN,
+    overflowLayer: null,
+    clippedPixels: 0,
+  };
+}
+
+/** 층 i 의 결과를 최악값에 합친다 */
+function accumulateCoverageWorst(worst: Task0CoverageWorst, res: Task0LayerCoverage, i: number): void {
+  if (res.a.innerPixels > 0 && !(res.a.coveredRatio >= worst.aMinRatio)) {
+    worst.aMinRatio = res.a.coveredRatio;
+    worst.aLayer = i;
+  }
+  if (res.b.withoutDeposit > 0) {
+    if (worst.bLayer === null) worst.bLayer = i;
+    worst.bWithoutDeposit += res.b.withoutDeposit;
+  }
+  if (res.c.maxAreaMm2 > worst.cMaxAreaMm2) {
+    worst.cMaxAreaMm2 = res.c.maxAreaMm2;
+    worst.cLayer = i;
+  }
+  if (res.d.maxAreaMm2 > worst.dMaxAreaMm2) {
+    worst.dMaxAreaMm2 = res.d.maxAreaMm2;
+    worst.dLayer = i;
+  }
+  if (res.overflow.samples > 0 && !(res.overflow.okRatio >= worst.overflowMinRatio)) {
+    worst.overflowMinRatio = res.overflow.okRatio;
+    worst.overflowLayer = i;
+  }
+  worst.clippedPixels += res.clippedPixels;
+}
+
 /**
  * G-code 산출물 전체 커버리지 — 층 N 단면(task0LayerPolygonsBed)과 G-code 층 N 블록의 도포 선분을 맞대어 본다.
  * @param meshes writer 에 넣은 것과 같은 world 삼각형 (서포트 포함)
@@ -620,44 +736,12 @@ export function checkTask0GcodeCoverage(
   const ext = extractTask0DepositSegments(gcodeText, options);
   const n = Math.max(expected, ext.layers.length);
   const layers: (Task0LayerCoverage & { index: number })[] = [];
-  const worst: Task0CoverageWorst = {
-    aMinRatio: NaN,
-    aLayer: null,
-    bWithoutDeposit: 0,
-    bLayer: null,
-    cMaxAreaMm2: 0,
-    cLayer: null,
-    dMaxAreaMm2: 0,
-    dLayer: null,
-    overflowMinRatio: NaN,
-    overflowLayer: null,
-    clippedPixels: 0,
-  };
+  const worst = newCoverageWorst();
   for (let i = 0; i < n; i++) {
     const polys = i < expected ? task0LayerPolygonsBed(meshes, i, layerHeightMm, bedW, bedD) : [];
     const res = { index: i, ...checkTask0LayerCoverage(polys, ext.layers[i] ?? [], options) };
     layers.push(res);
-    if (res.a.innerPixels > 0 && !(res.a.coveredRatio >= worst.aMinRatio)) {
-      worst.aMinRatio = res.a.coveredRatio;
-      worst.aLayer = i;
-    }
-    if (res.b.withoutDeposit > 0) {
-      if (worst.bLayer === null) worst.bLayer = i;
-      worst.bWithoutDeposit += res.b.withoutDeposit;
-    }
-    if (res.c.maxAreaMm2 > worst.cMaxAreaMm2) {
-      worst.cMaxAreaMm2 = res.c.maxAreaMm2;
-      worst.cLayer = i;
-    }
-    if (res.d.maxAreaMm2 > worst.dMaxAreaMm2) {
-      worst.dMaxAreaMm2 = res.d.maxAreaMm2;
-      worst.dLayer = i;
-    }
-    if (res.overflow.samples > 0 && !(res.overflow.okRatio >= worst.overflowMinRatio)) {
-      worst.overflowMinRatio = res.overflow.okRatio;
-      worst.overflowLayer = i;
-    }
-    worst.clippedPixels += res.clippedPixels;
+    accumulateCoverageWorst(worst, res, i);
   }
   const failedLayers = layers.filter((l) => !l.pass).map((l) => l.index);
   return {
@@ -668,6 +752,170 @@ export function checkTask0GcodeCoverage(
     preambleSegments: ext.preambleSegments,
     parseWarnings: ext.parseWarnings,
     worst,
+    pass: ext.layers.length === expected && ext.preambleSegments === 0 && failedLayers.length === 0,
+  };
+}
+
+// ==================== 2재료 파일 전체 (D1a) ====================
+
+export interface Task0DualLayerCoverage {
+  index: number;
+  /** 재료 A — 영역 R_A = PA − PB(B 우선), T0 도포 선분, 넘침은 PA ∪ PB */
+  A: Task0LayerCoverage;
+  /** 재료 B — 영역 R_B = PB, T1 도포 선분, 넘침은 PA ∪ PB */
+  B: Task0LayerCoverage;
+  /** B 우선 위반 — T0 표본점 중 PB 안쪽 깊이 > 투사 피치 p 인 것 수 (0 이어야) */
+  overlapSamplesA: number;
+  /** T0 표본점의 PB 안쪽 최대 깊이 (mm, 전부 PB 밖이면 0) */
+  overlapMaxDepthMm: number;
+  pass: boolean;
+}
+
+export interface Task0DualCoverageReport {
+  gcodeLayerCount: number;
+  expectedLayerCount: number;
+  layers: Task0DualLayerCoverage[];
+  failedLayers: number[];
+  preambleSegments: number;
+  parseWarnings: string[];
+  worst: { A: Task0CoverageWorst; B: Task0CoverageWorst };
+  /** B 우선 위반 표본 수 합계 */
+  overlapSamplesA: number;
+  /** T0 표본점의 PB 안쪽 최대 깊이 (mm) */
+  overlapMaxDepthMm: number;
+  /** B 우선 위반이 있는 층 */
+  overlapLayers: number[];
+  /** 층 수 일치 + 프리앰블 도포 0 + 전 층 두 재료 통과 + B 우선 위반 0 */
+  pass: boolean;
+}
+
+/** 점 판정용 변 — 감김(nonzero, 베드 Y 반열림 [yLo, yHi))과 경계 거리 */
+interface InsideEdge {
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+}
+
+/**
+ * 점 (x, y) 가 단면 안(nonzero — writer 행 구간·마스크와 같은 [시작, 끝)·[yLo, yHi) 규칙)이면 경계까지 거리, 밖이면 0.
+ * 감김 = 왼쪽(교차 x ≤ x)에서 지나온 변의 부호 합 — 행 구간 [s, e) 와 같은 쪽.
+ */
+function insideDepth(edges: readonly InsideEdge[], x: number, y: number): number {
+  let winding = 0;
+  for (const e of edges) {
+    if (e.ay === e.by) continue;
+    const rising = e.ay < e.by;
+    const yLo = rising ? e.ay : e.by;
+    const yHi = rising ? e.by : e.ay;
+    if (y < yLo || y >= yHi) continue;
+    const xLo = rising ? e.ax : e.bx;
+    const xc = xLo + ((e.bx - e.ax) / (e.by - e.ay)) * (y - yLo);
+    if (xc <= x) winding += rising ? 1 : -1;
+  }
+  if (winding === 0) return 0;
+  let best = Infinity;
+  for (const e of edges) {
+    const dx = e.bx - e.ax;
+    const dy = e.by - e.ay;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 > 0 ? ((x - e.ax) * dx + (y - e.ay) * dy) / l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const d = Math.hypot(x - (e.ax + t * dx), y - (e.ay + t * dy));
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/**
+ * 2재료 G-code 전체 커버리지 (D1a) — 층마다 재료별로 checkTask0LayerCoverage + B 우선 검사.
+ *   A: 흰 = raster(PA) − raster(PB), 선분 = T0 도포 / B: 흰 = raster(PB), 선분 = T1 도포 / 넘침 = PA ∪ PB (규격 §3).
+ *   B 우선: T0 표본점(p/2 간격 — 넘침 표본과 같음)이 PB 안쪽으로 투사 피치 p 보다 깊으면 위반.
+ * @param meshes writer 에 넣은 것과 같은 world 삼각형 (서포트 포함)
+ * @param slots 메시마다 재료 슬롯 (writer dualMaterial.slots 와 같은 값)
+ */
+export function checkTask0DualGcodeCoverage(
+  meshes: readonly Float32Array[],
+  slots: readonly Task0MaterialSlot[],
+  topY: number,
+  layerHeightMm: number,
+  gcodeText: string,
+  options: Task0GcodeCoverageOptions = {},
+): Task0DualCoverageReport {
+  const frame = options.frame ?? TASK0_DEFAULTS;
+  const p = pitchOf(frame);
+  const bedW = options.bedWidthMm ?? TASK0_DEFAULTS.bedWidthMm;
+  const bedD = options.bedDepthMm ?? TASK0_DEFAULTS.bedDepthMm;
+  const bySlot = task0SplitMeshesBySlot(meshes, slots);
+  const expected = task0LayerCount(topY, layerHeightMm);
+  const ext = extractTask0DepositSegments(gcodeText, options);
+  const n = Math.max(expected, ext.layers.length);
+  const base: Task0CoverageOptions = {
+    depositWidthMm: options.depositWidthMm,
+    frame: options.frame,
+    rules: options.rules,
+    detail: options.detail,
+  };
+  const layers: Task0DualLayerCoverage[] = [];
+  const worst = { A: newCoverageWorst(), B: newCoverageWorst() };
+  let overlapSamplesA = 0;
+  let overlapMaxDepthMm = 0;
+  for (let i = 0; i < n; i++) {
+    const pa = i < expected ? task0LayerPolygonsBed(bySlot.A, i, layerHeightMm, bedW, bedD) : [];
+    const pb = i < expected ? task0LayerPolygonsBed(bySlot.B, i, layerHeightMm, bedW, bedD) : [];
+    const union = pa.concat(pb);
+    const segs = ext.layers[i] ?? [];
+    const segA = segs.filter((s) => s.tool === TASK0_SLOT_TOOL.A);
+    const segB = segs.filter((s) => s.tool === TASK0_SLOT_TOOL.B);
+    const A = checkTask0LayerCoverage(pa, segA, { ...base, excludePolygonsBed: pb, overflowPolygonsBed: union });
+    const B = checkTask0LayerCoverage(pb, segB, { ...base, overflowPolygonsBed: union });
+    // B 우선 — T0 표본점이 PB 안쪽 깊이 > p
+    const edges: InsideEdge[] = [];
+    let bx0 = Infinity;
+    let bx1 = -Infinity;
+    let by0 = Infinity;
+    let by1 = -Infinity;
+    for (const pts of pb) {
+      for (let k = 0; k < pts.length; k++) {
+        const a = pts[k];
+        const b = pts[(k + 1) % pts.length];
+        edges.push({ ax: a[0], ay: a[1], bx: b[0], by: b[1] });
+        bx0 = Math.min(bx0, a[0]);
+        bx1 = Math.max(bx1, a[0]);
+        by0 = Math.min(by0, a[1]);
+        by1 = Math.max(by1, a[1]);
+      }
+    }
+    let over = 0;
+    let depthMax = 0;
+    if (edges.length > 0) {
+      for (const s of segA) {
+        forEachSample(s, p / 2, (x, y) => {
+          if (x < bx0 || x > bx1 || y < by0 || y > by1) return;
+          const d = insideDepth(edges, x, y);
+          if (d > depthMax) depthMax = d;
+          if (d > p) over++;
+        });
+      }
+    }
+    overlapSamplesA += over;
+    overlapMaxDepthMm = Math.max(overlapMaxDepthMm, depthMax);
+    accumulateCoverageWorst(worst.A, A, i);
+    accumulateCoverageWorst(worst.B, B, i);
+    layers.push({ index: i, A, B, overlapSamplesA: over, overlapMaxDepthMm: depthMax, pass: A.pass && B.pass && over === 0 });
+  }
+  const failedLayers = layers.filter((l) => !l.pass).map((l) => l.index);
+  return {
+    gcodeLayerCount: ext.layers.length,
+    expectedLayerCount: expected,
+    layers,
+    failedLayers,
+    preambleSegments: ext.preambleSegments,
+    parseWarnings: ext.parseWarnings,
+    worst,
+    overlapSamplesA,
+    overlapMaxDepthMm,
+    overlapLayers: layers.filter((l) => l.overlapSamplesA > 0).map((l) => l.index),
     pass: ext.layers.length === expected && ext.preambleSegments === 0 && failedLayers.length === 0,
   };
 }
