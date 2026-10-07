@@ -1,7 +1,8 @@
 /**
- * Task0 G-code writer — B안 줄 채움 (규격서 v0.3.3 §3·§4·§5·§7·§8·§10)
+ * Task0 G-code writer — B안 줄 채움 (규격서 v0.3.4 §3·§4·§5·§7·§8·§10)
  *
- * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.3 @ 커밋 dfdf08c. 협의 §25~§26.
+ * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.4 @ 커밋 a4ebc6c. 협의 §25~§26·§30
+ *   (v0.3.4 = Z1-c: 시작 시 프라이밍 후 E-r — 모든 툴이 리트랙트 상태로 시작, 툴의 첫 도포 앞에도 E+r).
  * 설계: `docs/계획_Z1_task0출력_20261002.md` S1~S9 (Z1-a2). 기존 marlin G-code(`utils/gcode/`)와는 별개 —
  *   그쪽 바이트는 이 파일과 무관하게 그대로다(S1).
  * 출력 검사: `utils/task0/task0-gcode-parser.ts`(Task0 파서 이식) + `scripts/verify-task0-writer.mjs`.
@@ -28,13 +29,16 @@
  *      행 사이 = L자(먼저 Y 로 다음 행, 그다음 X 로 다음 구간 시작) — 다음 행 선은 아직 안 칠한 곳이라
  *      도포 영역 교차 0 이 구조적으로 보장된다(규격 §7). 길이 0 인 다리는 쓰지 않는다.
  *
- * 리트랙트 상태 기계 (규격 §5, 툴 T0 하나):
- *   - 시작 상태 = 프라이밍 완료·언리트랙트(Task0 가 넘김, §10). 그래서 파일 첫 도포 앞에는 E+r 이 없다.
- *   - 트래블 길이(L자는 두 다리 합) ≥ retractMinTravel 이고 언리트랙트 상태(이미 쓴 툴)면 트래블 전에 E−r.
- *     짧은 트래블은 생략(§5 예외).
+ * 리트랙트 상태 기계 (규격 v0.3.4 §5, 툴 T0 하나):
+ *   - 시작 상태 = **리트랙트**(Task0 가 프라이밍 후 그 자리에서 E−r 까지 하고 노즐 (0,0) 으로 넘김, §10 — 협의 §30-2).
+ *     그래서 파킹 → 첫 도포점 트래블도 리트랙트 상태로 가고, 툴의 첫 도포 앞에도 E+r 이 있다(예외 없음).
+ *   - 트래블 길이(L자는 두 다리 합 = 경로 길이) ≥ retractMinTravel 이고 언리트랙트 상태면 트래블 전에 E−r
+ *     (정확히 retractMinTravel 이면 리트랙트). 짧은 트래블은 생략(§5 예외 — 같은 툴의 층 안 트래블).
  *   - 도포 직전에 리트랙트 상태면 E+r.
- *   - 그 층에서 도포했으면 층 블록 끝에 항상 E−r.
- *   - 빈 층은 E 줄 없음 — **아직 안 쓴 툴도 상태 변경 없음**(계획서 §3 열린 질문의 잠정 답).
+ *   - 그 층에서 도포했으면 층 블록 끝에 항상 E−r → 모든 층 블록 끝에서 툴은 리트랙트 상태.
+ *   - 그래서 툴별 E 단독 줄 순변화는 층마다 0(첫 층 포함 — E+r 수 = E−r 수), 파일 전체도 0.
+ *   - 빈 층은 E 줄 없음 — 이미 리트랙트 상태라 바꿀 것이 없다.
+ *   채움 층(task0-fill-route 순서)도 아래 같은 travel()/deposit() 으로 내므로 같은 규칙이다.
  *
  * E (규격 §5): 도포 줄 ΔE = 길이 × w × lh × 과충전 ÷ K. 소수 5자리 + **잔차 이월** — 정확 누적값을
  *   1e-5 단위로 반올림한 값의 차분을 출력하므로 어느 줄에서 끊어도 |출력 누적 − 정확 누적| ≤ 0.5e-5.
@@ -49,7 +53,8 @@
  *
  * 얇은 부분 채움 (Z1-b2 — 규격 §3 (b)(c)(d)·§7 "얇은 부분 채움"):
  *   층마다 B안 행을 만든 뒤 커버리지 검사기(task0-coverage, 1 µm 격자 행 선분 그대로)로 본다.
- *   - 통과하면 위 1~7 그대로 낸다 — **채움이 필요 없는 층의 출력 바이트는 Z1-a2 와 같다**(파일 A·C).
+ *   - 통과하면 위 1~7 그대로 낸다 — **채움이 필요 없는 층은 B안 행 그대로**(파일 A·C. Z1-a2 와의 바이트 차이는
+ *     Z1-c 의 리트랙트 규칙(첫 도포 앞 E+r)과 머리 메타 두 줄뿐).
  *   - 실패하면 task0-thin-fill 이 실패 성분의 중심선·점 도포를 만들고(통과할 때까지 반복), task0-fill-route 가
  *     띠 분해(띠 번호 비감소·띠마다 방향 번갈아·띠 안 X 순서)와 교차 검사 통과 트래블(L자·A* 우회)로 순서를 정한다.
  *     리트랙트·E·숫자 표기·층 머리는 위와 같은 함수로 낸다(1 mm 미만 트래블 생략도 경로 길이 기준 그대로).
@@ -203,8 +208,8 @@ const SPAN_JOIN_EPS = 1e-9;
 /** 트래블 리트랙트 판정 여유 (mm) — 1.0 mm 가 부동소수로 0.9999… 가 돼도 리트랙트 쪽으로 */
 const TRAVEL_EPS = 1e-9;
 
-/** START 앞 메타 첫 줄 */
-export const TASK0_WRITER_ID = 'MazicAlign v2 task0-gcode-writer (Z1-a2)';
+/** START 앞 메타 첫 줄 — 리트랙트 규칙 판(spec)을 함께 적는다 (Z1-c: v0.3.4 첫 도포 앞 E+r) */
+export const TASK0_WRITER_ID = 'MazicAlign v2 task0-gcode-writer (Z1-c, spec v0.3.4)';
 
 // ==================== 설정 ====================
 
@@ -525,9 +530,8 @@ export function generateTask0Gcode(
   const body: string[] = ['; EXECUTABLE_BLOCK_START', 'G90', 'M83', 'T0'];
   const layers: Task0LayerStats[] = [];
 
-  // 툴 T0 상태 — 시작은 프라이밍 완료·언리트랙트 (§10)
-  let toolUsed = false;
-  let retracted = false;
+  // 툴 T0 상태 — 시작은 리트랙트 (v0.3.4 §10: Task0 가 프라이밍 후 E−r 까지 하고 넘김)
+  let retracted = true;
   let eExact = 0; // 도포 E 정확 누적
   let eTicks = 0; // 도포 E 출력 누적 (1e-5 단위)
 
@@ -597,7 +601,7 @@ export function generateTask0Gcode(
         cy = y;
       }
       if (legs.length === 0) return;
-      if (toolUsed && !retracted && lenMm >= params.retractMinTravelMm - TRAVEL_EPS) {
+      if (!retracted && lenMm >= params.retractMinTravelMm - TRAVEL_EPS) {
         body.push(retractLine);
         retracted = true;
         stat.retracts++;
@@ -626,7 +630,6 @@ export function generateTask0Gcode(
       layerTicks += dt;
       body.push(`G1 X${fixedFromInt(x, 3)} Y${fixedFromInt(y, 3)} E${fixedFromInt(dt, 5)} F${params.depositF}`);
       touch(x, y);
-      toolUsed = true;
       stat.segments++;
       stat.depositMm += lenMm;
       posX = x;
@@ -659,7 +662,7 @@ export function generateTask0Gcode(
       });
     }
 
-    // 3) 층 끝 — 도포했으면 항상 리트랙트 (§5)
+    // 3) 층 끝 — 도포했으면 항상 리트랙트 (§5). 도포 안 한 층은 이미 리트랙트 상태 → 층마다 E+r 수 = E−r 수
     if (stat.segments > 0) {
       body.push(retractLine);
       retracted = true;
@@ -700,7 +703,7 @@ export function generateTask0Gcode(
   // START 앞 메타 — 단독 주석 줄 (Task0 는 START 이전을 무시)
   const header: string[] = [
     `; ${TASK0_WRITER_ID}`,
-    '; Task0 G-code spec v0.3.3 (B pattern: serpentine 0 deg row fill, L moves between rows)',
+    '; Task0 G-code spec v0.3.4 (B pattern: serpentine 0 deg row fill, L moves between rows)',
     `; layerCount: ${layerCount}`,
     `; layerHeightMm: ${heightText}`,
     `; topYMm: ${metaNum(topY)}`,
@@ -716,7 +719,7 @@ export function generateTask0Gcode(
     `; depositTotalMm: ${totals.depositMm.toFixed(3)}`,
     `; extrusionTotalMm: ${fixedFromInt(eTicks, 5)}`,
   ];
-  // 채움이 있는 파일만 (없는 파일의 메타·바이트는 Z1-a2 그대로)
+  // 채움이 있는 파일만 (없는 파일의 메타는 위 줄들 그대로)
   if (totals.thinFillLayers.length > 0 || totals.thinFillFailedLayers.length > 0) {
     header.push(
       '; thinFill: Z1-b2 centerline and dot fill where rows miss (bands of width w, band index non-decreasing, detour travels)',

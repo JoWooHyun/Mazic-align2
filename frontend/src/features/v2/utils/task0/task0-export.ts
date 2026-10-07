@@ -1,7 +1,7 @@
 /**
  * Task0 G-code 내보내기 코어 (Z2) — 앱 워커와 검증 스크립트가 **같은 함수**를 부른다
  *
- * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.3 @ 커밋 dfdf08c (§3·§12), 협의 §26-1.
+ * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.4 @ 커밋 a4ebc6c (§3·§5·§12 — 파서 v0.2.1 03c0519), 협의 §26-1·§30.
  * 설계: `docs/계획_Z1_task0출력_20261002.md` §4·§4-2 (Z2 인계 — 워커 필수, 채움 실패면 막고 안내).
  *
  * 앱 경로: workers/slice-batch.worker.ts runTask0Gcode → 이 파일 runTask0GcodeExport → 결과를 메인으로

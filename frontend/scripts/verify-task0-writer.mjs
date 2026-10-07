@@ -1,23 +1,28 @@
 // Task0 G-code writer 헤드리스 검증 (로드맵 0절 2주차 PR-1 Z1-a2).
 //
-//   무엇을: src/features/v2/utils/task0/task0-gcode-writer.ts (+ task0-frame.ts) 가 규격서 v0.3.3
-//     (Task0 리포 docs/Task0_Gcode_규격서_초안.md @ dfdf08c) 대로 G-code 를 쓰는지 본다.
-//     설계 = docs/계획_Z1_task0출력_20261002.md S1~S9.
+//   무엇을: src/features/v2/utils/task0/task0-gcode-writer.ts (+ task0-frame.ts) 가 규격서 v0.3.4
+//     (Task0 리포 docs/Task0_Gcode_규격서_초안.md @ a4ebc6c) 대로 G-code 를 쓰는지 본다.
+//     설계 = docs/계획_Z1_task0출력_20261002.md S1~S9. (Z1-c: v0.3.3 → v0.3.4 — 모든 툴 리트랙트 상태로 시작,
+//     툴의 첫 도포 앞에도 E+r, 툴별 E 순변화 층마다 0. 협의 §30-2)
 //
 //   (0) 좌표 모듈 — worldToBed·베드↔픽셀·층 수/Z/단면 식(마스크 runPngZip 과 같은 식인지).
 //   (A) 픽스처(스크립트 안에서 world 삼각형 직접 생성, 바깥 법선 감김 + normalizeTriangleWinding):
 //       ① 10 mm 정육면체 ② 속 빈 사각 관(구멍 보존) ③ 겹친 두 정육면체(nonzero — even-odd 면 구멍)
-//       ④ 한 행에 섬 둘(넓은 틈 → 행 안 리트랙트 / 좁은 틈 → 생략) ⑤ 두 판 사이 한 층 틈(빈 층)
-//       ⑥ 바닥이 뜬 상자(첫 층들이 빈 층 — 계획서 §3 열린 질문의 잠정 동작)
-//       ⑦ 45° 마름모 기둥(행마다 폭이 달라 L자에 X 다리, 빗변 교차) ⑧ 면을 맞댄 두 메시(맞닿은 구간 잇기)
+//       ④ 한 행에 섬 둘(넓은 틈 → 행 안 리트랙트 / 좁은 틈 → 생략 / (Z1-c) 틈 0.5 → 트래블 정확히 1.000 mm → 리트랙트)
+//       ⑤ 두 판 사이 한 층 틈(빈 층)
+//       ⑥ 바닥이 뜬 상자(첫 층들이 빈 층 — v0.3.4: 처음부터 리트랙트라 빈 층 E 줄 0, 첫 도포 앞 E+r)
+//       ⑦ 45° 마름모 기둥(행마다 폭이 달라 L자에 X 다리, 빗변 교차 — L자 경로 길이 1.0 mm 라 리트랙트, 직선 거리 0.71 이면
+//          생략됐을 것: "경로 길이 기준"을 시험) ⑧ 면을 맞댄 두 메시(맞닿은 구간 잇기)
 //       ⑨ 10 × 10.3 mm 상자(Y 폭이 w 배수가 아님 — 행 종료 조건·맨 위 남는 띠 통계) × lh 0.1 · 0.05.
 //     출력마다 검사:
 //       c1 Task0 파서 이식판 dryrun(keepE false/true)·print(layerHeightMm) 모두 warnings 0·errors 0,
 //          layerCount = task0LayerCount(topY, lh), 빈 층 블록 hasXy=false (기대 빈 층 = 기하로 따로 계산)
 //       c2 줄 형식(허용된 줄 모양만) — 지수·-0·인라인 주석·F 단독 줄 0, 층 첫 이동 = F 없는 순수 G1 Z,
 //          그 뒤 Z 줄 0, 프리앰블 G90/M83/T0, START 앞 메타, 끝 개행 1개
-//       c3 리트랙트 상태 시뮬레이션 — 첫 사용 전 E+r 없음, 도포 줄은 언리트랙트 상태, 도포한 층 끝은 리트랙트,
-//          ≥ retractMinTravel 트래블을 언리트랙트로 하지 않음(첫 사용 전 트래블 제외), 빈 층 E 줄 0
+//       c3 리트랙트 상태 시뮬레이션 (v0.3.4) — 초기 상태 = 모든 툴 리트랙트, 첫 도포 앞 E+r 필수(도포 줄은 언리트랙트
+//          상태), ≥ retractMinTravel 트래블(경로 길이 — 파킹 → 첫 도포점 포함)을 언리트랙트로 하지 않음, 모든 층 블록 끝
+//          리트랙트, 층마다 E 단독 순변화 0·E+r 수 = E−r 수(첫 층 포함), 파일 전체 순변화 0, 빈 층 E 줄 0,
+//          인접 규칙 — E+r 바로 다음 줄은 도포, E−r 다음 이동 줄은 트래블 또는 층 블록 끝(§5 "트래블을 마친 뒤 도포 직전")
 //       c4 트래블 교차 0 — 트래블 경로(연속 트래블 = 한 경로)를 양 끝 w/2 씩 줄인 나머지가 그 층에서
 //          이미 칠한 줄(폭 w)에서 w/2 − 1e-6 미만으로 다가가지 않음
 //       c4b (Z1-b2 보강) 트래블 다리(선분)와 그 시점까지 칠한 중심선의 **실제 교차 0** — 잘라내기 없이 정수 µm 로.
@@ -50,6 +55,11 @@
 //       (vii) 겹친 구간에서 도포를 끊음(even-odd 흉내) (viii) 관 구멍 안으로 도포를 늘림
 //       (ix) 채움 층에서 띠 경계를 넘는 두 도포 줄을 한 줄로(띠에서 안 자름) (x) 채움 층에서 앞 띠 항목 하나를
 //       층 끝으로 옮김(띠 번호 감소) (xi) 트래블 하나가 칠한 줄을 짧게(전체 ≤ w) 가로지름 — c4b 는 잡고 c4 는 놓침을 단언.
+//       (xii) 파일 첫 도포 앞 E+r 삭제 = Z1-c 전 writer 의 "첫 사용 E+r 생략" 출력(파일 A·B·C 에서 이 한 줄과 머리 메타
+//       두 줄만 되돌리면 Z1-b2 판 sha256 이 됨 — verify-task0-export (3)) (xiii) 파일 첫 E+r 를 파킹 → 첫 도포점 트래블
+//       앞으로 옮김(긴 첫 트래블을 언리트랙트로 — 협의 §28-2 Q2) (xiv) 채움 층(파일 B)의 첫 도포 앞 E+r 삭제.
+//       (xv) 리트랙트 상태 트래블 앞에 E+r → 곧바로 E−r 쌍 (xvi) 짧은 트래블 앞에 E−r → 곧바로 E+r 쌍 — 둘 다 순변화 0 이라
+//       인접 규칙만 잡는다(인접 규칙 없던 c3 는 둘 다 통과 — 2026-10-06 실측).
 //       하나라도 "변조했는데 통과" 면 실패.
 //   (C) writer 대조군 (Z1-b2): thinFill=false 로 같은 픽스처(⑩⑪⑬⑭⑮⑯⑰) → 커버리지 FAIL,
 //       thinFillDetour=false(우회 끔) → c4 트래블 교차 FAIL (⑩⑪⑰).
@@ -662,21 +672,30 @@ function checkFormat(gcode, ctx) {
   return v.list;
 }
 
-/** c3 — 리트랙트 상태 기계 (툴 T0) */
+/**
+ * c3 — 리트랙트 상태 기계 (규격 v0.3.4 §5·§10, 툴 T0 — writer 는 단일 재료).
+ *   시작 = **모든 툴 리트랙트**(Task0 가 프라이밍 후 E−r 까지 하고 넘김). 그래서 툴의 첫 도포 앞에도 E+r 이 있어야 하고
+ *   (예외 없음 — v0.3.3 의 "처음 쓸 때 E+r 생략" 삭제), 파킹 → 첫 도포점 트래블도 리트랙트 상태여야 한다.
+ *   층마다: 도포 줄은 언리트랙트 상태, ≥ retractMinTravel 트래블(경로 길이)은 리트랙트 상태, 층 블록 끝은 리트랙트,
+ *   E 단독 줄 순변화 0(첫 층 포함 — E+r 수 = E−r 수), 빈 층 E 줄 0. 파일 전체 순변화 0.
+ *   인접: E+r 바로 다음 줄 = 도포, E−r 다음 이동 줄 = 트래블 또는 층 블록 끝 (§5 문구 그대로 — 순변화 0 인 쓸모없는 쌍 금지).
+ */
 function checkRetract(model, ctx) {
   const v = new Viol();
   const r = ctx.params.retractMm;
   const minTravel = ctx.params.retractMinTravelMm;
+  let retracted = true; // 시작 = 리트랙트 (v0.3.4 §10)
   let used = false;
-  let retracted = false; // 시작 = 프라이밍 완료·언리트랙트 (§10)
+  let fileNet = 0;
   for (const layer of model.layers) {
-    const usedAtStart = used;
     let net = 0;
+    let plus = 0;
+    let minus = 0;
     let deposited = false;
     let eLines = 0;
     let group = null;
     const closeGroup = () => {
-      if (group && !group.exempt && group.unretracted && group.len >= minTravel - 1e-9) {
+      if (group && group.unretracted && group.len >= minTravel - 1e-9) {
         v.add(`≥${minTravel} mm 트래블을 언리트랙트 상태로 함`, group.line);
       }
       group = null;
@@ -688,35 +707,60 @@ function checkRetract(model, ctx) {
         net += e;
         if (Math.abs(Math.abs(e) - r) > 0.5e-5 + 1e-12) v.add(`E 단독 줄 크기 ≠ r(${r})`, op.lineNo);
         if (e < 0) {
+          minus++;
           if (retracted) v.add("이중 리트랙트", op.lineNo);
           retracted = true;
         } else if (e > 0) {
-          if (!used) v.add("툴 첫 사용 전 E+r (Task0 가 프라이밍 완료 상태로 넘김 — 생략해야 함)", op.lineNo);
+          plus++;
           if (!retracted) v.add("이중 언리트랙트", op.lineNo);
           retracted = false;
         } else {
           v.add("E0 단독 줄", op.lineNo);
         }
       } else if (op.kind === "travel") {
-        if (!group) group = { len: 0, unretracted: false, exempt: !used, line: op.lineNo };
+        if (!group) group = { len: 0, unretracted: false, line: op.lineNo };
         group.len += dist(op.from, op.to);
         if (!retracted) group.unretracted = true;
       } else if (op.kind === "deposit") {
         closeGroup();
-        if (retracted) v.add("리트랙트 상태에서 도포", op.lineNo);
+        if (retracted) {
+          v.add(
+            used
+              ? "리트랙트 상태에서 도포 (E+r 없음)"
+              : "툴 첫 도포 앞 E+r 없음 (v0.3.4: 리트랙트 상태로 시작 — 첫 도포도 예외 없음)",
+            op.lineNo,
+          );
+        }
         used = true;
         deposited = true;
       }
     }
     closeGroup();
-    if (deposited) {
-      if (!retracted) v.add("도포한 층 블록 끝이 리트랙트 상태가 아님", layer.lineNo);
-      const expectNet = usedAtStart ? 0 : -r; // 첫 사용 층: E+r 생략 + 층 끝 E−r
-      if (Math.abs(net - expectNet) > 1e-9) v.add(`층 E 단독 순변화 ${net.toFixed(5)} ≠ ${expectNet}`, layer.lineNo);
-    } else if (eLines > 0) {
-      v.add("빈 층에 E 줄 (아직 안 쓴 툴은 상태 변경 없음 — 계획서 §3)", layer.lineNo);
+    // 인접 규칙 (규격 v0.3.4 §5 "E+r: 트래블을 마친 뒤 도포 직전", "E-r: 층 끝(파킹 전)·T 전환 직전") —
+    //   상태·순변화 검사로는 순변화 0 인 쓸모없는 쌍(E+r → E−r, E−r → E+r)이 안 잡힌다
+    const ops = layer.ops;
+    for (let k = 0; k < ops.length; k++) {
+      const op = ops[k];
+      if (op.kind !== "eonly" || op.args.E === 0) continue;
+      if (op.args.E > 0) {
+        // E+r 바로 다음 줄은 도포 (사이에 트래블·다른 E 줄·T 금지)
+        if (ops[k + 1]?.kind !== "deposit") v.add("E+r 바로 다음 줄이 도포가 아님 (규격 §5: 트래블을 마친 뒤 도포 직전)", op.lineNo);
+      } else {
+        // E−r 다음 이동 줄은 트래블이거나 층 블록 끝 (T0/T1 은 건너뜀 — §6 전환 순서 E−r → T1 → 트래블)
+        let j = k + 1;
+        while (j < ops.length && ops[j].kind === "other") j++;
+        if (j < ops.length && ops[j].kind !== "travel") {
+          v.add("E−r 다음 이동 줄이 트래블·층 끝이 아님 (E−r → E+r 같은 쓸모없는 쌍 금지)", op.lineNo);
+        }
+      }
     }
+    if (!retracted) v.add("층 블록 끝이 리트랙트 상태가 아님", layer.lineNo);
+    if (Math.abs(net) > 1e-9) v.add(`층 E 단독 순변화 ${net.toFixed(5)} ≠ 0 (첫 층 포함)`, layer.lineNo);
+    if (plus !== minus) v.add(`층 E+r ${plus}줄 ≠ E−r ${minus}줄`, layer.lineNo);
+    if (!deposited && eLines > 0) v.add("빈 층에 E 줄 (층 시작이 이미 리트랙트 상태 — 바꿀 것 없음)", layer.lineNo);
+    fileNet += net;
   }
+  if (Math.abs(fileNet) > 1e-9) v.add(`파일 전체 E 단독 순변화 ${fileNet.toFixed(5)} ≠ 0`);
   return v.list;
 }
 
@@ -1098,7 +1142,7 @@ export function runOutputChecks(gcode, ctx) {
 export const CHECK_LABELS = {
   c1: "c1 Task0 파서 3모드 경고·오류 0",
   c2: "c2 줄 형식",
-  c3: "c3 리트랙트 상태 기계",
+  c3: "c3 리트랙트 상태 기계 (v0.3.4 — 리트랙트 상태로 시작, 층마다 순변화 0)",
   c4: "c4 트래블 교차 0",
   c4b: "c4b 트래블 다리·칠한 중심선 실제 교차 0 (잘라내기 없음)",
   c5: "c5 +Y 단조(띠)·띠 방향·띠 안 X 순서·행 간격·트래블 모양",
@@ -1254,6 +1298,29 @@ function islandsCheck(wide, minTravel) {
   };
 }
 
+/**
+ * 경계값: 도포 사이 트래블 중 길이가 정확히 minTravel(1 µm 격자로 같은 µm 수)인 것이 있어야 하고(픽스처가 경계를 실제로
+ * 시험하는지), 그 트래블은 모두 E-r … E+r 로 감싸여야 한다(규격 v0.3.4 §5 "정확히 retractMinTravel 이면 리트랙트").
+ */
+function exactTravelCheck(minTravel) {
+  return (model) => {
+    const out = [];
+    let exact = 0;
+    for (const layer of model.layers) {
+      for (const g of travelGroups(layer)) {
+        if (!g.afterDeposit || !g.beforeDeposit || Math.round(g.len * 1000) !== Math.round(minTravel * 1000)) continue;
+        exact++;
+        const eVals = g.ops.filter((op) => op.kind === "eonly").map((op) => op.args.E);
+        if (!(eVals.length === 2 && eVals[0] < 0 && eVals[1] > 0)) {
+          out.push(`길이 정확히 ${minTravel} mm 트래블이 E-r … E+r 로 감싸이지 않음 (층 ${layer.index})`);
+        }
+      }
+    }
+    if (exact === 0) out.push(`길이 정확히 ${minTravel} mm 인 도포 사이 트래블이 없음 — 픽스처가 경계값을 시험하지 못함`);
+    return [...new Set(out)].slice(0, 5);
+  };
+}
+
 /** Y 폭이 w 배수가 아닌 형상: 맨 위 도포 띠와 단면 최대 Y 사이에 band(< w) 가 남음 — 넘치지도, 더 비지도 않음 */
 function remainderCheck(band) {
   return (model, ctx) => {
@@ -1371,6 +1438,17 @@ function buildFixtures(minTravel) {
       fixtureCheck: islandsCheck(false, minTravel),
     },
     {
+      name: "islands-exact",
+      // (Z1-c) 틈 0.5 mm → 행 안 트래블 정확히 1.000 mm (= retractMinTravel) → 리트랙트 (규격 v0.3.4 §5 "정확히 같으면 리트랙트")
+      meshes: () => [
+        normalizeTriangleWinding(
+          concatTris(boxTriangles([-6, 0, -3], [-0.25, 3, 3]), boxTriangles([0.25, 0, -3], [6, 3, 3])),
+        ),
+      ],
+      solids: [[0, 3]],
+      fixtureCheck: exactTravelCheck(minTravel),
+    },
+    {
       name: "diamond",
       // 10×10 사각 기둥을 45° 돌린 마름모 — 행마다 폭이 달라 행 사이 L자에 X 다리가 생기고, 빗변 교차도 시험
       meshes: () => [normalizeTriangleWinding(rotateTrisY(boxTriangles([-5, 0, -5], [5, 3, 5]), Math.PI / 4))],
@@ -1380,7 +1458,7 @@ function buildFixtures(minTravel) {
     fixtureGapPlates(),
     {
       name: "float-box",
-      // 바닥이 Y 0.2 에 뜬 상자 — 첫 층들이 빈 층(아직 안 쓴 툴은 상태 변경 없음)
+      // 바닥이 Y 0.2 에 뜬 상자 — 첫 층들이 빈 층(v0.3.4: 처음부터 리트랙트 상태라 빈 층 E 줄 0, 첫 도포 앞 E+r)
       meshes: () => [normalizeTriangleWinding(boxTriangles([-3, 0.2, -3], [3, 1, 3]))],
       solids: [[0.2, 1]],
     },
@@ -1690,7 +1768,7 @@ function reportChecks(results) {
 function sectionFixtures(params) {
   const outputs = new Map();
   const groups = [
-    ["(A) 픽스처 출력 검사 (채움 없음 — 출력 = Z1-a2):", buildFixtures(params.retractMinTravelMm)],
+    ["(A) 픽스처 출력 검사 (채움 없음 — B안 행만):", buildFixtures(params.retractMinTravelMm)],
     ["(A2) 얇은 부분 채움 픽스처 (Z1-b2):", buildThinFixtures()],
   ];
   for (const [title, fixtures] of groups) {
@@ -1735,7 +1813,7 @@ function sectionFixtures(params) {
         );
       }
       if (fixture.name === "float-box") {
-        assert(ctx.expectedEmpty.length > 0 && ctx.expectedEmpty[0] === 0, "뜬 상자: 첫 층이 빈 층 (열린 질문 경로를 실제로 탐)");
+        assert(ctx.expectedEmpty.length > 0 && ctx.expectedEmpty[0] === 0, "뜬 상자: 첫 층이 빈 층 (빈 층 뒤 첫 도포 앞 E+r 경로를 실제로 탐)");
       }
       // 커버리지 (규격 §3) — G-code 텍스트에서 도포 선분을 다시 뽑아 같은 단면의 마스크와 맞댄다 (gen 과 같은 검사)
       const cov = checkTask0GcodeCoverage(ctx.meshes, ctx.topY, lh, result.gcode, { depositWidthMm: params.depositWidthMm });
@@ -1804,6 +1882,15 @@ function layer0Range(lines) {
   return [a + 4, b];
 }
 
+/** 층 0 의 첫 도포 줄 index — 그 앞은 [층 첫 트래블, E+r] (v0.3.4: 리트랙트 상태로 시작) */
+function layer0FirstDeposit(lines) {
+  const [s, end] = layer0Range(lines);
+  const d = lines.findIndex((l, k) => k >= s && k < end && isDeposit(l));
+  if (d < 0) throw new Error("층 0 에 도포 줄이 없음");
+  return d;
+}
+const RE_UNRETRACT = /^G1 E[0-9]/;
+
 const MUTATIONS = [
   {
     id: "(i)",
@@ -1852,14 +1939,14 @@ const MUTATIONS = [
     base: "cube10 lh0.1",
     target: "c5",
     mutate(lines) {
-      const [s] = layer0Range(lines);
-      // 정육면체 층 0: [트래블, 도포] × 행. 행 1 과 행 2 의 두 줄씩을 맞바꿈
-      const row1 = lines.slice(s + 2, s + 4);
-      const row2 = lines.slice(s + 4, s + 6);
+      const d0 = layer0FirstDeposit(lines);
+      // 정육면체 층 0: 첫 트래블, E+r, 행 0 도포, 그다음 [트래블, 도포] × 행. 행 1 과 행 2 의 두 줄씩을 맞바꿈
+      const row1 = lines.slice(d0 + 1, d0 + 3);
+      const row2 = lines.slice(d0 + 3, d0 + 5);
       if (![...row1, ...row2].every((l, k) => (k % 2 === 0 ? RE_TRAVEL.test(l) : isDeposit(l)))) {
         throw new Error("층 0 구조가 예상과 다름");
       }
-      lines.splice(s + 2, 4, ...row2, ...row1);
+      lines.splice(d0 + 1, 4, ...row2, ...row1);
     },
   },
   {
@@ -1868,12 +1955,12 @@ const MUTATIONS = [
     base: "cube10 lh0.1",
     target: "c4",
     mutate(lines) {
-      const [s] = layer0Range(lines);
-      // 행 3 도포(s+7) 뒤 L자 트래블(s+8)을 행 1 높이로 내려갔다 오는 경로로 교체
-      const row1Y = RE_DEPOSIT.exec(lines[s + 3])[2];
-      const legTo = lines[s + 8];
-      if (!RE_TRAVEL.test(legTo) || !isDeposit(lines[s + 7])) throw new Error("층 0 구조가 예상과 다름");
-      lines.splice(s + 8, 1, "G1 E-1.00000 F1800", `G1 X80.000 Y${row1Y} F6000`, legTo, "G1 E1.00000 F1800");
+      const d0 = layer0FirstDeposit(lines);
+      // 행 3 도포(d0+6) 뒤 L자 트래블(d0+7)을 행 1(d0+2) 높이로 내려갔다 오는 경로로 교체
+      const row1Y = RE_DEPOSIT.exec(lines[d0 + 2])[2];
+      const legTo = lines[d0 + 7];
+      if (!RE_TRAVEL.test(legTo) || !isDeposit(lines[d0 + 6])) throw new Error("층 0 구조가 예상과 다름");
+      lines.splice(d0 + 7, 1, "G1 E-1.00000 F1800", `G1 X80.000 Y${row1Y} F6000`, legTo, "G1 E1.00000 F1800");
     },
   },
   {
@@ -1886,7 +1973,9 @@ const MUTATIONS = [
       const m = RE_DEPOSIT.exec(lines[i]);
       const rate = (ctx.params.depositWidthMm * ctx.lh) / ctx.params.syringeKMm3PerMm;
       const x1 = Number(m[1]);
-      const prevX = Number(RE_TRAVEL.exec(lines[i - 1])[1]);
+      let t = i - 1; // 도포 시작점 = 앞 트래블 끝 (v0.3.4: 사이에 E+r 줄이 있음)
+      while (t > 0 && !RE_TRAVEL.test(lines[t])) t--;
+      const prevX = Number(RE_TRAVEL.exec(lines[t])[1]);
       const e1 = ((73 - prevX) * rate).toFixed(5);
       const e2 = ((x1 - 77) * rate).toFixed(5);
       lines.splice(
@@ -2003,6 +2092,63 @@ const MUTATIONS = [
       lines.splice(d + 1, j - d - 1, `G1 X${W[0].toFixed(3)} Y${W[1].toFixed(3)} F${F}`, `G1 X${S[0].toFixed(3)} Y${S[1].toFixed(3)} F${F}`);
     },
   },
+  {
+    id: "(xii)",
+    desc: "파일 첫 도포 앞 E+r 삭제 (= Z1-c 전 writer 의 '첫 사용 E+r 생략' 출력)",
+    base: "cube10 lh0.1",
+    target: "c3",
+    mutate(lines) {
+      const d = lines.findIndex(isDeposit);
+      if (!RE_UNRETRACT.test(lines[d - 1])) throw new Error("파일 첫 도포 앞 줄이 E+r 이 아님");
+      lines.splice(d - 1, 1);
+    },
+  },
+  {
+    id: "(xiii)",
+    desc: "파일 첫 E+r 를 파킹 → 첫 도포점 트래블 앞으로 (긴 첫 트래블을 언리트랙트 상태로)",
+    base: "cube10 lh0.1",
+    target: "c3",
+    mutate(lines) {
+      const d = lines.findIndex(isDeposit);
+      if (!RE_UNRETRACT.test(lines[d - 1]) || !RE_TRAVEL.test(lines[d - 2])) throw new Error("층 0 머리가 [트래블, E+r, 도포] 가 아님");
+      const [plus] = lines.splice(d - 1, 1);
+      lines.splice(d - 2, 0, plus);
+    },
+  },
+  {
+    id: "(xiv)",
+    desc: "채움 층(파일 B 층 0 — task0-fill-route 순서)의 첫 도포 앞 E+r 삭제",
+    base: "file-b lh0.1",
+    target: "c3",
+    mutate(lines, _ctx, result) {
+      if (result.layers[0]?.thinFill !== "filled") throw new Error("파일 B 층 0 이 채움 층이 아님");
+      const d = layer0FirstDeposit(lines);
+      if (!RE_UNRETRACT.test(lines[d - 1])) throw new Error("층 0 첫 도포 앞 줄이 E+r 이 아님");
+      lines.splice(d - 1, 1);
+    },
+  },
+  {
+    id: "(xv)",
+    desc: "리트랙트 상태의 층 첫 트래블 앞에 E+r → 곧바로 E−r 쌍 (순변화 0 — 상태·순변화 검사로는 안 잡힘)",
+    base: "cube10 lh0.1",
+    target: "c3",
+    mutate(lines) {
+      const d = layer0FirstDeposit(lines);
+      if (!RE_UNRETRACT.test(lines[d - 1]) || !RE_TRAVEL.test(lines[d - 2])) throw new Error("층 0 머리가 [트래블, E+r, 도포] 가 아님");
+      lines.splice(d - 2, 0, "G1 E1.00000 F1800", "G1 E-1.00000 F1800");
+    },
+  },
+  {
+    id: "(xvi)",
+    desc: "도포 사이 짧은 트래블 앞에 E−r → 곧바로 E+r 쌍 (순변화 0 — 쓸모없는 쌍, E+r 뒤가 트래블)",
+    base: "cube10 lh0.1",
+    target: "c3",
+    mutate(lines) {
+      const d0 = layer0FirstDeposit(lines);
+      if (!RE_TRAVEL.test(lines[d0 + 1]) || !isDeposit(lines[d0 + 2])) throw new Error("층 0 행 0 뒤가 [트래블, 도포] 가 아님");
+      lines.splice(d0 + 1, 0, "G1 E-1.00000 F1800", "G1 E1.00000 F1800");
+    },
+  },
 ];
 
 function sectionMutations(outputs) {
@@ -2012,7 +2158,7 @@ function sectionMutations(outputs) {
     const lines = linesOf(base.result.gcode);
     let mutated;
     try {
-      mu.mutate(lines, base.ctx);
+      mu.mutate(lines, base.ctx, base.result);
       mutated = joinLines(lines);
     } catch (err) {
       assert(false, `${mu.id} ${mu.desc} — 변조 준비 실패: ${err.message}`);
@@ -2095,7 +2241,7 @@ function sectionRouteUnit() {
 }
 
 function main() {
-  console.log("Task0 G-code writer 검증 (Z1-a2 + Z1-b2 얇은 부분 채움, 규격서 v0.3.3)");
+  console.log("Task0 G-code writer 검증 (Z1-a2 + Z1-b2 얇은 부분 채움 + Z1-c 리트랙트 v0.3.4, 규격서 v0.3.4)");
   const params = resolveTask0WriterParams();
   sectionFrame();
   const outputs = sectionFixtures(params);

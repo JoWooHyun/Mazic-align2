@@ -1,9 +1,11 @@
 /**
- * Task0 G-code 파서 v0.2 — TypeScript 이식 (규격서 v0.3.3 §12)
+ * Task0 G-code 파서 v0.2.1 — TypeScript 이식 (규격서 v0.3.4 §12)
  *
- * 원본: Task0 리포 `controllers/task0_gcode.py` @ 커밋 592accf (파서 v0.2)
- *       단위테스트 `test/test_task0_gcode.py` @ 592accf (69건)
- *       규격서 `docs/Task0_Gcode_규격서_초안.md` v0.3.3 §12(파서 규칙)·§4(명령)·§8(속도) @ dfdf08c
+ * 원본: Task0 리포 `controllers/task0_gcode.py` @ 커밋 03c0519 (파서 v0.2.1)
+ *       단위테스트 `test/test_task0_gcode.py` @ 03c0519 (82건)
+ *       규격서 `docs/Task0_Gcode_규격서_초안.md` v0.3.4 §12(파서 규칙)·§4(명령)·§8(속도) @ a4ebc6c
+ *   v0.2.1 (협의 §28-3·§30-3): G92 인자 검사(두 모드 — 잘못된 G92 줄은 버리고 위반) / Z 관련 위반 문구 숫자
+ *   소수 4자리 고정 / 인자 없는 G0·G1 은 "F 단독 줄"과 따로 경고("인자 없는 이동 줄").
  *
  * 목적: MazicAlign 이 만드는 Task0 출력(.zip 안 G-code)을 Task0 와 **같은 규칙**으로 검사한다
  *   (로드맵 0절 2주차 PR-1 Z1). 공개 동작은 원본과 1:1 — 경고·오류 문구도 글자 단위로 같다.
@@ -15,12 +17,13 @@
  * Python ↔ JS 차이를 원본 쪽으로 맞춘 지점:
  *   - 공백: str.strip()/rstrip()/split() 의 공백 = Python isspace() 29자(\x1c~\x1f·\x85 포함, U+FEFF(BOM) 제외).
  *     JS trim()·\s 와 다르므로 직접 구현(isPyWs).
- *   - 정규식: 원본 _MOVE_ARG_RE 는 re.ASCII → \s = [ \t\n\r\v\f]. \Z(입력 끝) = JS `$`(m 플래그 없음).
+ *   - 정규식: 원본 _MOVE_ARG_RE·_G92_ARG_RE 는 re.ASCII → \s = [ \t\n\r\v\f]. \Z(입력 끝) = JS `$`(m 플래그 없음).
  *   - 길이·자르기: Python 은 코드 포인트 단위(JS length 는 UTF-16 단위) — 명령 이름 40자, 첫 3글자 등.
  *   - str.upper() = toUpperCase() (둘 다 Unicode 전체 매핑 — 'ß'→'SS'). 단 Unicode 판 차이(Python 3.13=15.1,
  *     Node 22=16.0)로 16.0 신규 문자의 대문자화는 다를 수 있다(실제 G-code 에는 안 나옴).
- *   - round(x): 은행가 반올림(half-even). round(x, 6): 정확한 10진 전개에서 half-even 후 다시 float.
- *   - 숫자→문자열: '{:g}'(유효 6자리 half-even, 'e+06' 꼴, 끝 0 제거), repr(float)('1e-05'·'0.0'·'inf'),
+ *   - round(x): 은행가 반올림(half-even).
+ *   - 숫자→문자열: '{:g}'(유효 6자리 half-even, 'e+06' 꼴, 끝 0 제거), '{:.4f}'(정확한 10진 전개에서 소수 4자리
+ *     half-even — JS toFixed 는 동률을 올리고 1e21 이상은 지수 표기라 쓰지 않음), repr(float)('1e-05'·'0.0'·'inf'),
  *     int 출력(F값)은 자리 전부(BigInt — JS String(1e21)='1e+21' 와 다름).
  *   - int/float 구분: JS number 는 하나뿐 → 안전 정수(Number.isSafeInteger)는 Python int, 나머지는 float 로 본다
  *     (인자 오류 메시지의 repr 에서만 차이가 보임: Python 300.0 → '300.0', 여기 300 → '300').
@@ -58,7 +61,7 @@ const TOOL_CMDS = new Set(['T0', 'T1']);
 // 드라이런 통과 명령 (주석만 뗀 원문 그대로). keepE=true면 DRYRUN_E_CMDS도 통과, false면 경고 없이 버림
 const DRYRUN_PASS = new Set(['G28', 'G90', 'G91', 'G92', 'M400']);
 const DRYRUN_E_CMDS = new Set(['M83', 'M82', 'T0', 'T1']);
-// 실출력 통과 명령 (G92는 E 인자만 있을 때 따로 판정)
+// 실출력 통과 명령 (G92는 인자 검사 후 E만 있을 때 따로 판정)
 const PRINT_PASS = new Set(['G90', 'M83', 'T0', 'T1', 'M400']);
 // 실출력 금지 명령 → errors (사유)
 const PRINT_FORBIDDEN: Record<string, string> = {
@@ -72,6 +75,8 @@ const NUM = '[+-]?(?:[0-9]+\\.?[0-9]*|\\.[0-9]+)';
 const NUM_RE = new RegExp(`^${NUM}$`);
 // G0/G1 인자 1개 = 공백 + 글자 + 숫자, 뒤는 공백 또는 끝. 원본 re.ASCII → \s 는 ASCII 6자만
 const MOVE_ARG_RE = new RegExp(`[ \\t\\n\\r\\v\\f]+([XYZEFxyzef])(${NUM})(?=[ \\t\\n\\r\\v\\f]|$)`, 'g');
+// G92 인자 1개 = 공백 + 글자(X/Y/Z/E) + 숫자 — 숫자 규칙은 이동 줄과 같음 (G92 E1e3 → Klipper E1·E3 방지)
+const G92_ARG_RE = new RegExp(`[ \\t\\n\\r\\v\\f]+([XYZExyze])(${NUM})(?=[ \\t\\n\\r\\v\\f]|$)`, 'g');
 const HUGE_NUM_LEN = 300; // 이보다 긴 인자 텍스트만 float 무한대 검사
 
 const TOL = 0.001; // Z 검증 허용 오차 (규격서 §11 거부 조건 7: ±0.001)
@@ -206,11 +211,6 @@ function cpHead(s: string, count: number): string {
   return s.slice(0, i);
 }
 
-/** Python s[0] — 첫 코드 포인트 ('' 이면 '') */
-function cpFirst(s: string): string {
-  return s.length === 0 ? '' : s.slice(0, cpWidth(s, 0));
-}
-
 /** 양의 유한 double 의 정확한 10진 전개: value = 0.digits × 10^decpt (digits 끝 0 없음) */
 function exactDecimal(x: number): { digits: string; decpt: number } {
   const view = new DataView(new ArrayBuffer(8));
@@ -302,17 +302,39 @@ function fmtNum(value: number): string {
   return (neg ? '-' : '') + body;
 }
 
-/** Python round(x, ndigits) (float) — 정확한 10진 전개에서 half-even 후 다시 float */
-function pyRoundNdigits(x: number, ndigits: number): number {
-  if (!Number.isFinite(x) || x === 0) return x;
-  const sign = x < 0 ? '-' : '';
-  const ex = exactDecimal(Math.abs(x));
-  const keep = ex.decpt + ndigits; // 10^-ndigits 자리까지의 자릿수
-  if (keep >= ex.digits.length) return x; // 이미 정확
-  if (keep < 0) return Number(sign + '0'); // 0.5×10^-ndigits 보다 작음
-  const r = roundDigitsHalfEven(ex.digits, ex.decpt, keep);
-  if (r.digits === '') return Number(sign + '0');
-  return Number(`${sign}0.${r.digits}e${r.decpt}`);
+/** Z 관련 위반 문구 소수 자리 — 원본 _fmt_z */
+const Z_DECIMALS = 4;
+
+/**
+ * Python f"{value:.4f}" — 원본 _fmt_z (Z 관련 위반 문구 숫자, 소수 4자리 고정).
+ * 정확한 10진 전개에서 소수 4자리 half-even, 정수부는 자리 전부(지수 표기 없음), 음수 부호는 0 이 돼도 남는다('-0.0000').
+ */
+function fmtZ(value: number): string {
+  if (Number.isNaN(value)) return 'nan';
+  const neg = value < 0 || Object.is(value, -0);
+  const ax = Math.abs(value);
+  if (ax === Infinity) return neg ? '-inf' : 'inf';
+  // value = 0.digits × 10^decpt (digits '' = 0)
+  let digits = '';
+  let decpt = 0;
+  if (ax !== 0) {
+    const ex = exactDecimal(ax);
+    const keep = ex.decpt + Z_DECIMALS; // 소수 4째 자리까지의 자릿수
+    if (keep >= ex.digits.length) {
+      digits = ex.digits;
+      decpt = ex.decpt;
+    } else if (keep >= 0) {
+      const r = roundDigitsHalfEven(ex.digits, ex.decpt, keep);
+      digits = r.digits;
+      decpt = r.decpt;
+    } // keep < 0: 0.5×10^-4 보다 작음 → 0
+  }
+  const digitAt = (i: number): string => (i >= 0 && i < digits.length ? digits[i] : '0');
+  let intPart = '';
+  for (let i = 0; i < decpt; i++) intPart += digitAt(i);
+  let frac = '';
+  for (let i = 0; i < Z_DECIMALS; i++) frac += digitAt(decpt + i);
+  return (neg ? '-' : '') + (intPart === '' ? '0' : intPart) + '.' + frac;
 }
 
 /** Python max(1, int(round(value))) 를 10진 문자열로 — 원본 _f_int (F 출력값) */
@@ -516,16 +538,16 @@ function* iterTextLines(text: string): Generator<string> {
 type MoveParams = Map<string, string>;
 
 /**
- * G0/G1 인자 파싱 → {대문자 글자: 원래 숫자 텍스트}. 규칙 위반이면 null
- * rest = 명령 토큰 뒤 문자열, ntok = 그 안의 공백 분리 토큰 수.
- * 각 토큰 = 글자 1개(X/Y/Z/E/F) + 10진수, 유한값, 같은 글자 중복 금지, F > 0
+ * 인자 파싱 공통 → {대문자 글자: 원래 숫자 텍스트}. 규칙 위반이면 null — 원본 _parse_args
+ * rest = 명령 토큰 뒤 문자열, ntok = 그 안의 공백 분리 토큰 수, argRe = 허용 글자별 정규식(g 플래그).
+ * 각 토큰 = 허용 글자 1개 + 10진수, 유한값, 같은 글자 중복 금지. 인자 0개면 빈 Map
  */
-function parseMoveArgs(rest: string, ntok: number): MoveParams | null {
+function parseArgs(rest: string, ntok: number, argRe: RegExp): MoveParams | null {
   const upper = rest.toUpperCase();
   const params: MoveParams = new Map();
   let pairs = 0;
-  MOVE_ARG_RE.lastIndex = 0;
-  for (let m = MOVE_ARG_RE.exec(upper); m !== null; m = MOVE_ARG_RE.exec(upper)) {
+  argRe.lastIndex = 0;
+  for (let m = argRe.exec(upper); m !== null; m = argRe.exec(upper)) {
     pairs++;
     params.set(m[1], m[2]); // dict(pairs) — 중복 글자는 뒤 값
   }
@@ -534,6 +556,15 @@ function parseMoveArgs(rest: string, ntok: number): MoveParams | null {
   if (rest.length > HUGE_NUM_LEN && cpLength(rest) > HUGE_NUM_LEN) {
     for (const v of params.values()) if (!Number.isFinite(Number(v))) return null;
   }
+  return params;
+}
+
+/**
+ * G0/G1 인자 파싱 (글자 X/Y/Z/E/F, F > 0) → {대문자 글자: 원래 숫자 텍스트}. 규칙 위반이면 null
+ */
+function parseMoveArgs(rest: string, ntok: number): MoveParams | null {
+  const params = parseArgs(rest, ntok, MOVE_ARG_RE);
+  if (params === null) return null;
   const f = params.get('F');
   if (f !== undefined && Number(f) <= 0) return null; // Klipper가 거부하는 속도 (F0/음수)
   return params;
@@ -719,7 +750,7 @@ class Parser {
     }
     if (z !== null && mz !== null && Math.abs(z - mz) > TOL + EPS) {
       // 첫 사례 값은 카테고리가 처음 생길 때만 기록 (원본 _first_kw)
-      const kw: Record<string, KwValue> = t.has('z_mismatch') ? {} : { k: n, m: fmtNum(mz), z: fmtNum(z) };
+      const kw: Record<string, KwValue> = t.has('z_mismatch') ? {} : { k: n, m: fmtZ(mz), z: fmtZ(z) };
       t.add('z_mismatch', ';Z:와 G1 Z 불일치 {n}층{refs} — 첫 사례 층 {k}: ;Z:{m} ≠ G1 Z{z}', {
         ref: n,
         violation: true,
@@ -732,7 +763,7 @@ class Parser {
       if (Math.abs(z - expect) > TOL + EPS) {
         const kw: Record<string, KwValue> = t.has('z_lh')
           ? {}
-          : { lh: fmtNum(this.lh), k: n, z: fmtNum(z), e: fmtNum(pyRoundNdigits(expect, 6)) };
+          : { lh: fmtZ(this.lh), k: n, z: fmtZ(z), e: fmtZ(expect) };
         t.add('z_lh', 'Z ≠ (N+1)×층두께 {n}층{refs} — 층두께 {lh}, 첫 사례 층 {k}: Z{z} (기대 Z{e})', {
           ref: n,
           violation: true,
@@ -743,7 +774,7 @@ class Parser {
     }
     if (z !== null) {
       if (this.prevZ !== null && z < this.prevZ - TOL - EPS) {
-        const kw: Record<string, KwValue> = t.has('z_down') ? {} : { k: n, z: fmtNum(z), p: fmtNum(this.prevZ) };
+        const kw: Record<string, KwValue> = t.has('z_down') ? {} : { k: n, z: fmtZ(z), p: fmtZ(this.prevZ) };
         t.add('z_down', 'Z가 이전 층보다 작음 {n}층{refs} — 첫 사례 층 {k}: Z{z} < 이전 Z{p}', {
           ref: n,
           violation: true,
@@ -873,13 +904,15 @@ class Parser {
         return;
       }
       if (cmd === 'G92') {
-        if (g92EOnly(tokens.slice(1))) {
-          this.lines.push(code);
-        } else {
+        const args = this.g92Args(code, tokens, lineNo);
+        if (args === null) return; // 잘못된 G92 줄 — 버림 (위반 집계는 g92Args)
+        if (g92ResetsXyz(args)) {
           t.add('p_g92', 'G92 좌표 재설정 {n}줄{refs} — X/Y/Z 재설정 금지 (G92 E만 허용)', {
             ref: lineNo,
             violation: true,
           });
+        } else {
+          this.lines.push(code);
         }
         return;
       }
@@ -890,8 +923,12 @@ class Parser {
       }
     } else {
       if (DRYRUN_PASS.has(cmd)) {
-        if (cmd === 'G92' && g92ResetsXyz(tokens.slice(1))) {
-          t.add('g92_xyz', 'G92 좌표 재설정(X/Y/Z) {n}줄{refs} — 층 Z 기준이 틀어질 수 있음', { ref: lineNo });
+        if (cmd === 'G92') {
+          const args = this.g92Args(code, tokens, lineNo);
+          if (args === null) return; // 잘못된 G92 줄 — 버림 (경고 집계는 g92Args)
+          if (g92ResetsXyz(args)) {
+            t.add('g92_xyz', 'G92 좌표 재설정(X/Y/Z) {n}줄{refs} — 층 Z 기준이 틀어질 수 있음', { ref: lineNo });
+          }
         }
         this.lines.push(code);
         return;
@@ -903,6 +940,21 @@ class Parser {
     }
 
     this.unknown(cmd, lineNo);
+  }
+
+  /**
+   * G92 인자 검사 (두 모드 공통) → {대문자 글자: 숫자 텍스트}, 인자 없으면 빈 Map.
+   * 잘못된 줄(X/Y/Z/E 외 글자, 숫자 아님, 같은 글자 중복)은 위반 집계 후 null — 원본 _g92_args
+   */
+  private g92Args(code: string, tokens: string[], lineNo: number): MoveParams | null {
+    const args = parseArgs(code.slice(tokens[0].length), tokens.length - 1, G92_ARG_RE);
+    if (args === null) {
+      this.tally.add('bad_g92', '잘못된 G92 줄 {n}줄{refs} — 버림 (인자는 X/Y/Z/E + 10진수, 중복 금지)', {
+        ref: lineNo,
+        violation: true,
+      });
+    }
+    return args;
   }
 
   /** 알 수 없는 명령 — 버리고 명령별 집계 (종류가 많으면 '그 외'로 합침) */
@@ -930,6 +982,11 @@ class Parser {
         ref: lineNo,
         violation: true,
       });
+      return;
+    }
+    if (params.size === 0) {
+      // 인자 없는 G0/G1 — F 단독 줄과 같은 등급(경고)이지만 따로 집계. modal F 변화 없음
+      t.add('no_args', '인자 없는 이동 줄 {n}줄{refs} — 버림', { ref: lineNo });
       return;
     }
     const fText = params.get('F');
@@ -1007,20 +1064,7 @@ class Parser {
   }
 }
 
-function g92Letters(args: string[]): string[] {
-  return args.map((tok) => cpFirst(tok).toUpperCase());
-}
-
-/** G92가 X/Y/Z 좌표를 재설정하는지 — 인자 없는 G92는 Klipper에서 전 축 재설정 */
-function g92ResetsXyz(args: string[]): boolean {
-  const letters = g92Letters(args);
-  return letters.length === 0 || letters.some((c) => 'XYZ'.includes(c)); // 원본 `c in "XYZ"` (부분 문자열 판정)
-}
-
-/** G92 인자가 E(10진수) 하나뿐인지 */
-function g92EOnly(args: string[]): boolean {
-  if (args.length !== 1) return false;
-  const tok = args[0];
-  const first = cpFirst(tok);
-  return first.toUpperCase() === 'E' && NUM_RE.test(tok.slice(first.length));
+/** G92(인자 검사 통과)가 X/Y/Z 좌표를 재설정하는지 — 인자 없는 G92는 Klipper에서 전 축 재설정 */
+function g92ResetsXyz(args: MoveParams): boolean {
+  return args.size === 0 || args.has('X') || args.has('Y') || args.has('Z');
 }

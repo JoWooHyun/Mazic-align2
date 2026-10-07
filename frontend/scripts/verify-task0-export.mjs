@@ -7,8 +7,8 @@
 //     src/features/v2/utils/build-volume.ts        (checkPrintableArea · checkItemsInPrintableArea — 모델 + 서포트)
 //     src/features/v2/hooks/usePrinterProfileStore.ts (빌트인 목록·새 설치 기본 선택·저장값 하위 호환)
 //     + 배선(소스 검사): 워커·서비스·useSliceExport·SliceSidePanel·ViewerV2Page·BabylonScene 훅 순서.
-//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.3 @ dfdf08c §1(베드 150×85, 출력 가능 영역 X 10~150 × Y 10~85,
-//   투사 (10,10)·73 µm·1920×1080, Z 0~2000)·§8(F 한계)·§12(파서). 설계 = docs/계획_Z1_task0출력_20261002.md §4·§4-2.
+//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.4 @ a4ebc6c §1(베드 150×85, 출력 가능 영역 X 10~150 × Y 10~85,
+//   투사 (10,10)·73 µm·1920×1080, Z 0~2000)·§5(리트랙트)·§8(F 한계)·§12(파서 v0.2.1). 설계 = docs/계획_Z1_task0출력_20261002.md §4·§4-2.
 //
 //   (1) 프로파일 — 빌트인 Task0 필드(outputKind 'task0', 1920×1080, 73 µm, 150×85×2000), 값이 TASK0_DEFAULTS 와 같음
 //       (단일 소스), 선택 필드 폴백 = TASK0_DEFAULTS·선택 필드가 있으면 그 값, 기존 빌트인 3종 값 그대로·0번(폴백) 그대로,
@@ -19,8 +19,11 @@
 //       서포트 바닥 Y 잡음은 위반 아님, 모델 플레이트 아래·높이 초과, 기존 대칭 검사(checkBuildVolume) 문구 그대로.
 //   (3) 앱 경로 = 스크립트 경로 — 워커 코어 runTask0GcodeExport 를 gen-task0-dryrun.mjs 와 같은 입력(파일 A·C·B,
 //       lh 0.1, 빌트인 Task0 프로파일의 writer 옵션)으로 → generateTask0Gcode 직접 호출과 같은 문자열 + sha256 고정값
-//       (A 22415b46… / C 3975b066… / B a62e93fa…), 파서 3모드 경고·오류 0, 요약(층 수·빈 층·채움 층·estimate),
+//       (Z1-c 규격 v0.3.4: A dde08ea9… / C ab3f8d74… / B b1e65f70…), 파서 3모드 경고·오류 0, 요약(층 수·빈 층·채움 층·estimate),
 //       층 진행 콜백(1..n 차례, 바이트 무영향).
+//       고정값 갱신 근거(Z1-c): 새 출력에서 **파일 첫 도포 앞 E+r 1줄 + 머리 메타 두 줄**만 되돌리면 Z1-b2 판(b50b691)
+//       sha256(A 22415b46… / C 3975b066… / B a62e93fa…)이 그대로 나온다 = 바이트 변화는 v0.3.4 리트랙트 규칙뿐.
+//       리트랙트 수: 층마다 E+r = E−r, 파일 E+r = Z1-b2 판 + 1(A 99→100 / C 3→4 / B 199→200).
 //   (3b) 실제 워커 모듈 — slice-batch.worker.ts 를 가짜 self 로 Node 에서 불러 task0-gcode 메시지를 넣으면
 //       progress(스로틀, 마지막 = 전체 층) + task0-done 1건, gcode sha256 = 위 고정값, 막힘은 error 가 아닌 task0-done.
 //   (4) 막힘 경로 — ① 채움 실패: 같은 평면 면을 가진 겹친 상자들을 **한 메시**로 묶은 나선 벽(lh 0.1)에서 층 9 가
@@ -58,7 +61,7 @@ import {
 } from "../src/features/v2/utils/build-volume.ts";
 import { PROFILE_FIELD_LIMITS } from "../src/features/v2/types/printer.ts";
 import { TASK0_DEFAULTS, bedToWorld, task0PrintableWorldRect } from "../src/features/v2/utils/task0/task0-frame.ts";
-import { generateTask0Gcode } from "../src/features/v2/utils/task0/task0-gcode-writer.ts";
+import { TASK0_WRITER_ID, generateTask0Gcode } from "../src/features/v2/utils/task0/task0-gcode-writer.ts";
 import { runTask0GcodeExport } from "../src/features/v2/utils/task0/task0-export.ts";
 import {
   TASK0_BUILT_IN_PROFILE,
@@ -81,12 +84,41 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const V2 = path.resolve(SCRIPT_DIR, "..", "src", "features", "v2");
 const TASK0_SRC = path.join(V2, "utils", "task0");
 
-/** gen-task0-dryrun.mjs 가 쓰는 파일 A·C·B 의 sha256 (Z1-a2·Z1-b2 검수 고정값) */
+/** gen-task0-dryrun.mjs 가 쓰는 파일 A·C·B 의 sha256 (Z1-c 고정값 — 규격 v0.3.4: 첫 도포 앞 E+r) */
 const EXPECTED_SHA = {
+  cube10: "dde08ea97b2e144dabc842d1257980bdd4d51fa59b7bf7453c463e5f264928b9",
+  "gap-plates": "ab3f8d7431386b5deaa3a4f44df09dfe1b0b1f0ac82303423cc63ccac76d7859",
+  "file-b": "b1e65f70c96a3e5cee17a97c27d8b2bb029faa8e82791bca2ef09361098a8339",
+};
+/** 같은 파일의 Z1-b2 판(b50b691 — 규격 v0.3.3, 첫 사용 E+r 생략) sha256 — Z1-c 고정값 갱신의 근거로만 쓴다 */
+const PREV_SHA_Z1B2 = {
   cube10: "22415b46a3e974f20252e747aa036038c8dce09b1ea06065857526682f99218c",
   "gap-plates": "3975b066d6f7eb387911e475c234c12ae8ff3804f93c941d6edde6dfa5cd5f53",
   "file-b": "a62e93fa0c041ebf305f1383a6eb40a8dac59571eb5352184cb3b317674e7ee1",
 };
+/** Z1-b2 판 머리 메타 첫 두 줄 */
+const Z1B2_HEADER = [
+  "; MazicAlign v2 task0-gcode-writer (Z1-a2)",
+  "; Task0 G-code spec v0.3.3 (B pattern: serpentine 0 deg row fill, L moves between rows)",
+];
+const RE_FIRST_DEPOSIT = /^G1 X\S+ Y\S+ E[0-9]/;
+const RE_E_PLUS = /^G1 E[0-9]/;
+
+/**
+ * 새 출력 → Z1-b2 판 재현: 머리 메타 두 줄을 옛 문구로, 파일 첫 도포 앞 E+r 1줄 삭제(옛 규칙 "처음 쓸 때 E+r 생략").
+ * 모양이 예상과 다르면 null.
+ */
+function revertToZ1b2(gcode) {
+  const lines = gcode.split("\n");
+  if (lines[0] !== `; ${TASK0_WRITER_ID}` || !lines[1].startsWith("; Task0 G-code spec v0.3.4 ")) return null;
+  lines[0] = Z1B2_HEADER[0];
+  lines[1] = Z1B2_HEADER[1];
+  const d = lines.findIndex((l) => RE_FIRST_DEPOSIT.test(l));
+  if (d < 1 || !RE_E_PLUS.test(lines[d - 1])) return null;
+  lines.splice(d - 1, 1);
+  return lines.join("\n");
+}
+const countEPlus = (gcode) => gcode.split("\n").filter((l) => RE_E_PLUS.test(l)).length;
 
 /** 기존 빌트인 3종 — Z2 전(788c255) 값 그대로여야 한다 */
 const LEGACY_BUILT_INS = [
@@ -373,6 +405,20 @@ function sectionSamePath() {
     assert(r.ok, `${fx.name}: 통과 (막힘 이유 ${r.ok ? "없음" : JSON.stringify(r.issues)})`);
     assert(r.ok && r.gcode === direct.gcode, `${fx.name}: 코어 출력 = generateTask0Gcode 직접 호출 (gen-task0-dryrun 이 쓰는 것)`);
     assert(hash === EXPECTED_SHA[fx.name], `${fx.name}: sha256 ${hash.slice(0, 16)}… = 고정값 ${EXPECTED_SHA[fx.name].slice(0, 16)}…`);
+    // Z1-c 고정값 근거 — 바이트 변화는 v0.3.4 리트랙트 규칙(첫 도포 앞 E+r)과 머리 메타 두 줄뿐
+    const prev = revertToZ1b2(direct.gcode);
+    const prevHash = prev === null ? "(모양 다름)" : sha256(prev);
+    assert(
+      prevHash === PREV_SHA_Z1B2[fx.name],
+      `${fx.name}: 첫 도포 앞 E+r 1줄·머리 메타 2줄만 되돌리면 Z1-b2 판 sha256 ${prevHash.slice(0, 16)}… = ${PREV_SHA_Z1B2[fx.name].slice(0, 16)}…`,
+    );
+    const tt = direct.totals;
+    const prevPlus = prev === null ? -1 : countEPlus(prev);
+    assert(
+      tt.unretracts === tt.retracts && direct.layers.every((l) => l.unretracts === l.retracts) &&
+        countEPlus(direct.gcode) === tt.unretracts && tt.unretracts === prevPlus + 1,
+      `${fx.name}: 리트랙트 E−r ${tt.retracts} = E+r ${tt.unretracts} (층마다 같음), E+r = Z1-b2 판 ${prevPlus} + 1`,
+    );
     assert(
       r.parser.length === 3 && r.parser.every((p) => p.warnings.length === 0 && p.errors.length === 0 && p.layerCount === direct.totals.layerCount),
       `${fx.name}: 파서 3모드(${r.parser.map((p) => p.label).join(" · ")}) 경고·오류 0, 층 수 ${direct.totals.layerCount}`,
@@ -712,7 +758,7 @@ async function sectionControls(area) {
 }
 
 async function main() {
-  console.log("Task0 앱 내보내기 검증 (Z2 — 프로파일·출력 가능 영역·워커 코어, 규격서 v0.3.3)");
+  console.log("Task0 앱 내보내기 검증 (Z2 — 프로파일·출력 가능 영역·워커 코어, 규격서 v0.3.4)");
   await sectionProfile();
   const area = sectionArea();
   sectionSamePath();
