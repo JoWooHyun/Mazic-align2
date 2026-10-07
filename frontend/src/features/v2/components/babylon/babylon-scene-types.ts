@@ -20,6 +20,17 @@ export type { BuildVolumeIssue };
 
 export type GizmoMode = "none" | "translate" | "rotate" | "scale";
 
+/**
+ * getSliceGeometry 항목 — world 삼각형(삼각형당 9 float) + 메시 정체.
+ * kind 'stl' 이면 stlId = 그 STL id, 'support' 면 stlId = 붙은 STL id(서포트 레코드의 stlId — 모르면 없음).
+ * 워커 메시지 WorkerMeshGeometry({ triangles }) 자리에 그대로 넘길 수 있다(워커는 triangles 만 읽는다).
+ */
+export interface SliceGeometryItem {
+  triangles: Float32Array;
+  kind: "stl" | "support";
+  stlId?: string;
+}
+
 export interface BabylonSceneProps {
   /** 프로젝트의 STL 파일 목록. */
   files: STLFileV2[];
@@ -218,8 +229,16 @@ export interface BabylonSceneHandle {
    * 현재 씬의 모든 STL + 서포트 mesh 를 world 삼각형 배열(삼각형당 9 float)로
    * 추출한다. getSliceMask 와 동일한 mesh 집합. Web Worker 로 넘겨 배치
    * 슬라이스/출력할 때 씬(Babylon Mesh) 직렬화 불가 문제를 우회한다.
+   * 항목마다 메시 정체(kind·stlId — Task0 2재료 D1b 의 재료 슬롯 결정용)를 함께 준다 —
+   * 삼각형·순서(STL 먼저, 서포트 뒤)는 그대로라 마스크 ZIP 등 기존 소비자는 triangles 만 쓴다.
    */
-  getSliceGeometry: () => { triangles: Float32Array }[];
+  getSliceGeometry: () => SliceGeometryItem[];
+  /**
+   * Task0 2재료 표시 색 (D1b, 화면 전용 — 산출물 무관). slots = STL id → 재료 슬롯이면 STL 메시를 슬롯 색으로,
+   * 서포트를 A 색으로 칠한다(utils/task0/task0-material TASK0_SLOT_COLOR_HEX). null 이면 원래 색으로 되돌린다
+   * (STL = 현재 편집 모드의 표시 색 setModelDiffuseMode, 서포트 = 칠하기 전 색). 머티리얼 색만 바꾼다(정점 색·메시 무변경).
+   */
+  setMaterialSlotColors: (slots: Readonly<Record<string, "A" | "B">> | null) => void;
   /**
    * 씬에 있는 모든 STL + 서포트의 world AABB 최대 Y. 모델 없으면 0.
    * 슬라이서가 layer count 를 계산할 때 쓴다.

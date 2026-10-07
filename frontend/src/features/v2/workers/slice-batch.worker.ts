@@ -177,6 +177,7 @@ function runGcode(req: GcodeRequest): void {
  * Task0 파서 이식판 검사 → 요약. 검증 스크립트가 같은 함수를 직접 불러 산출 바이트를 확인하므로, 이 함수에는
  * 진행률 배선 외의 처리를 두지 않는다. writer 는 층마다 커버리지 검사를 돌려 무겁다(층당 수십~수백 ms —
  * 계획서 §4-2) → 반드시 이 워커에서 돈다. 취소는 다른 경로와 같이 서비스의 worker terminate.
+ * 2재료(D1b)는 요청의 materialSlots(메시마다 A/B)를 코어에 그대로 넘긴다 — 없으면 단일 재료(바이트 그대로).
  */
 function runTask0Gcode(req: Task0GcodeRequest): void {
   const reportProgress = makeProgressThrottle();
@@ -188,6 +189,7 @@ function runTask0Gcode(req: Task0GcodeRequest): void {
       writer: req.writer,
       exposure: req.exposure,
       printable: req.printable,
+      materialSlots: req.materialSlots,
     },
     (done, total) => reportProgress(done, total),
   );
@@ -201,6 +203,7 @@ function runTask0Gcode(req: Task0GcodeRequest): void {
  * 층 마스크 PNG(투사 프레임) → 빈 층 집합 대조 → manifest·exposure·preview·zip → 자기 검사. 검증 스크립트가 같은 함수·같은
  * 메시지를 넣어 산출 바이트를 확인하므로, 이 함수에는 진행률 배선과 zip 바이트 전달(transfer) 외의 처리를 두지 않는다.
  * 층당 writer 수십~수백 ms + PNG 약 20 ms 라 반드시 이 워커에서 돈다. 취소는 다른 경로와 같이 서비스의 worker terminate.
+ * 2재료(D1b)는 요청의 materialSlots(메시마다 A/B)를 코어에 그대로 넘긴다 — 없으면 단일 재료(바이트 그대로).
  */
 async function runTask0JobZip(req: Task0JobZipRequest): Promise<void> {
   const reportProgress = makeProgressThrottle();
@@ -215,6 +218,7 @@ async function runTask0JobZip(req: Task0JobZipRequest): Promise<void> {
       printable: req.printable,
       generator: req.generator,
       generatedAt: req.generatedAt,
+      materialSlots: req.materialSlots,
     },
     (stage, done, total) => reportProgress(done, total, stage),
   );

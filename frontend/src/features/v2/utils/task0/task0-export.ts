@@ -42,8 +42,26 @@
  *      표본 두 장(첫 도포 층·첫 빈 층)만 풀어 흰 픽셀 수를 맞춰 본다. manifest estimate = 요약 estimate(화면 = 파일)도 본다.
  *   진행 = ('gcode', 층 n/N) → ('png', 층 n/N) → ('verify', 0/1 → 1/1).
  *
+ * 2재료 (D1b — 규격서 v0.3.4 §5·§6·§11, 계획 `docs/계획_Z1_task0출력_20261002.md` §4-5 D1b 인계,
+ *   `docs/계획_하이브리드슬라이서설정_20260928.md` §5-2·§5-3·§6 결정 5):
+ *   입력 materialSlots(메시마다 A/B — 앱은 task0-material task0ExportMaterialSlots: 서포트 = A, STL = 파일의 materialSlot·기본 B)가
+ *   있을 때만. 없으면 위 단일 재료 경로를 한 글자도 바꾸지 않는다(파일 A·B·C·견본 바이트 그대로).
+ *   1-c. 슬롯 수 = 메시 수, 값은 A/B — 아니면 막음(writer 의 RangeError 대신 이유 문장).
+ *   2.  writer 옵션에 dualMaterial { …writer.dualMaterial, slots } (D1a — 층 안 T0 → T1 2패스, 툴별 리트랙트, B 우선 겹침).
+ *   3.  writer 'failed' 층은 원인을 갈라 적는다 — 재료 B 가 칠한 A 에 갇힘(층 순서 B → A 는 규격 §6 【미정】 — Task0 답 대기,
+ *       협의 §31-4) / 칠한 레진을 가로질러야 하는 항목 / 얇은 부분 채움 실패 (dualFailedLayerIssues).
+ *   4-b. 자기 검사(앞 단계가 통과했을 때만): task0-coverage checkTask0DualGcodeCoverage(재료별 (a)(b)(c)(d) — A 영역 = PA − PB,
+ *       넘침은 합집합, B 우선) + 트래블 엄격 판정(T 줄을 넘는 전환 트래블 포함 — task0-fill-route task0TravelContactOk, verify c4b 정의).
+ *   5.  요약에 dual(툴 전환 수·툴별 도포 길이·슬롯별 메시 수·막지 않는 알림), estimate 툴 전환 시간 = 툴 전환 수 × 0.5 s(규격 §13).
+ *   7.  빈 층 대조는 그대로 — G-code 빈 층(두 툴 모두 XY 이동 없음)과 합집합 마스크(모든 메시 — 층 PNG 는 PA ∪ PB 한 장)를 맞댄다.
+ *   8.  manifest materials 2개(A = T0 TASK0_DEFAULT_MATERIAL_NAME, B = T1 TASK0_DEFAULT_MATERIAL_NAME_B)·dualMaterial true·
+ *       toolChangeCount = writer 툴 전환 수, 층 노광 = 재료별 큰 값(task0-jobzip buildTask0MaterialExposure — 지금은 한 프로파일이라 같다).
+ *   9.  자기 검사 verifyTask0JobZip 은 그대로 — manifest toolChangeCount = run.gcode 툴 전환 수, materials 툴 = G-code 가 쓰는 툴을 본다.
+ *
  * 순수 TS — DOM/Node/Babylon 의존 없음(Web Worker·tsx 공통 — performance.now 만).
  */
+import { checkTask0DualGcodeCoverage, type Task0DualCoverageReport } from './task0-coverage';
+import { task0TravelContactOk, type Task0UmSegment } from './task0-fill-route';
 import {
   TASK0_DEFAULTS,
   task0LayerCount,
@@ -64,15 +82,17 @@ import {
   TASK0_JOB_GENERATOR,
   assembleTask0JobZip,
   buildTask0Estimate,
-  buildTask0Exposure,
   buildTask0JobFiles,
   buildTask0LayerImages,
+  task0JobMaterialExposure,
   verifyTask0JobZip,
   type Task0Estimate,
   type Task0ExposureSettings,
 } from './task0-jobzip';
 import type { Task0RasterFrame } from './task0-mask';
 import { decodeTask0GrayPng } from './task0-png';
+import { task0LayerPolygonsBed, task0SplitMeshesBySlot, type Task0MaterialSlot } from './task0-slice';
+import type { Task0UmPoint } from './task0-thin-fill';
 
 // ==================== 타입 ====================
 
@@ -98,6 +118,29 @@ export interface Task0ExportInput {
    * 모델·서포트가 이 밖에 있으면 writer 를 돌리지 않고 막는다(머리 주석 1-b).
    */
   printable?: Task0PrintableFrame;
+  /**
+   * 2재료 (D1b — 머리 주석 "2재료") — 메시마다 재료 슬롯(meshes 와 같은 길이·순서, A = T0, B = T1). 있으면 writer dualMaterial
+   * 로 층 안 T0 → T1 2패스 + 2재료 자기 검사, 없으면 단일 재료 경로 그대로(바이트 불변). 앱은 task0-material
+   * task0ExportMaterialSlots(재료 모드 2재료일 때만 — 서포트 = A, STL = 파일의 materialSlot, 기본 B).
+   */
+  materialSlots?: readonly Task0MaterialSlot[];
+  /**
+   * (2재료) 재료 B 노광 — 빠지면 exposure 와 같은 값(지금 앱은 한 프로파일이라 늘 같다). 층당 노광 = 재료별 큰 값
+   * (task0-jobzip buildTask0MaterialExposure — 규격 §6), 값이 다르면 요약 dual.warnings 에 경고.
+   */
+  exposureB?: Task0ExposureSettings;
+}
+
+/** 2재료 요약 (D1b) — 길이 mm */
+export interface Task0DualExportSummary {
+  /** 툴 전환 수 = 층 블록 안 T 줄 수 (manifest toolChangeCount 와 같은 값) */
+  toolChanges: number;
+  /** 툴별 도포 길이 — [T0 = 재료 A, T1 = 재료 B] */
+  depositMmByTool: [number, number];
+  /** 슬롯별 메시 수 (서포트 포함 — 서포트는 A) */
+  meshCount: Record<Task0MaterialSlot, number>;
+  /** 막지 않는 알림 — 재료별 노광이 달라 큰 값을 쓴 경우(규격 §6), 한 재료의 도포가 없는 경우 */
+  warnings: string[];
 }
 
 /** 내보내기 요약 — 길이 mm, 시간 s */
@@ -116,8 +159,10 @@ export interface Task0ExportSummary {
   retracts: number;
   /** 파일 줄 수 */
   lineCount: number;
-  /** 규격 §11·§13 estimate 8필드 (s) — 단일 재료라 툴 전환 0 */
+  /** 규격 §11·§13 estimate 8필드 (s) — 툴 전환 시간 = 툴 전환 수 × 0.5 s (단일 재료 0) */
   estimate: Task0Estimate;
+  /** 2재료 요약 (D1b) — 단일 재료면 null */
+  dual: Task0DualExportSummary | null;
 }
 
 /** 파서 검사 한 모드의 결과 */
@@ -142,7 +187,7 @@ export type Task0ExportResult =
       gcode: null;
       /** 화면에 보일 이유 (한국어, 층 번호는 0-based — 슬라이스 미리보기 층 번호와 같음) */
       issues: string[];
-      /** 문제가 난 층 (0-based, 오름차순 — 채움 실패 층) */
+      /** 문제가 난 층 (0-based, 오름차순 — 채움 실패 층, 2재료면 자기 검사(커버리지·B 우선·트래블)에 걸린 층도) */
       failedLayers: number[];
       /** writer 를 돌렸으면 요약, 돌리지 않았으면(층 없음·출력 가능 영역 밖) null */
       summary: Task0ExportSummary | null;
@@ -157,6 +202,8 @@ export interface Task0JobZipExportInput extends Task0ExportInput {
   frame?: Task0RasterFrame;
   /** 재료 A(T0) 이름 — 빠지면 task0-jobzip TASK0_DEFAULT_MATERIAL_NAME */
   materialName?: string;
+  /** (2재료) 재료 B(T1) 이름 — 빠지면 task0-jobzip TASK0_DEFAULT_MATERIAL_NAME_B */
+  materialNameB?: string;
   /** manifest.generator — 빠지면 task0-jobzip TASK0_JOB_GENERATOR(견본 값). 앱은 TASK0_APP_JOB_GENERATOR */
   generator?: string;
   /** manifest.generatedAt (ISO 8601) — 빠지면 지금 시각. 같은 바이트가 필요한 검증만 고정값을 준다 */
@@ -303,6 +350,254 @@ function boxText(box: BedBox): string {
   return `X ${trimNum(box.xMin, 3)}~${trimNum(box.xMax, 3)}, Y ${trimNum(box.yMin, 3)}~${trimNum(box.yMax, 3)} mm`;
 }
 
+// ==================== 2재료 (D1b) ====================
+
+/** 2재료 슬롯 — 입력 materialSlots(앱), 없으면 writer.dualMaterial.slots(실험·대조군), 둘 다 없으면 null(단일 재료) */
+function dualSlotsOf(input: Task0ExportInput): readonly Task0MaterialSlot[] | null {
+  return input.materialSlots ?? input.writer?.dualMaterial?.slots ?? null;
+}
+
+/** 슬롯 배열 검사 — writer 가 RangeError 로 멈추기 전에 화면 이유로 막는다. 문제 없으면 null */
+function slotsIssue(slots: readonly Task0MaterialSlot[], meshCount: number): string | null {
+  if (slots.length !== meshCount) {
+    return `재료 슬롯 수 ${slots.length} ≠ 메시 수 ${meshCount} — 2재료 배정을 만들 수 없습니다(앱 배선 오류). 다시 시도해 보세요.`;
+  }
+  const bad = slots.findIndex((s) => s !== 'A' && s !== 'B');
+  return bad >= 0 ? `재료 슬롯은 A 또는 B 여야 합니다 (메시 ${bad}: ${String(slots[bad])}).` : null;
+}
+
+/** 2재료 요약 — writer 툴별 합계·슬롯별 메시 수 + 막지 않는 알림(노광 큰 값, 한 재료 도포 없음) */
+function dualSummaryOf(
+  gen: Task0GcodeResult,
+  slots: readonly Task0MaterialSlot[],
+  exposureWarnings: readonly string[],
+): Task0DualExportSummary {
+  const t = gen.totals;
+  const depositMmByTool: [number, number] = [t.byTool[0]?.depositMm ?? 0, t.byTool[1]?.depositMm ?? 0];
+  const meshCount: Record<Task0MaterialSlot, number> = { A: 0, B: 0 };
+  for (const s of slots) meshCount[s]++;
+  const warnings = [...exposureWarnings];
+  for (const [i, slot] of (['A', 'B'] as const).entries()) {
+    if ((t.byTool[i]?.segments ?? 0) === 0) {
+      warnings.push(
+        `재료 ${slot}(T${i}) 도포가 없습니다(${slot} 메시 ${meshCount[slot]}개) — manifest 에는 두 재료가 그대로 적힙니다(2재료 모드). ` +
+          '한 재료만 쓰려면 재료 모드를 단일로 바꾸세요.',
+      );
+    }
+  }
+  return { toolChanges: t.toolChanges, depositMmByTool, meshCount, warnings };
+}
+
+/** "층 0 (Z 0.1 mm), 층 1 (Z 0.2 mm) 외 n개 층" — 층 번호 0-based */
+function listLayersZ(layers: readonly number[], lh: number): string {
+  const listed = layers.slice(0, TASK0_EXPORT_MAX_LISTED).map((n) => `층 ${n} (Z ${trimNum(task0LayerZ(n, lh), 6)} mm)`);
+  const more = layers.length > TASK0_EXPORT_MAX_LISTED ? ` 외 ${layers.length - TASK0_EXPORT_MAX_LISTED}개 층` : '';
+  return `${listed.join(', ')}${more}`;
+}
+
+/**
+ * writer 가 'failed' 로 남긴 층의 이유 (2재료) — 층 통계와 그 층의 재료별 단면 유무로 가른다(writer 통계에 실패한 패스 번호가
+ * 없어서 — 툴별 도포 줄 수·경로 없는 항목 수로 판단):
+ *   ① 두 재료가 다 있고 경로 없는 항목이 있는데 T1 도포가 0 = 재료 B 가 칠한 A 에 둘러싸여 T1 로 들어갈 길이 없다
+ *      (층 안 순서 A → B — 그 층만 B → A 로 내는 것은 규격 §6 【미정】, Task0 답 대기 — 협의 §31-4).
+ *      writer 순서 옵션이 기본(A → B, 뒤집기 끔)일 때만 이렇게 읽는다 — 실험 옵션(order 'BA'·flipOrderWhenStuck)이면 ②.
+ *   ② 두 재료가 다 있고 경로 없는 항목이 있다(일부는 도포) = 칠한 레진을 가로지르지 않고는 갈 수 없는 항목.
+ *   ③ 그 밖(한 재료만 있는 층, 경로는 있는데 채움 뒤 커버리지 실패) = 단일 재료와 같은 "얇은 부분 채움 실패".
+ */
+function dualFailedLayerIssues(
+  gen: Task0GcodeResult,
+  failed: readonly number[],
+  meshes: readonly Float32Array[],
+  slots: readonly Task0MaterialSlot[],
+  lh: number,
+  writer: Task0ExportWriterOptions | undefined,
+): string[] {
+  const split = task0SplitMeshesBySlot(meshes, slots);
+  const { bedWidthMm, bedDepthMm } = gen.params;
+  const abOrder = (writer?.dualMaterial?.order ?? 'AB') === 'AB' && !writer?.dualMaterial?.flipOrderWhenStuck;
+  const trapped: number[] = [];
+  const blocked: number[] = [];
+  const thin: number[] = [];
+  let blockedItems = 0;
+  for (const n of failed) {
+    const s = gen.layers[n];
+    const hasA = task0LayerPolygonsBed(split.A, n, lh, bedWidthMm, bedDepthMm).length > 0;
+    const hasB = task0LayerPolygonsBed(split.B, n, lh, bedWidthMm, bedDepthMm).length > 0;
+    const interlocked = hasA && hasB && s.unreachable > 0;
+    if (!interlocked) thin.push(n);
+    else if (abOrder && s.byTool[1].segments === 0) trapped.push(n);
+    else {
+      blocked.push(n);
+      blockedItems += s.unreachable;
+    }
+  }
+  const out: string[] = [];
+  if (trapped.length > 0) {
+    out.push(
+      `재료 B(T1)가 재료 A(T0)에 둘러싸여 T1 로 들어갈 길이 없는 층 ${trapped.length}개: ${listLayersZ(trapped, lh)} — ` +
+        '층 안 순서 A → B 에서는 칠한 A 를 가로질러야 합니다(규격 §7 교차 금지). 그 층만 B → A 로 내는 것은 규격 §6 【미정】이라 ' +
+        'Task0 답을 기다리는 중입니다(협의 §31-4). 재료 배정(A/B)이나 모델 배치를 바꿔 보세요.',
+    );
+  }
+  if (blocked.length > 0) {
+    out.push(
+      `두 재료가 맞물린 단면에서 칠한 레진을 가로지르지 않고는 갈 수 없는 도포 항목 ${blockedItems}개가 남은 층 ${blocked.length}개: ` +
+        `${listLayersZ(blocked, lh)} — 재료 배정(A/B)이나 모델 배치를 바꿔 보세요(규격 §7 교차 금지).`,
+    );
+  }
+  if (thin.length > 0) {
+    out.push(
+      `얇은 부분 채움 실패 ${thin.length}개 층: ${listLayersZ(thin, lh)} — ` +
+        '노즐이 방금 칠한 비드 사이에 갇히는 단면이라 도포 경로가 노광 영역을 다 덮지 못합니다(규격 §3 커버리지). ' +
+        '모델 배치·방향이나 층 두께를 바꿔 보세요.',
+    );
+  }
+  return out;
+}
+
+/** 재료별 커버리지 검사 이름 (task0-coverage — 규격 §3) */
+const COVERAGE_CHECK_LABELS: readonly ['a' | 'b' | 'c' | 'd' | 'overflow', string][] = [
+  ['a', '(a) 덮임 비율'],
+  ['b', '(b) 도포 없는 섬'],
+  ['c', '(c) 안쪽 덮이지 않은 곳'],
+  ['d', '(d) 덮이지 않은 곳'],
+  ['overflow', '넘침'],
+];
+
+/** 소수 자리 고정 µm 좌표 → 정수 µm (writer 출력은 X/Y 소수 3자리라 정확) */
+const toUm = (mm: number): number => Math.round(mm * 1000);
+
+/**
+ * 트래블 엄격 판정 (2재료 자기 검사) — 층마다 그 층에서 이미 칠한 선분(모든 툴, 정수 µm)과 트래블 경로(연속한 XY 이동 줄 —
+ * T 줄·E 단독 줄은 경로를 끊지 않는다)를 task0-fill-route task0TravelContactOk(= verify-task0-writer c4b 정의 — 교차·
+ * 경유점 접촉·되짚기 외 겹침 금지)로 본다. 층 시작 위치 = 파킹(규격 §9). 도포 = X/Y 와 E 가 같이 있는 줄.
+ * @returns 위반이 있는 층과 건수 (층 번호 오름차순)
+ */
+function travelContactViolations(gcode: string, parkUm: Task0UmPoint): { layer: number; count: number }[] {
+  const out: { layer: number; count: number }[] = [];
+  let started = false;
+  let layer = -1;
+  let pos: Task0UmPoint = parkUm;
+  let painted: Task0UmSegment[] = [];
+  let path: Task0UmPoint[] | null = null;
+  let count = 0;
+  const flush = (): void => {
+    if (path !== null && !task0TravelContactOk(path, painted, painted.length - 1)) count++;
+    path = null;
+  };
+  const endLayer = (): void => {
+    flush();
+    if (layer >= 0 && count > 0) out.push({ layer, count });
+  };
+  for (const raw of gcode.split('\n')) {
+    const line = raw.trim();
+    if (!started) {
+      started = line === '; EXECUTABLE_BLOCK_START';
+      continue;
+    }
+    if (line === ';LAYER_CHANGE') {
+      endLayer();
+      layer++;
+      pos = parkUm;
+      painted = [];
+      path = null;
+      count = 0;
+      continue;
+    }
+    if (line === '' || line.startsWith(';') || layer < 0) continue;
+    const toks = line.split(/\s+/);
+    const cmd = toks[0].toUpperCase();
+    if (cmd !== 'G0' && cmd !== 'G1') continue;
+    let x: number | null = null;
+    let y: number | null = null;
+    let hasE = false;
+    for (const t of toks.slice(1)) {
+      const k = t[0].toUpperCase();
+      if (k === 'X') x = toUm(Number(t.slice(1)));
+      else if (k === 'Y') y = toUm(Number(t.slice(1)));
+      else if (k === 'E') hasE = true;
+    }
+    if (x === null && y === null) continue; // Z·E 단독·F 단독 — 경로를 끊지 않는다
+    const to: Task0UmPoint = [x ?? pos[0], y ?? pos[1]];
+    if (hasE) {
+      flush();
+      painted.push([pos, to]);
+    } else {
+      if (path === null) path = [pos];
+      path.push(to);
+    }
+    pos = to;
+  }
+  endLayer();
+  return out;
+}
+
+/**
+ * 2재료 자기 검사 (D1b — 머리 주석 4-b): 재료별 커버리지·B 우선(checkTask0DualGcodeCoverage) + 트래블 엄격 판정.
+ * writer 가 지키는 불변식을 산출물 텍스트로 다시 본다 — 하나라도 어긋나면 파일을 내지 않는다.
+ */
+function dualSelfCheck(
+  input: Task0ExportInput,
+  slots: readonly Task0MaterialSlot[],
+  topY: number,
+  lh: number,
+  gen: Task0GcodeResult,
+): { issues: string[]; failedLayers: number[]; coverage: Task0DualCoverageReport } {
+  const p = gen.params;
+  const cov = checkTask0DualGcodeCoverage(input.meshes, slots, topY, lh, gen.gcode, {
+    depositWidthMm: p.depositWidthMm,
+    bedWidthMm: p.bedWidthMm,
+    bedDepthMm: p.bedDepthMm,
+    parkXMm: p.parkXMm,
+    parkYMm: p.parkYMm,
+  });
+  const issues: string[] = [];
+  const failedLayers = new Set<number>();
+  if (cov.gcodeLayerCount !== cov.expectedLayerCount) {
+    issues.push(`2재료 검사 — G-code 층 ${cov.gcodeLayerCount} ≠ 기대 층 ${cov.expectedLayerCount}`);
+  }
+  if (cov.preambleSegments > 0) issues.push(`2재료 검사 — 층 밖(프리앰블)에 도포 ${cov.preambleSegments}줄`);
+  const covFailed = cov.layers.filter((l) => !l.A.pass || !l.B.pass);
+  if (covFailed.length > 0) {
+    const listed = covFailed.slice(0, TASK0_EXPORT_MAX_LISTED).map((l) => {
+      const what = (['A', 'B'] as const)
+        .map((m) => {
+          const bad = COVERAGE_CHECK_LABELS.filter(([k]) => !l[m][k].pass).map(([, label]) => label);
+          return bad.length > 0 ? `재료 ${m}: ${bad.join('·')}` : '';
+        })
+        .filter((s) => s !== '')
+        .join(' / ');
+      return `층 ${l.index} (${what})`;
+    });
+    const more = covFailed.length > TASK0_EXPORT_MAX_LISTED ? ` 외 ${covFailed.length - TASK0_EXPORT_MAX_LISTED}개 층` : '';
+    issues.push(
+      `2재료 커버리지 실패 ${covFailed.length}개 층: ${listed.join(', ')}${more} — 재료별 도포 경로가 그 재료의 노광 영역을 ` +
+        '다 덮지 못하거나 넘칩니다(규격 §3, 겹친 곳은 B 영역).',
+    );
+    for (const l of covFailed) failedLayers.add(l.index);
+  }
+  if (cov.overlapLayers.length > 0) {
+    issues.push(
+      `B 우선 위반 ${cov.overlapLayers.length}개 층: 층 ${cov.overlapLayers.slice(0, TASK0_EXPORT_MAX_LISTED).join(', ')}` +
+        `${cov.overlapLayers.length > TASK0_EXPORT_MAX_LISTED ? ' 외' : ''} — 재료 A(T0) 도포가 재료 B 단면 안쪽으로 최대 ` +
+        `${trimNum(cov.overlapMaxDepthMm, 3)} mm 들어갑니다(겹친 곳은 B 만 칠한다 — 계획 §5-3).`,
+    );
+    for (const n of cov.overlapLayers) failedLayers.add(n);
+  }
+  const travel = travelContactViolations(gen.gcode, [toUm(p.parkXMm), toUm(p.parkYMm)]);
+  if (travel.length > 0) {
+    const total = travel.reduce((s, v) => s + v.count, 0);
+    issues.push(
+      `트래블이 칠한 레진을 가로지르거나 스치는 곳 ${total}건 — 층 ${travel
+        .slice(0, TASK0_EXPORT_MAX_LISTED)
+        .map((v) => v.layer)
+        .join(', ')}${travel.length > TASK0_EXPORT_MAX_LISTED ? ' 외' : ''} (규격 §7 — 도포한 영역을 가로지르는 트래블 금지).`,
+    );
+    for (const v of travel) failedLayers.add(v.layer);
+  }
+  return { issues, failedLayers: [...failedLayers].sort((a, b) => a - b), coverage: cov };
+}
+
 /** G-code 단계 결과 — 공개 결과 + (job.zip 이 이어 쓰는) writer 결과 */
 interface GcodeStage {
   out: Task0ExportResult;
@@ -356,9 +651,28 @@ function exportGcodeStage(
     };
   }
 
-  const result = generateTask0Gcode(input.meshes, topY, lh, { ...input.writer, onLayerDone });
+  // (1-c) 2재료 슬롯 — 메시 수·값 검사 (writer 의 RangeError 대신 화면 이유로)
+  const dualSlots = dualSlotsOf(input);
+  const slotProblem = dualSlots === null ? null : slotsIssue(dualSlots, input.meshes.length);
+  if (slotProblem !== null) {
+    return {
+      out: { ok: false, gcode: null, issues: [slotProblem], failedLayers: [], summary: null, parser: [] },
+      gen: null,
+    };
+  }
+
+  // (2) writer — 단일 재료는 지금 호출 그대로(바이트 불변), 2재료는 dualMaterial(슬롯 + writer 옵션의 나머지 2재료 값)
+  const result =
+    dualSlots === null
+      ? generateTask0Gcode(input.meshes, topY, lh, { ...input.writer, onLayerDone })
+      : generateTask0Gcode(input.meshes, topY, lh, {
+          ...input.writer,
+          dualMaterial: { ...input.writer?.dualMaterial, slots: dualSlots },
+          onLayerDone,
+        });
   const t = result.totals;
-  const exposure = buildTask0Exposure(t.layerCount, lh, input.exposure ?? {});
+  // 층 노광 — 2재료면 재료별 큰 값(규격 §6). job.zip 의 buildTask0JobFiles 와 같은 함수라 요약 estimate = 파일 estimate
+  const mat = task0JobMaterialExposure(result, lh, input.exposure ?? {}, input.exposureB);
   const summary: Task0ExportSummary = {
     layerCount: t.layerCount,
     layerHeightMm: lh,
@@ -369,23 +683,30 @@ function exportGcodeStage(
     travelMm: t.travelMm,
     retracts: t.retracts,
     lineCount: t.lineCount,
-    estimate: buildTask0Estimate(result.layers, result.params, exposure.exposureSecByLayer),
+    estimate: buildTask0Estimate(result.layers, result.params, mat.exposure.exposureSecByLayer, {
+      toolChangeCount: t.toolChanges,
+    }),
+    dual: dualSlots === null ? null : dualSummaryOf(result, dualSlots, mat.warnings),
   };
 
   const issues: string[] = [];
-  // (3) 채움 실패 — 노즐이 이미 칠한 비드에 갇히는 퇴화 단면 등 (계획서 §4-2)
+  // (3) 채움 실패 — 노즐이 이미 칠한 비드에 갇히는 퇴화 단면 등 (계획서 §4-2). 2재료는 원인을 갈라 적는다(갇힌 B 등)
   const failed = t.thinFillFailedLayers;
   if (failed.length > 0) {
-    const zDecimals = 6;
-    const listed = failed
-      .slice(0, TASK0_EXPORT_MAX_LISTED)
-      .map((n) => `층 ${n} (Z ${trimNum(task0LayerZ(n, lh), zDecimals)} mm)`);
-    const more = failed.length > TASK0_EXPORT_MAX_LISTED ? ` 외 ${failed.length - TASK0_EXPORT_MAX_LISTED}개 층` : '';
-    issues.push(
-      `얇은 부분 채움 실패 ${failed.length}개 층: ${listed.join(', ')}${more} — ` +
-        '노즐이 방금 칠한 비드 사이에 갇히는 단면이라 도포 경로가 노광 영역을 다 덮지 못합니다(규격 §3 커버리지). ' +
-        '모델 배치·방향이나 층 두께를 바꿔 보세요.',
-    );
+    if (dualSlots !== null) {
+      issues.push(...dualFailedLayerIssues(result, failed, input.meshes, dualSlots, lh, input.writer));
+    } else {
+      const zDecimals = 6;
+      const listed = failed
+        .slice(0, TASK0_EXPORT_MAX_LISTED)
+        .map((n) => `층 ${n} (Z ${trimNum(task0LayerZ(n, lh), zDecimals)} mm)`);
+      const more = failed.length > TASK0_EXPORT_MAX_LISTED ? ` 외 ${failed.length - TASK0_EXPORT_MAX_LISTED}개 층` : '';
+      issues.push(
+        `얇은 부분 채움 실패 ${failed.length}개 층: ${listed.join(', ')}${more} — ` +
+          '노즐이 방금 칠한 비드 사이에 갇히는 단면이라 도포 경로가 노광 영역을 다 덮지 못합니다(규격 §3 커버리지). ' +
+          '모델 배치·방향이나 층 두께를 바꿔 보세요.',
+      );
+    }
   }
 
   // (1-b 사후) writer 가 낸 XY 좌표 범위도 출력 가능 영역 안 (writer 검증 c7 과 같은 역할 — 우회 트래블 등)
@@ -412,8 +733,17 @@ function exportGcodeStage(
     }
   }
 
+  // (4-b) 2재료 자기 검사 — 재료별 커버리지·B 우선·트래블 엄격 판정 (앞 단계가 이미 막았으면 건너뜀 — 검사 비용)
+  const failedAll = new Set<number>(failed);
+  if (dualSlots !== null && issues.length === 0) {
+    const self = dualSelfCheck(input, dualSlots, topY, lh, result);
+    issues.push(...self.issues);
+    for (const n of self.failedLayers) failedAll.add(n);
+  }
+
   if (issues.length > 0) {
-    return { out: { ok: false, gcode: null, issues, failedLayers: [...failed], summary, parser }, gen: result };
+    const failedLayers = [...failedAll].sort((a, b) => a - b);
+    return { out: { ok: false, gcode: null, issues, failedLayers, summary, parser }, gen: result };
   }
   return { out: { ok: true, gcode: result.gcode, summary, parser }, gen: result };
 }
@@ -527,7 +857,9 @@ export async function runTask0JobZipExport(
     layerHeightMm: lh,
     images,
     exposure: input.exposure,
+    exposureB: input.exposureB,
     materialName: input.materialName,
+    materialNameB: input.materialNameB,
     generator: input.generator,
     generatedAt: input.generatedAt,
     frame,

@@ -1,4 +1,6 @@
 import type { STLFileV2 } from "../types/stl";
+import type { Task0MaterialSlot } from "../utils/task0/task0-slice";
+import { Task0SlotToggle } from "./Task0MaterialCard";
 
 interface StlFileListProps {
   files: STLFileV2[];
@@ -8,6 +10,14 @@ interface StlFileListProps {
   onRemove: (id: string) => void;
   loading?: boolean;
   className?: string;
+  /**
+   * Task0 2재료 (D1b) — 있으면 줄마다 재료 A/B 고르기(pages/viewer/hooks/useTask0Material — Task0 프로파일 + 재료 모드 2재료일
+   * 때만 준다). slotOf 는 기본값을 채운 슬롯(없으면 B).
+   */
+  materialSlot?: {
+    slotOf: (file: STLFileV2) => Task0MaterialSlot;
+    onChange: (id: string, slot: Task0MaterialSlot) => void;
+  };
 }
 
 /**
@@ -22,6 +32,7 @@ const StlFileList: React.FC<StlFileListProps> = ({
   onRemove,
   loading = false,
   className = "",
+  materialSlot,
 }) => {
   return (
     <aside
@@ -91,9 +102,22 @@ const StlFileList: React.FC<StlFileListProps> = ({
                     ×
                   </button>
                 </div>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {formatSize(f.fileSize)}
-                </p>
+                {materialSlot ? (
+                  // Task0 2재료 (D1b) — 크기 옆에 재료 A(T0)/B(T1). 서포트는 항상 A 라 여기 없다.
+                  <div className="flex items-center justify-between mt-0.5">
+                    <p className="text-xs text-gray-400">
+                      {formatSize(f.fileSize)}
+                    </p>
+                    <Task0SlotToggle
+                      value={materialSlot.slotOf(f)}
+                      onChange={(s) => materialSlot.onChange(f.id, s)}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {formatSize(f.fileSize)}
+                  </p>
+                )}
               </div>
             );
           })}

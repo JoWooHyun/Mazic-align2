@@ -71,5 +71,23 @@ export function useStlFilesV2(projectId: string | undefined) {
     [refresh],
   );
 
-  return { files, loading, error, refresh, add, remove, updateTransform };
+  /** Task0 2재료 재료 슬롯 (D1b) — repo 경유 저장(규칙 1) 후 목록 갱신. 되돌리기 이력에는 넣지 않는다(형상 무변경). */
+  const updateMaterialSlot = useCallback(
+    async (id: string, materialSlot: "A" | "B") => {
+      await repo.updateStlFile(id, { materialSlot });
+      await refresh();
+    },
+    [refresh],
+  );
+
+  return {
+    files,
+    loading,
+    error,
+    refresh,
+    add,
+    remove,
+    updateTransform,
+    updateMaterialSlot,
+  };
 }

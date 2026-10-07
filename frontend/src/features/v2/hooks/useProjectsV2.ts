@@ -88,5 +88,18 @@ export function useProjectV2(id: string | undefined) {
     };
   }, [id]);
 
-  return { project, loading, error };
+  /**
+   * 프로젝트 필드 갱신 (repo 경유 — 규칙 1) 후 화면 상태를 저장된 레코드로 바꾼다.
+   * 지금 쓰는 곳: Task0 재료 모드(task0MaterialMode — D1b). lastModifiedAt 은 repo 가 갱신한다.
+   */
+  const update = useCallback(
+    async (patch: Partial<Omit<ProjectV2, "id" | "createdAt">>) => {
+      if (!id) return;
+      const next = await repo.updateProject(id, patch);
+      setProject(next);
+    },
+    [id],
+  );
+
+  return { project, loading, error, update };
 }
