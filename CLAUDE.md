@@ -38,10 +38,10 @@ cd frontend && npm run build      # vite build
 ```
 
 ```
-cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-06 기준 28종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-06 기준 29종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
 ```
 
-- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/6 기준 28종)가 상시 PASS여야 한다
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/6 기준 29종)가 상시 PASS여야 한다
   (**Node 20.6 이상** — `verify-head-normal.mjs` 가 `node:module` register 로더 훅을 쓴다)
   (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
   확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
@@ -54,13 +54,14 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 
 | 경로 | 역할 | 담당/주의 |
 |---|---|---|
-| `pages/ViewerV2Page.tsx` | 전체 통합 골격 (907줄 — 7/20 분리 직후 640에서 다시 불어남): 공유 상태 + 훅 조립 + JSX 골격 | 공용 — useCallback deps 주의. **새 기능은 여기 말고 `viewer/` 하위 훅·컴포넌트로** |
+| `pages/ViewerV2Page.tsx` | 전체 통합 골격 (920줄 — 7/20 분리 직후 640에서 다시 불어남): 공유 상태 + 훅 조립 + JSX 골격 | 공용 — useCallback deps 주의. **새 기능은 여기 말고 `viewer/` 하위 훅·컴포넌트로** |
 | `pages/viewer/` | ViewerV2Page의 분리 조각: `hooks/`(서포트 편집·dental·내보내기 등 8개 + types), `components/`(헤더·오버레이·사이드패널·슬라이스 모드 8개), `utils/`(4개) | 구조도: `docs/리팩토링_LLM구조_20260720.md` |
 | `components/BabylonScene.tsx` | **씬 본체** (158줄): SceneCtx + 훅 호출(순서 고정) + 핸들 조립. 편집모드 select/support/dental-brush, handle 패턴 | 유승제 설계 — 구조 변경 시 리뷰 지정 |
 | `components/babylon/` | 씬 기능 조각: `hooks/`(use* 10개 + setup-gizmos·setup-pointer-handlers·dispose-scene), `handle/` 빌더 6개, dental/bridge/재설계 액션. **훅 호출 순서·dispose 순서 불변식 있음** | 변경 전 `docs/리팩토링_LLM구조_20260720.md` §5 필독 |
 | `support/` | 서포트 구조물 (재설계 경로: 검출→라우팅→부품 조립, 레거시 trunk/브릿지, 파라미터, 자동 생성) | **조우현**(2026-08-05 유승제→이관, AI dev-cycle로 진행) |
 | `utils/dental/` | **지현규 알고리즘**: `margin-detect.ts`(🔒잠금), `margin-guard.ts`(🔒상수 잠금 — 원본 1:1 이식), `island-detection.ts`, `dental-support.ts`, `paint-mask.ts` | 지현규 — 로직 변경 시 컨펌 |
-| `utils/gcode/` | FDM G-code (2노즐 하이브리드 대비). Task0 플레이버는 **별도 writer 로 추가 예정**(Z1) | 조우현 이식분 — 기존 marlin 출력 바이트 보존 |
+| `utils/gcode/` | FDM G-code (marlin) — 회귀 기준으로만 유지 | 조우현 이식분 — 기존 marlin 출력 바이트 보존 |
+| `utils/task0/` | **Task0(자체 프린터) 출력 전부**: 상수·좌표(`task0-frame` — Task0 숫자의 단일 소스), 프로파일(`task0-profile`), G-code writer(B안 줄 채움 + 얇은 부분 채움), Task0 파서 이식(원본과 차분 검증), 투사 프레임 마스크 래스터, 커버리지 검사기, PNG·job.zip, 앱 내보내기 코어(`task0-export`) | 설계 `docs/계획_Z1_task0출력_20261002.md`. 규격 = Task0 리포 규격서. 파서 이식은 Task0 커밋에 고정 |
 | `utils/slice-*` + `workers/` | 배치 슬라이스 (마스크 ZIP·G-code, 워커) | 산출물 바이트 변경 금지 원칙 |
 | `utils/{exposure,print-time,mask-png}.ts` | 노광 보간, 시간 추정, 마스크 PNG | 기본값 단일 소스 유지 |
 | `data/*.repo.ts` + `data/db.ts` | IndexedDB 계층 | 스키마 변경은 협의 |

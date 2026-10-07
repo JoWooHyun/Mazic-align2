@@ -3,7 +3,17 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import type { PrinterProfileV2 } from "../types/printer";
+import {
+  TASK0_BUILT_IN_PROFILE,
+  TASK0_PROFILE_ID,
+} from "../utils/task0/task0-profile";
 
+/**
+ * 빌트인 프로파일.
+ *   ⚠️ 0번(Mars 3 Pro)은 "현재 프로파일을 못 찾을 때"·"사용자 프로파일 삭제 후"의 폴백이다
+ *   (useCurrentProfile·removeProfile·PrinterProfileDialog handleDelete). 그래서 Task0(Z2)는 **맨 뒤**에
+ *   붙였다 — 앞에 넣으면 기존 사용자의 폴백 동작이 바뀐다. 새 설치의 기본 선택만 DEFAULT_PROFILE_ID 로 Task0.
+ */
 export const BUILT_IN_PROFILES: PrinterProfileV2[] = [
   {
     id: "elegoo-mars-3-pro",
@@ -29,7 +39,16 @@ export const BUILT_IN_PROFILES: PrinterProfileV2[] = [
     pixelPitchUm: 28.0,
     buildVolumeMm: [218.88, 123.0, 235.0],
   },
+  // Task0 하이브리드 (Z2) — 값은 utils/task0/task0-frame.ts TASK0_DEFAULTS 참조(규칙 6), outputKind 'task0'.
+  TASK0_BUILT_IN_PROFILE,
 ];
+
+/**
+ * 새 설치(localStorage 에 저장값 없음)의 기본 선택 = Task0 (11월 데모 — 종합 D4 AI 제안).
+ * 기존 사용자는 persist 가 저장된 currentId 로 덮으므로 선택이 그대로 유지된다
+ * (zustand persist 는 저장값이 있으면 초기 상태를 그 값으로 병합한다).
+ */
+export const DEFAULT_PROFILE_ID = TASK0_PROFILE_ID;
 
 const BUILT_IN_IDS = new Set(BUILT_IN_PROFILES.map((p) => p.id));
 
@@ -51,7 +70,7 @@ export const usePrinterProfileStore = create<PrinterProfileState>()(
   persist(
     (set) => ({
       userProfiles: [],
-      currentId: BUILT_IN_PROFILES[0].id,
+      currentId: DEFAULT_PROFILE_ID,
 
       setCurrent: (id) => set({ currentId: id }),
 

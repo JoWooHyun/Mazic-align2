@@ -17,6 +17,7 @@ import {
   type SlicePolygon,
 } from "../utils/slice-geometry";
 import { rasterizePolygons, type SliceMask } from "../utils/slice-rasterize";
+import { runTask0GcodeExport } from "../utils/task0/task0-export";
 import { makeZipStore } from "../utils/zip-store";
 
 import type {
@@ -24,6 +25,7 @@ import type {
   PngZipRequest,
   SliceBatchRequest,
   SliceBatchResponse,
+  Task0GcodeRequest,
   WorkerMeshGeometry,
   WorkerSliceOptions,
 } from "./slice-batch.messages";
@@ -158,6 +160,29 @@ function runGcode(req: GcodeRequest): void {
   post({ type: "gcode-done", gcode });
 }
 
+/**
+ * Task0 G-code(run.gcode) 조립 + 검사 (Z2).
+ *
+ * 처리 전부를 순수 함수 runTask0GcodeExport(utils/task0/task0-export.ts)에 맡긴다 — writer → 채움 실패 층 확인 →
+ * Task0 파서 이식판 검사 → 요약. 검증 스크립트가 같은 함수를 직접 불러 산출 바이트를 확인하므로, 이 함수에는
+ * 진행률 배선 외의 처리를 두지 않는다. writer 는 층마다 커버리지 검사를 돌려 무겁다(층당 수십~수백 ms —
+ * 계획서 §4-2) → 반드시 이 워커에서 돈다. 취소는 다른 경로와 같이 서비스의 worker terminate.
+ */
+function runTask0Gcode(req: Task0GcodeRequest): void {
+  const reportProgress = makeProgressThrottle();
+  const result = runTask0GcodeExport(
+    {
+      meshes: req.meshes.map((m) => m.triangles),
+      topY: req.topY,
+      layerHeightMm: req.layerHeightMm,
+      writer: req.writer,
+      exposure: req.exposure,
+    },
+    (done, total) => reportProgress(done, total),
+  );
+  post({ type: "task0-done", result });
+}
+
 ctx.addEventListener(
   "message",
   async (event: MessageEvent<SliceBatchRequest>) => {
@@ -165,8 +190,10 @@ ctx.addEventListener(
     try {
       if (req.kind === "pngzip") {
         await runPngZip(req);
-      } else {
+      } else if (req.kind === "gcode") {
         runGcode(req);
+      } else {
+        runTask0Gcode(req);
       }
     } catch (err) {
       post({

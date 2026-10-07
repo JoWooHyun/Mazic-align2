@@ -50,6 +50,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       plateWidthMm,
       plateDepthMm,
       plateHeightMm = 0,
+      printableAreaMm = null,
       onBuildVolumeIssues,
       editMode,
       selectedSupportId,
@@ -117,6 +118,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     useDentalBrush(ctx, editMode); // #6.5 dental-brush 페인팅
     // #7 출력영역 초과 경고 (C-2). 씬 상태를 읽기만 하고 아무도 이 훅에
     //   의존하지 않으므로, 불변식 1(훅 순서)을 흔들지 않도록 맨 끝에 둔다.
+    //   Z2: Task0 출력 가능 영역·서포트 신호는 인자만 추가 — 훅 호출 순서는 그대로.
+    //   영역 테두리(usePrintableAreaOutline)는 이 훅 안 끝에서 부른다 — 이 컴포넌트의 훅 목록은 불변.
     useBuildVolumeCheck(
       ctx,
       files,
@@ -125,6 +128,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       plateHeightMm,
       onBuildVolumeIssues,
       meshLoadTick,
+      printableAreaMm,
+      { supports, supportParams, partsReady: supportPartsReady },
     );
     // #8 바닥면 붙이기 호버 하이라이트 (B-25). #7 과 같은 이유로 맨 끝.
     useAlignFloorHover(ctx, !!props.alignFloorMode);
