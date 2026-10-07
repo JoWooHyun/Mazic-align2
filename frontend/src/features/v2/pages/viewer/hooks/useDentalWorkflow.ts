@@ -17,6 +17,7 @@ import * as supportRepo from "../../../data/supports.repo";
 import type { BabylonSceneHandle } from "../../../components/BabylonScene";
 import type { SupportParams } from "../../../support";
 import type { AddSupports, RefreshSupports } from "./types";
+import type { PillarBraceRecord } from "../../../support/types";
 
 /**
  * 동기(수십~수백 초) 검출 작업을 busy 라벨이 먼저 페인트된 뒤 시작하도록
@@ -58,6 +59,8 @@ interface UseDentalWorkflowArgs {
   layerHeightMm: number;
   addSupports: AddSupports;
   refreshSupports: RefreshSupports;
+  /** 기둥 연결 브레이스 저장 (S-4b-2d). repo 경유 — 규칙 1. */
+  addPillarBraces: (braces: PillarBraceRecord[]) => Promise<void>;
 }
 
 export function useDentalWorkflow({
@@ -67,6 +70,7 @@ export function useDentalWorkflow({
   layerHeightMm,
   addSupports,
   refreshSupports,
+  addPillarBraces,
 }: UseDentalWorkflowArgs) {
   // P-2: 검출·점생성 파라미터(사용자 조절). 스토어에서 직접 읽어
   //   프롭 스레딩 없이 최신값을 쓴다.
@@ -304,11 +308,19 @@ export function useDentalWorkflow({
       if (report) {
         console.log("[재설계 라우팅]", report);
       }
+      if (routed?.braceReport) {
+        console.log("[기둥 연결]", routed.braceReport);
+      }
       if (finalized.length === 0) {
         setRedesignStatus({ ok: true, message: "생성할 서포트 점이 없습니다." });
         return;
       }
       await addSupports(finalized);
+      // ★ S-4b-2d: 기둥 연결 브레이스는 **점 저장 뒤에** 넣는다 — 다리가 가리키는
+      //   기둥 점이 DB 에 먼저 있어야 cascade(기둥 삭제 → 다리 삭제)의 전제가
+      //   깨지지 않는다. 기둥이 0개면 braces 도 0개라 이 호출은 무비용이다.
+      const braces = routed?.braces ?? [];
+      if (braces.length > 0) await addPillarBraces(braces);
       // 검출 디버그 오버레이(마젠타/주황/파랑 점) 정리 — 저장이 끝나면 기둥이
       //   실물로 서므로 오버레이는 역할이 끝났다. world 좌표 고정이라 남겨두면
       //   모델을 움직였을 때 허공에 떠 보인다(B-4). 상태 메시지는 통계 표시용으로
@@ -333,6 +345,17 @@ export function useDentalWorkflow({
           routeSummary += ` · 퇴화 거절 ${report.degenerateStruts}개`;
         }
       }
+      // 기둥 연결(좌굴 방지) 요약 — 외톨이 기둥은 사용자가 알아야 한다(연구 5절
+      //   "구제는 후속"이라 지금은 통지만 한다).
+      const braceReport = routed?.braceReport ?? null;
+      if (braceReport && braceReport.needed > 0) {
+        routeSummary +=
+          ` · 연결 필요 기둥 ${braceReport.needed}(연결됨 ${braceReport.connected})` +
+          ` · 다리 ${braceReport.braces}개`;
+        if (braceReport.lonely > 0) {
+          routeSummary += ` · ⚠️ 외톨이 ${braceReport.lonely}개`;
+        }
+      }
       setRedesignStatus({
         ok: true,
         message:
@@ -345,10 +368,17 @@ export function useDentalWorkflow({
         label: "redesign-supports",
         undo: async () => {
           for (const id of ids) await supportRepo.deleteSupport(id);
+          // 다리도 함께 되돌린다 — 기둥이 사라졌는데 다리만 남으면 허공에 뜬다.
+          //   (브레이스 id 는 점 id 와 키 공간이 같은 스토어라 deleteSupport 로
+          //   지워도 되지만, 의도를 드러내려 전용 함수를 쓴다.)
+          if (braces.length > 0 && projectId) {
+            await supportRepo.deletePillarBracesByPointIds(projectId, ids);
+          }
           await refreshSupports();
         },
         redo: async () => {
           await addSupports(finalized);
+          if (braces.length > 0) await addPillarBraces(braces);
         },
       });
     } catch (e) {
@@ -370,6 +400,8 @@ export function useDentalWorkflow({
     //   개별 값 대신 콜백 자체를 의존성으로 둔다 — 규칙 7(deps 누락) 준수.
     runDetectInWorker,
     addSupports,
+    // 규칙 7 — 브레이스 저장 함수도 반응형 값이라 deps 에 넣는다(stale closure 방지).
+    addPillarBraces,
     refreshSupports,
     sceneHandleRef,
   ]);

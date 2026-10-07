@@ -5,8 +5,13 @@ import type { TransformV2 } from "../../types/transform";
 import type { SliceMask } from "../../utils/slice-rasterize";
 import type { FdmSettings } from "../../utils/gcode/types";
 import type { FindMarginStats } from "../../utils/dental/margin-detect";
-import type { SupportParams, SupportPointV2 } from "../../support/types";
+import type {
+  PillarBraceRecord,
+  SupportParams,
+  SupportPointV2,
+} from "../../support/types";
 import type { RouteReport } from "../../support/route-plan";
+import type { InterconnectReport } from "../../support/interconnect-pillars";
 import type { RedesignDetectStats } from "./redesign-detect-actions";
 import type { EditMode } from "../EditModeControls";
 import type { ViewPreset } from "../../utils/camera-views";
@@ -38,6 +43,12 @@ export interface BabylonSceneProps {
   onGizmoCommit: (id: string, start: TransformV2, end: TransformV2) => void;
   /** 프로젝트의 서포트 점. 추가·삭제 시 자동 동기화. */
   supports: SupportPointV2[];
+  /**
+   * 기둥 연결 브레이스 (S-4b-2d). 생략 가능 — 없으면 다리를 안 세운다.
+   *   `supports` 와 같은 diff 규약으로 동기화되며, 메시는 `supportMeshMapRef` 에
+   *   등록돼 STL export·슬라이스·G-code 에 **함께 들어간다**.
+   */
+  pillarBraces?: PillarBraceRecord[];
   /** 서포트 굵기 등 시각화에 쓰는 파라미터. */
   supportParams: SupportParams;
   /** 빌드플레이트 가로 (mm). 프로파일에서 옴. */
@@ -427,11 +438,25 @@ export interface BabylonSceneHandle {
    *   빼고 report 에 카운트**한다(조용히 버리지 않는다 — 연구 7절-6).
    *   반환 점을 저장하면 useSupportMeshSync 가 경로별 형상을 세운다.
    *   report 는 활성 STL 이 없어 라우팅을 못 돌린 경우 null.
+   *
+   *   ## S-4b-2d — 기둥 연결 브레이스도 함께 계획한다
+   *   확정된 기둥(routeKind 가 joinPillar/anchor 가 아닌 점)의 world 폴리라인을
+   *   **변환 루프 안에서** 모아 `planPillarInterconnect` 에 넘긴다. 결과 다리는
+   *   `PillarBraceRecord[]`(stl-local) 로 함께 돌려주며, 호출 측이 점과 같이
+   *   저장하면 브레이스 메시가 선다. 라우팅과 같은 probe 를 재사용하므로 추가
+   *   삼각형 추출 비용이 없다.
    */
   routeAndFinalizeRedesignPoints: (
     points: SupportPointV2[],
     params: SupportParams,
-  ) => { points: SupportPointV2[]; report: RouteReport | null };
+  ) => {
+    points: SupportPointV2[];
+    report: RouteReport | null;
+    /** 기둥 연결 브레이스 저장 레코드 (S-4b-2d). 없으면 빈 배열. */
+    braces: PillarBraceRecord[];
+    /** 브레이스 계획 리포트. 라우팅을 못 돌린 경우 null. */
+    braceReport: InterconnectReport | null;
+  };
 }
 
 /** 아일랜드 검출 요약 통계 (패널 표시용). 원본 onIslandDetectionComplete 페이로드 축약. */
