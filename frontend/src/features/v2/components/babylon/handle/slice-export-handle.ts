@@ -3,7 +3,9 @@
 //   해당 메서드를 순수 이동. mesh 집합(STL + 서포트)·직렬화 규약 무변경.
 //   Task0 2재료(D1b): getSliceGeometry 항목에 메시 정체(kind·stlId)를 더하고(삼각형·순서 그대로),
 //   2재료 표시 색 setMaterialSlotColors 를 둔다(화면 전용 — 출력 흐름의 재료 확인용).
-import { Color3, StandardMaterial } from "@babylonjs/core";
+//   D2: setMaterialSlotColors 는 씬의 재료 색 상태를 바꾸는 입구(material-display setMaterialSlotState — 색을 정하는 모든
+//   지점이 상태를 읽는다), 2D 단면 패널용 재료 라벨 마스크 getSliceMaterialMask 추가(getSliceMask 무변경).
+import type { SlicePolygon } from "../../../utils/slice-geometry";
 import { meshesToStlBlob } from "../../../utils/stl-export";
 import { computeMeshVolumeMm3 } from "../../../utils/mesh-volume";
 import {
@@ -12,38 +14,34 @@ import {
   sliceMeshAtY,
 } from "../../../utils/slice-section";
 import { rasterizePolygons } from "../../../utils/slice-rasterize";
+import { rasterizeMaterialLabels } from "../../../utils/slice-material-mask";
 import {
   DEFAULT_FDM_SETTINGS,
   type FdmSettings,
 } from "../../../utils/gcode/types";
-import { setModelDiffuseMode } from "../../../utils/stl-loader";
 import {
   TASK0_DEFAULT_STL_SLOT,
   TASK0_SUPPORT_SLOT,
-  task0SlotColorRgb,
 } from "../../../utils/task0/task0-material";
+import type { Task0MaterialSlot } from "../../../utils/task0/task0-slice";
 import type {
   BabylonSceneHandle,
   SliceGeometryItem,
 } from "../babylon-scene-types";
 import type { SceneCtx } from "../scene-refs";
+import { setMaterialSlotState } from "../material-display";
 
 type SliceExportHandle = Pick<
   BabylonSceneHandle,
   | "exportStl"
   | "getFdmSliceInput"
   | "getSliceMask"
+  | "getSliceMaterialMask"
   | "getSliceGeometry"
   | "getSceneTopY"
   | "getBuildVolumeMm3"
   | "setMaterialSlotColors"
 >;
-
-/**
- * 서포트 머티리얼의 칠하기 전 색 (setMaterialSlotColors) — 되돌릴 때 쓴다. 머티리얼 객체 기준이라 씬이 새로 만들어지면
- * (새 머티리얼) 자연히 비어 있다. 서포트 기본색 상수는 utils/support-render.ts createSupportMaterial 한 곳에 있어 복사하지 않는다.
- */
-const supportBaseColor = new WeakMap<StandardMaterial, Color3>();
 
 export function buildSliceExportHandle(ctx: SceneCtx): SliceExportHandle {
   return {
@@ -108,6 +106,34 @@ export function buildSliceExportHandle(ctx: SceneCtx): SliceExportHandle {
         plateDepthMm: ctx.plateDRef.current,
       });
     },
+    getSliceMaterialMask(sliceY, widthPx, heightPx, slots) {
+      // Task0 2재료 2D 단면 (D2) — getSliceMask 와 **같은 메시 순회 순서**(STL → 서포트)·같은 자르기로 폴리곤을 모으고
+      //   폴리곤마다 재료 슬롯(STL = slots[stlId] ?? 기본 B, 서포트 = A)을 붙인다. 래스터는 slice-material-mask
+      //   rasterizeMaterialLabels — 합집합은 getSliceMask 와 같은 rasterizePolygons 호출이라 라벨 ≠ 0 = getSliceMask.
+      const polys: SlicePolygon[] = [];
+      const polySlots: Task0MaterialSlot[] = [];
+      for (const [stlId, mesh] of ctx.meshMapRef.current) {
+        const segs = sliceMeshAtY(mesh, sliceY);
+        const slot = slots[stlId] ?? TASK0_DEFAULT_STL_SLOT;
+        for (const poly of chainSegments(segs)) {
+          polys.push(poly);
+          polySlots.push(slot);
+        }
+      }
+      for (const sm of ctx.supportMeshMapRef.current.values()) {
+        const segs = sliceMeshAtY(sm, sliceY);
+        for (const poly of chainSegments(segs)) {
+          polys.push(poly);
+          polySlots.push(TASK0_SUPPORT_SLOT);
+        }
+      }
+      return rasterizeMaterialLabels(polys, polySlots, {
+        widthPx,
+        heightPx,
+        plateWidthMm: ctx.plateWRef.current,
+        plateDepthMm: ctx.plateDRef.current,
+      });
+    },
     getSliceGeometry() {
       // getSliceMask 와 동일한 mesh 집합 (STL + 서포트) 을 world 삼각형으로.
       //   Task0 2재료(D1b): 항목마다 메시 정체(kind·stlId)를 붙인다 — 삼각형·순서는 그대로(마스크 ZIP 바이트 무관).
@@ -125,30 +151,11 @@ export function buildSliceExportHandle(ctx: SceneCtx): SliceExportHandle {
       return out;
     },
     setMaterialSlotColors(slots) {
-      // Task0 2재료 표시 색 (D1b) — 머티리얼 diffuseColor 만 바꾼다. STL 머티리얼은 메시마다 따로(stl-loader),
-      //   서포트 머티리얼은 모든 서포트가 하나를 같이 쓴다(supportMaterialRef).
-      //   ⚠ useEditModeSync 가 편집 모드·files·supports·잠금이 바뀔 때 STL 색을 setModelDiffuseMode 로 되돌린다 —
-      //   부르는 쪽(pages/viewer/hooks/useTask0Material)이 같은 커밋의 뒤(부모 effect)에서 다시 부르므로 칠한 색이 남는다.
-      const supportMat = ctx.supportMaterialRef.current;
-      if (slots === null) {
-        const overhang = ctx.editModeRef.current === "support";
-        for (const mesh of ctx.meshMapRef.current.values()) setModelDiffuseMode(mesh, overhang);
-        const base = supportMat ? supportBaseColor.get(supportMat) : undefined;
-        if (supportMat && base) {
-          supportMat.diffuseColor = base.clone();
-          supportBaseColor.delete(supportMat);
-        }
-        return;
-      }
-      for (const [stlId, mesh] of ctx.meshMapRef.current) {
-        const mat = mesh.material;
-        if (!(mat instanceof StandardMaterial)) continue;
-        mat.diffuseColor = Color3.FromArray(task0SlotColorRgb(slots[stlId] ?? TASK0_DEFAULT_STL_SLOT));
-      }
-      if (supportMat) {
-        if (!supportBaseColor.has(supportMat)) supportBaseColor.set(supportMat, supportMat.diffuseColor.clone());
-        supportMat.diffuseColor = Color3.FromArray(task0SlotColorRgb(TASK0_SUPPORT_SLOT));
-      }
+      // Task0 2재료 표시 색 (D1b → D2) — 씬의 재료 색 상태(ctx.materialSlotColorsRef)를 바꾸고 STL·서포트·단면 fill 에 적용한다
+      //   (material-display setMaterialSlotState — 멱등). STL 색을 정하는 다른 지점(useEditModeSync·useFileMeshSync 로드 완료)도
+      //   같은 상태를 읽으므로, 부르는 쪽(pages/viewer/hooks/useTask0Material)은 상태가 바뀔 때만 부르면 된다
+      //   (D1b 의 "부모 effect 가 다시 칠한다" 순서 의존 없음).
+      setMaterialSlotState(ctx, slots);
     },
     getSceneTopY() {
       let top = 0;

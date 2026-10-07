@@ -3,6 +3,7 @@
 //
 // 슬라이스 미리보기 중(editLocked)에는 편집 키(Ctrl+X/V/Z/Y)를 잠근다 — 신규 7.
 // 프로젝트 전환·뷰어 이탈 시 undo/redo 이력을 비운다 — 신규 2.
+// 복사·잘라내기는 원본의 Task0 재료 슬롯도 담고, 붙여넣은 새 STL 이 물려받는다(D2 — task0CopySlotInit).
 
 import { useCallback, useEffect } from "react";
 
@@ -10,6 +11,7 @@ import { useShortcutHandler } from "../../../hooks/useShortcuts";
 import { useClipboardStore } from "../../../hooks/useClipboardStore";
 import { useUndoStore } from "../../../hooks/useUndoStore";
 import type { STLFileV2 } from "../../../types/stl";
+import { task0CopySlotInit } from "../../../utils/task0/task0-material";
 import { addCopySuffix } from "../utils/file-naming";
 import type { AddStlFile, RefreshSupports, RemoveStlFile } from "./types";
 
@@ -62,7 +64,7 @@ export function useClipboardActions({
     if (selectedIds.size === 0) return;
     const items = files
       .filter((f) => selectedIds.has(f.id))
-      .map((f) => ({ fileName: f.fileName, blob: f.blob }));
+      .map((f) => ({ fileName: f.fileName, blob: f.blob, ...task0CopySlotInit(f) }));
     useClipboardStore.getState().set(items);
   }, [files, selectedIds]);
 
@@ -72,7 +74,7 @@ export function useClipboardActions({
     const toCut = files.filter((f) => selectedIds.has(f.id));
     useClipboardStore
       .getState()
-      .set(toCut.map((f) => ({ fileName: f.fileName, blob: f.blob })));
+      .set(toCut.map((f) => ({ fileName: f.fileName, blob: f.blob, ...task0CopySlotInit(f) })));
     for (const f of toCut) {
       await removeStlFile(f.id);
     }
@@ -88,9 +90,11 @@ export function useClipboardActions({
     if (items.length === 0) return;
     const newIds: string[] = [];
     for (const item of items) {
+      // 원본의 Task0 재료 슬롯을 물려받는다 (D2 — 원본에 없으면 기본 B 그대로).
       const created = await addStlFile(
         addCopySuffix(item.fileName, files),
         item.blob,
+        task0CopySlotInit(item),
       );
       newIds.push(created.id);
     }

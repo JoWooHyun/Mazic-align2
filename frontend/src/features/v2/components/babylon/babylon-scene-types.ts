@@ -3,6 +3,7 @@
 //   `./BabylonScene` 경로로 계속 import 하므로 export 이름을 그대로 유지한다.
 import type { TransformV2 } from "../../types/transform";
 import type { SliceMask } from "../../utils/slice-rasterize";
+import type { SliceMaterialLabelMask } from "../../utils/slice-material-mask";
 import type { FdmSettings } from "../../utils/gcode/types";
 import type { FindMarginStats } from "../../utils/dental/margin-detect";
 import type { SupportParams, SupportPointV2 } from "../../support/types";
@@ -226,6 +227,17 @@ export interface BabylonSceneHandle {
     heightPx: number,
   ) => SliceMask;
   /**
+   * Task0 2재료 단면 라벨 마스크 (D2, 화면 전용 — 슬라이스 화면 2D 단면 패널). getSliceMask 와 같은 메시·같은 래스터 규약에
+   * 픽셀마다 재료 라벨 0 = 빈 곳 / 1 = 재료 A(T0) / 2 = 재료 B(T1). slots = STL id → 슬롯(없는 id 는 기본 B), 서포트는 A,
+   * 겹친 곳은 B(writer B 우선과 같은 규칙). 라벨 ≠ 0 인 픽셀 = 같은 인자의 getSliceMask 흰 픽셀(utils/slice-material-mask).
+   */
+  getSliceMaterialMask: (
+    sliceY: number,
+    widthPx: number,
+    heightPx: number,
+    slots: Readonly<Record<string, "A" | "B">>,
+  ) => SliceMaterialLabelMask;
+  /**
    * 현재 씬의 모든 STL + 서포트 mesh 를 world 삼각형 배열(삼각형당 9 float)로
    * 추출한다. getSliceMask 와 동일한 mesh 집합. Web Worker 로 넘겨 배치
    * 슬라이스/출력할 때 씬(Babylon Mesh) 직렬화 불가 문제를 우회한다.
@@ -237,6 +249,8 @@ export interface BabylonSceneHandle {
    * Task0 2재료 표시 색 (D1b, 화면 전용 — 산출물 무관). slots = STL id → 재료 슬롯이면 STL 메시를 슬롯 색으로,
    * 서포트를 A 색으로 칠한다(utils/task0/task0-material TASK0_SLOT_COLOR_HEX). null 이면 원래 색으로 되돌린다
    * (STL = 현재 편집 모드의 표시 색 setModelDiffuseMode, 서포트 = 칠하기 전 색). 머티리얼 색만 바꾼다(정점 색·메시 무변경).
+   * D2: 값은 씬의 **재료 색 상태**로 남는다 — 뒤에 로드되는 STL·편집 모드 동기화·슬라이스 단면 fill(슬롯 색)도 이 상태를 따른다
+   * (components/babylon/material-display.ts). 멱등 — 상태가 바뀔 때만 부르면 된다.
    */
   setMaterialSlotColors: (slots: Readonly<Record<string, "A" | "B">> | null) => void;
   /**

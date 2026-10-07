@@ -66,7 +66,8 @@ export function setModelDiffuseMode(mesh: Mesh, overhang: boolean): void {
  *     자동으로 base 가 다시 liftMm 위치로 복귀.
  *  3. StandardMaterial 적용 — 기본은 평상 모드의 청록빛 파랑
  *     (`MODEL_DIFFUSE_COLOR`). 호출 측(useFileMeshSync)이 로드 직후
- *     setModelDiffuseMode() 로 현재 편집 모드에 맞춰 보정한다.
+ *     applyModelDisplayColor()(components/babylon/material-display) 로 보정한다 —
+ *     Task0 2재료 색 상태가 있으면 재료 색, 없으면 setModelDiffuseMode() 로 현재 편집 모드 색.
  */
 export async function loadStlIntoScene(
   scene: Scene,

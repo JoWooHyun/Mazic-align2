@@ -25,6 +25,8 @@ import {
 } from "../../../utils/task0/task0-profile";
 import {
   resolveTask0MaterialMode,
+  resolveTask0MaterialNames,
+  task0ExportMaterialNames,
   task0ExportMaterialSlots,
 } from "../../../utils/task0/task0-material";
 import { profileExposure } from "../utils/profile-exposure";
@@ -79,7 +81,11 @@ export function useSliceExport({
   //   경우(개수 그대로)도 덮인다. 내보내기 도중 입력이 바뀌면 끝난 결과를 화면에 올리지 않는다(epoch 비교 — 파일·알림은
   //   그대로 나가고, 패널 요약만 생략).
   //   Task0 재료 모드(2재료 D1b)도 입력이다 — 파일별 재료 슬롯은 files 가 바뀌어 같이 덮인다.
+  //   재료 이름(D2 — 2재료 job.zip manifest materials[].name)도 입력이다. 문자열로 풀어 둔다(deps 가 내용으로 비교되게).
   const task0MaterialMode = resolveTask0MaterialMode(project);
+  const task0MaterialNames = resolveTask0MaterialNames(project);
+  const task0NameA = task0MaterialNames.A;
+  const task0NameB = task0MaterialNames.B;
   const task0ReportEpochRef = useRef(0);
   useEffect(() => {
     task0ReportEpochRef.current += 1;
@@ -89,6 +95,8 @@ export function useSliceExport({
     supportsLength,
     printerProfile,
     task0MaterialMode,
+    task0NameA,
+    task0NameB,
     slicePreview.layerHeightMm,
     slicePreview.on,
   ]);
@@ -375,6 +383,8 @@ export function useSliceExport({
           // 2재료(D1b) — 재료 모드 2재료면 메시마다 슬롯(서포트 = A, STL = 파일의 materialSlot·기본 B), 단일이면 없음.
           //   메시 순서는 위 getSliceGeometry 그대로 (task0-material task0ExportMaterialSlots).
           materialSlots: task0ExportMaterialSlots(task0MaterialMode, meshes, files),
+          // 재료 이름(D2) — 2재료일 때만 manifest materials[].name 에(단일이면 빠짐 = 기본 이름, 바이트 그대로).
+          ...task0ExportMaterialNames(task0MaterialMode, { A: task0NameA, B: task0NameB }),
         },
         (done, total, stage) =>
           setBatchExport({ busy: true, done, total, stage }),
@@ -422,6 +432,9 @@ export function useSliceExport({
     // 규칙 7: 2재료(D1b) — 재료 모드와 파일별 재료 슬롯(files 의 materialSlot)을 새로 참조한다.
     task0MaterialMode,
     files,
+    // 규칙 7: 재료 이름(D2) — manifest materials[].name.
+    task0NameA,
+    task0NameB,
     alertIfOutOfTask0Area, // Task0 출력 가능 영역 차단
   ]);
 

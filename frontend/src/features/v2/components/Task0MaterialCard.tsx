@@ -1,10 +1,13 @@
+import { useEffect, useState } from "react";
+
+import { TASK0_DEFAULT_MATERIAL_NAME } from "../utils/task0/task0-jobzip";
 import {
-  TASK0_DEFAULT_MATERIAL_NAME,
-  TASK0_DEFAULT_MATERIAL_NAME_B,
-} from "../utils/task0/task0-jobzip";
-import {
+  TASK0_DEFAULT_MATERIAL_NAMES,
+  TASK0_MATERIAL_NAME_MAX_LENGTH,
   TASK0_SLOT_COLOR_HEX,
+  normalizeTask0MaterialName,
   type Task0MaterialMode,
+  type Task0MaterialNames,
 } from "../utils/task0/task0-material";
 import type { Task0MaterialSlot } from "../utils/task0/task0-slice";
 
@@ -16,6 +19,10 @@ export interface Task0MaterialCardProps {
   /** STL 목록 순서 그대로 — slot 은 기본값을 채운 값(없으면 B) */
   files: { id: string; fileName: string; slot: Task0MaterialSlot }[];
   onSlotChange: (id: string, slot: Task0MaterialSlot) => void;
+  /** 재료 이름 (D2 — 정규화·기본값을 채운 값, task0-material resolveTask0MaterialNames). 2재료 job.zip manifest 에 쓰인다 */
+  names: Task0MaterialNames;
+  /** 재료 이름을 바꿀 때 — 입력을 마칠 때(blur·Enter)만 부른다(타이핑마다 저장하지 않는다) */
+  onNameChange: (slot: Task0MaterialSlot, name: string) => void;
   /** 내보내기 중에는 바꾸지 못하게 */
   disabled?: boolean;
 }
@@ -26,6 +33,52 @@ function SlotSwatch({ slot }: { slot: Task0MaterialSlot }) {
     <span
       className="w-3 h-3 rounded-sm flex-shrink-0"
       style={{ backgroundColor: TASK0_SLOT_COLOR_HEX[slot] }}
+    />
+  );
+}
+
+/**
+ * 재료 이름 입력 (D2) — 타이핑은 이 칸 안 상태만 바꾸고, 입력을 마칠 때(blur · Enter)만 정규화(task0-material
+ * normalizeTask0MaterialName — 저장·manifest 와 같은 함수)해 onCommit 한다. Esc 는 되돌림. 한글 조합 중 Enter 는 무시.
+ * 비우면 기본 이름으로 돌아간다.
+ */
+function MaterialNameInput({
+  slot,
+  value,
+  onCommit,
+  disabled,
+}: {
+  slot: Task0MaterialSlot;
+  value: string;
+  onCommit: (name: string) => void;
+  disabled: boolean;
+}) {
+  const [draft, setDraft] = useState(value);
+  // 저장된 값이 바뀌면(저장 완료·다른 프로젝트) 칸도 맞춘다
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    const next = normalizeTask0MaterialName(draft, TASK0_DEFAULT_MATERIAL_NAMES[slot]);
+    setDraft(next);
+    if (next !== value) onCommit(next);
+  };
+  return (
+    <input
+      type="text"
+      value={draft}
+      maxLength={TASK0_MATERIAL_NAME_MAX_LENGTH}
+      disabled={disabled}
+      aria-label={`재료 ${slot} 이름`}
+      title={`재료 ${slot} 이름 — job.zip 에 적혀 Task0 화면에 보입니다 (비우면 ${TASK0_DEFAULT_MATERIAL_NAMES[slot]})`}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+          e.currentTarget.blur(); // blur 가 commit
+        } else if (e.key === "Escape") {
+          setDraft(value);
+        }
+      }}
+      className="flex-1 min-w-0 px-1.5 py-0.5 border border-gray-300 rounded text-xs text-gray-700 disabled:opacity-40"
     />
   );
 }
@@ -79,6 +132,8 @@ export default function Task0MaterialCard({
   onModeChange,
   files,
   onSlotChange,
+  names,
+  onNameChange,
   disabled = false,
 }: Task0MaterialCardProps) {
   const modeButton = (m: Task0MaterialMode, label: string) => (
@@ -114,13 +169,28 @@ export default function Task0MaterialCard({
         </p>
       ) : (
         <>
-          <div className="flex flex-col gap-0.5 text-xs text-gray-600">
-            <span className="flex items-center gap-1.5">
-              <SlotSwatch slot="A" /> A · T0 · {TASK0_DEFAULT_MATERIAL_NAME} — 서포트는 항상 A
-            </span>
-            <span className="flex items-center gap-1.5">
-              <SlotSwatch slot="B" /> B · T1 · {TASK0_DEFAULT_MATERIAL_NAME_B}
-            </span>
+          <div className="flex flex-col gap-1 text-xs text-gray-600">
+            <label className="flex items-center gap-1.5">
+              <SlotSwatch slot="A" />
+              <span className="flex-shrink-0">A · T0</span>
+              <MaterialNameInput
+                slot="A"
+                value={names.A}
+                onCommit={(n) => onNameChange("A", n)}
+                disabled={disabled}
+              />
+            </label>
+            <label className="flex items-center gap-1.5">
+              <SlotSwatch slot="B" />
+              <span className="flex-shrink-0">B · T1</span>
+              <MaterialNameInput
+                slot="B"
+                value={names.B}
+                onCommit={(n) => onNameChange("B", n)}
+                disabled={disabled}
+              />
+            </label>
+            <span className="text-gray-500">서포트는 항상 A · 이름은 job.zip 에 적혀 Task0 화면에 보입니다</span>
           </div>
           {files.length === 0 ? (
             <p className="text-xs text-gray-400">모델이 없습니다.</p>
@@ -143,7 +213,7 @@ export default function Task0MaterialCard({
           )}
           <p className="text-xs text-gray-400">
             층마다 A(T0) → B(T1) 순서로 칠하고, 겹친 곳은 B 만 칠합니다. 노광은 층당 한 번(두 재료 합집합).
-            3D 화면에서 A 는 주황, B 는 보라로 보입니다(새 파일의 기본은 B).
+            3D 화면·단면에서 A 는 주황, B 는 보라로 보입니다(새 파일의 기본은 B, 복제·붙여넣기는 원본 재료를 따릅니다).
           </p>
         </>
       )}

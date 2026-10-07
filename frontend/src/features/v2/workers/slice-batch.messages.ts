@@ -115,6 +115,12 @@ export interface Task0JobZipRequest {
   generatedAt?: string;
   /** 2재료 (D1b) — Task0GcodeRequest.materialSlots 와 같다. 있으면 manifest materials 2개·dualMaterial true. */
   materialSlots?: Task0MaterialSlot[];
+  /**
+   * 재료 이름 (D2) — manifest materials[].name. 앱은 2재료일 때만 보낸다(task0-material task0ExportMaterialNames — 단일은
+   * 빠짐 = 기본 이름, 바이트 그대로). 코어 task0-export 가 정규화한다.
+   */
+  materialName?: string;
+  materialNameB?: string;
 }
 
 export type SliceBatchRequest =

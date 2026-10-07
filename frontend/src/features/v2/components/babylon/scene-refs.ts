@@ -30,6 +30,7 @@ import type { SceneFurniture } from "../../utils/scene-setup";
 import type { PaintPoint } from "../../utils/dental/paint-mask";
 import type { FindMarginResult } from "../../utils/dental/margin-detect";
 import type { SupportPointV2 } from "../../support/types";
+import type { Task0MaterialSlot } from "../../utils/task0/task0-slice";
 import type { EditMode } from "../EditModeControls";
 import type {
   BabylonSceneProps,
@@ -85,6 +86,19 @@ export interface SceneCtx {
   sliceFillMeshesRef: MutableRefObject<Mesh[]>;
   sliceModelMatRef: MutableRefObject<SliceFillMaterial | null>;
   sliceSupportMatRef: MutableRefObject<SliceFillMaterial | null>;
+  /**
+   * Task0 2재료 슬롯별 단면 fill 머티리얼 (D2) — A 주황 / B 보라(task0-material TASK0_SLOT_COLOR_HEX). 부트스트랩에서 만들고
+   * dispose-scene 이 다른 단면 머티리얼과 같은 자리에서 정리한다. 재료 색 상태가 있을 때만 fill 에 쓰인다(material-display).
+   */
+  sliceSlotMatsRef: MutableRefObject<Record<Task0MaterialSlot, SliceFillMaterial> | null>;
+
+  // ── Task0 2재료 재료 색 상태 (D2) ──
+  /**
+   * STL id → 재료 슬롯 (handle setMaterialSlotColors 가 정한다). null = 상태 없음(원래 색). STL 표시 색을 정하는 모든 지점
+   * (useEditModeSync·useFileMeshSync 로드 완료·setMaterialSlotColors)과 단면 fill(useSlicePreview)이 이 값을 읽는다
+   * (material-display.ts) — effect 실행 순서와 무관하게 색이 상태를 따른다.
+   */
+  materialSlotColorsRef: MutableRefObject<Readonly<Record<string, Task0MaterialSlot>> | null>;
 
   // ── Bridge 시각화 ──
   bridgeMarkerRef: MutableRefObject<Mesh | null>;
@@ -208,6 +222,9 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
   const selectedBridgeSphereRef = useRef<Mesh | null>(null);
   const sliceModelMatRef = useRef<SliceFillMaterial | null>(null);
   const sliceSupportMatRef = useRef<SliceFillMaterial | null>(null);
+  const sliceSlotMatsRef = useRef<Record<Task0MaterialSlot, SliceFillMaterial> | null>(null);
+  // Task0 2재료 재료 색 상태 (D2) — 처음엔 없음(원래 색).
+  const materialSlotColorsRef = useRef<Readonly<Record<string, Task0MaterialSlot>> | null>(null);
   const furnitureRef = useRef<SceneFurniture | null>(null);
   const highlightRef = useRef<HighlightLayer | null>(null);
   const utilityLayerRef = useRef<UtilityLayerRenderer | null>(null);
@@ -315,6 +332,8 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
     sliceFillMeshesRef,
     sliceModelMatRef,
     sliceSupportMatRef,
+    sliceSlotMatsRef,
+    materialSlotColorsRef,
     bridgeMarkerRef,
     bridgeMarkerMatRef,
     bridgeCpMeshesRef,

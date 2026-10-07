@@ -50,11 +50,14 @@
  *   2.  writer 옵션에 dualMaterial { …writer.dualMaterial, slots } (D1a — 층 안 T0 → T1 2패스, 툴별 리트랙트, B 우선 겹침).
  *   3.  writer 'failed' 층은 원인을 갈라 적는다 — 재료 B 가 칠한 A 에 갇힘(층 순서 B → A 는 규격 §6 【미정】 — Task0 답 대기,
  *       협의 §31-4) / 칠한 레진을 가로질러야 하는 항목 / 얇은 부분 채움 실패 (dualFailedLayerIssues).
+ *       (D2) 판정은 writer 층 통계의 툴 패스별 경로 없는 항목 수(Task0LayerStats.unreachableByTool)로 — 예전 휴리스틱("T1 도포 0")은
+ *       B 가 일부만 갇힌 층(갇히지 않은 B 는 칠함)을 "맞물림" 으로 잘못 읽었다.
  *   4-b. 자기 검사(앞 단계가 통과했을 때만): task0-coverage checkTask0DualGcodeCoverage(재료별 (a)(b)(c)(d) — A 영역 = PA − PB,
  *       넘침은 합집합, B 우선) + 트래블 엄격 판정(T 줄을 넘는 전환 트래블 포함 — task0-fill-route task0TravelContactOk, verify c4b 정의).
  *   5.  요약에 dual(툴 전환 수·툴별 도포 길이·슬롯별 메시 수·막지 않는 알림), estimate 툴 전환 시간 = 툴 전환 수 × 0.5 s(규격 §13).
  *   7.  빈 층 대조는 그대로 — G-code 빈 층(두 툴 모두 XY 이동 없음)과 합집합 마스크(모든 메시 — 층 PNG 는 PA ∪ PB 한 장)를 맞댄다.
- *   8.  manifest materials 2개(A = T0 TASK0_DEFAULT_MATERIAL_NAME, B = T1 TASK0_DEFAULT_MATERIAL_NAME_B)·dualMaterial true·
+ *   8.  manifest materials 2개(A = T0 TASK0_DEFAULT_MATERIAL_NAME, B = T1 TASK0_DEFAULT_MATERIAL_NAME_B — D2 부터 입력 materialName·
+ *       materialNameB 로 바꿀 수 있다, 정규화는 task0-material normalizeTask0MaterialName 한 곳)·dualMaterial true·
  *       toolChangeCount = writer 툴 전환 수, 층 노광 = 재료별 큰 값(task0-jobzip buildTask0MaterialExposure — 지금은 한 프로파일이라 같다).
  *   9.  자기 검사 verifyTask0JobZip 은 그대로 — manifest toolChangeCount = run.gcode 툴 전환 수, materials 툴 = G-code 가 쓰는 툴을 본다.
  *
@@ -78,6 +81,8 @@ import {
   type Task0WriterOptions,
 } from './task0-gcode-writer';
 import {
+  TASK0_DEFAULT_MATERIAL_NAME,
+  TASK0_DEFAULT_MATERIAL_NAME_B,
   TASK0_JOB_CONDITION_LABELS,
   TASK0_JOB_GENERATOR,
   assembleTask0JobZip,
@@ -89,6 +94,7 @@ import {
   type Task0Estimate,
   type Task0ExposureSettings,
 } from './task0-jobzip';
+import { normalizeTask0MaterialName } from './task0-material';
 import type { Task0RasterFrame } from './task0-mask';
 import { decodeTask0GrayPng } from './task0-png';
 import { task0LayerPolygonsBed, task0SplitMeshesBySlot, type Task0MaterialSlot } from './task0-slice';
@@ -200,9 +206,12 @@ export type Task0JobStage = 'gcode' | 'png' | 'verify';
 export interface Task0JobZipExportInput extends Task0ExportInput {
   /** 층 마스크 투사 프레임 (프로파일 — task0-profile resolveTask0ProfileFrame). 빠지면 TASK0_DEFAULTS */
   frame?: Task0RasterFrame;
-  /** 재료 A(T0) 이름 — 빠지면 task0-jobzip TASK0_DEFAULT_MATERIAL_NAME */
+  /**
+   * 재료 A(T0) 이름 — 빠지면 task0-jobzip TASK0_DEFAULT_MATERIAL_NAME. 있으면 task0-material normalizeTask0MaterialName 으로
+   * 정규화해 manifest 에 쓴다(제어문자·길이 — 화면 표시와 같은 함수). 앱은 2재료일 때만 넘긴다(task0ExportMaterialNames, D2).
+   */
   materialName?: string;
-  /** (2재료) 재료 B(T1) 이름 — 빠지면 task0-jobzip TASK0_DEFAULT_MATERIAL_NAME_B */
+  /** (2재료) 재료 B(T1) 이름 — 빠지면 task0-jobzip TASK0_DEFAULT_MATERIAL_NAME_B. 정규화는 materialName 과 같다 */
   materialNameB?: string;
   /** manifest.generator — 빠지면 task0-jobzip TASK0_JOB_GENERATOR(견본 값). 앱은 TASK0_APP_JOB_GENERATOR */
   generator?: string;
@@ -396,12 +405,14 @@ function listLayersZ(layers: readonly number[], lh: number): string {
 }
 
 /**
- * writer 가 'failed' 로 남긴 층의 이유 (2재료) — 층 통계와 그 층의 재료별 단면 유무로 가른다(writer 통계에 실패한 패스 번호가
- * 없어서 — 툴별 도포 줄 수·경로 없는 항목 수로 판단):
- *   ① 두 재료가 다 있고 경로 없는 항목이 있는데 T1 도포가 0 = 재료 B 가 칠한 A 에 둘러싸여 T1 로 들어갈 길이 없다
- *      (층 안 순서 A → B — 그 층만 B → A 로 내는 것은 규격 §6 【미정】, Task0 답 대기 — 협의 §31-4).
+ * writer 가 'failed' 로 남긴 층의 이유 (2재료) — writer 층 통계(툴 패스별 경로 없는 항목 수 unreachableByTool — D2)와 그 층의
+ * 재료별 단면 유무로 가른다:
+ *   ① 두 재료가 다 있고 T1(재료 B) 패스에 경로 없는 항목이 있다 = 재료 B 가 칠한 A 에 둘러싸여 T1 로 들어갈 길이 없다
+ *      (층 안 순서 A → B — 그 층만 B → A 로 내는 것은 규격 §6 【미정】, Task0 답 대기 — 협의 §31-4). B 가 일부만 갇혀
+ *      나머지 B 는 칠한 층도 여기(D1b 의 "T1 도포 0" 휴리스틱은 이것을 ② 로 읽었다).
  *      writer 순서 옵션이 기본(A → B, 뒤집기 끔)일 때만 이렇게 읽는다 — 실험 옵션(order 'BA'·flipOrderWhenStuck)이면 ②.
- *   ② 두 재료가 다 있고 경로 없는 항목이 있다(일부는 도포) = 칠한 레진을 가로지르지 않고는 갈 수 없는 항목.
+ *   ② 두 재료가 다 있고 경로 없는 항목이 있는데 ① 이 아니다(T0 패스에서 막힘·실험 순서) = 칠한 레진을 가로지르지 않고는 갈 수
+ *      없는 항목 — 패스별 항목 수를 함께 적는다.
  *   ③ 그 밖(한 재료만 있는 층, 경로는 있는데 채움 뒤 커버리지 실패) = 단일 재료와 같은 "얇은 부분 채움 실패".
  */
 function dualFailedLayerIssues(
@@ -418,30 +429,37 @@ function dualFailedLayerIssues(
   const trapped: number[] = [];
   const blocked: number[] = [];
   const thin: number[] = [];
-  let blockedItems = 0;
+  let trappedItems = 0;
+  const blockedItems: [number, number] = [0, 0];
   for (const n of failed) {
     const s = gen.layers[n];
     const hasA = task0LayerPolygonsBed(split.A, n, lh, bedWidthMm, bedDepthMm).length > 0;
     const hasB = task0LayerPolygonsBed(split.B, n, lh, bedWidthMm, bedDepthMm).length > 0;
     const interlocked = hasA && hasB && s.unreachable > 0;
+    const [stuckT0 = 0, stuckT1 = 0] = s.unreachableByTool;
     if (!interlocked) thin.push(n);
-    else if (abOrder && s.byTool[1].segments === 0) trapped.push(n);
-    else {
+    else if (abOrder && stuckT1 > 0) {
+      trapped.push(n);
+      trappedItems += stuckT1;
+    } else {
       blocked.push(n);
-      blockedItems += s.unreachable;
+      blockedItems[0] += stuckT0;
+      blockedItems[1] += stuckT1;
     }
   }
   const out: string[] = [];
   if (trapped.length > 0) {
     out.push(
       `재료 B(T1)가 재료 A(T0)에 둘러싸여 T1 로 들어갈 길이 없는 층 ${trapped.length}개: ${listLayersZ(trapped, lh)} — ` +
+        `T1 패스에서 길이 없는 도포 항목 ${trappedItems}개. ` +
         '층 안 순서 A → B 에서는 칠한 A 를 가로질러야 합니다(규격 §7 교차 금지). 그 층만 B → A 로 내는 것은 규격 §6 【미정】이라 ' +
         'Task0 답을 기다리는 중입니다(협의 §31-4). 재료 배정(A/B)이나 모델 배치를 바꿔 보세요.',
     );
   }
   if (blocked.length > 0) {
     out.push(
-      `두 재료가 맞물린 단면에서 칠한 레진을 가로지르지 않고는 갈 수 없는 도포 항목 ${blockedItems}개가 남은 층 ${blocked.length}개: ` +
+      `두 재료가 맞물린 단면에서 칠한 레진을 가로지르지 않고는 갈 수 없는 도포 항목 ${blockedItems[0] + blockedItems[1]}개` +
+        `(T0 패스 ${blockedItems[0]}개 · T1 패스 ${blockedItems[1]}개)가 남은 층 ${blocked.length}개: ` +
         `${listLayersZ(blocked, lh)} — 재료 배정(A/B)이나 모델 배치를 바꿔 보세요(규격 §7 교차 금지).`,
     );
   }
@@ -858,8 +876,11 @@ export async function runTask0JobZipExport(
     images,
     exposure: input.exposure,
     exposureB: input.exposureB,
-    materialName: input.materialName,
-    materialNameB: input.materialNameB,
+    // 재료 이름 (D2) — 넘어온 것만 정규화(화면 표시와 같은 함수). 빠지면 기본 이름(단일 재료·앱 단일 모드 = 바이트 그대로)
+    materialName:
+      input.materialName === undefined ? undefined : normalizeTask0MaterialName(input.materialName, TASK0_DEFAULT_MATERIAL_NAME),
+    materialNameB:
+      input.materialNameB === undefined ? undefined : normalizeTask0MaterialName(input.materialNameB, TASK0_DEFAULT_MATERIAL_NAME_B),
     generator: input.generator,
     generatedAt: input.generatedAt,
     frame,

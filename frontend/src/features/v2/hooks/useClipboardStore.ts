@@ -10,6 +10,8 @@ import { create } from "zustand";
 export interface ClipboardItem {
   fileName: string;
   blob: Blob;
+  /** 원본의 Task0 재료 슬롯 (D2) — 붙여넣은 새 STL 이 물려받는다. 원본에 없으면 없음(기본 B). */
+  materialSlot?: "A" | "B";
 }
 
 interface ClipboardState {

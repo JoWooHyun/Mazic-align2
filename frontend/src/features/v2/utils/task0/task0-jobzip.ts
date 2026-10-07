@@ -94,7 +94,8 @@ export const TASK0_JOB_GENERATOR = 'MazicAlign v2 task0-jobzip (Z1)';
 export const TASK0_DEFAULT_MATERIAL_NAME = '모델레진';
 /**
  * 2재료 재료 B(T1) 기본 이름 (D1b) — `docs/계획_하이브리드슬라이서설정_20260928.md` §3-C 재료 이름 예("모델레진, 템프레진")와
- * §5-5(템프 레진 크라운 = B 가 모델 레진 베이스 = A 위에)를 따른다. 재료 이름 편집 UI 는 아직 없다(D2).
+ * §5-5(템프 레진 크라운 = B 가 모델 레진 베이스 = A 위에)를 따른다. 2재료 이름은 D2 부터 프로젝트에서 바꿀 수 있다 — 이 값은 기본값
+ * (task0-material resolveTask0MaterialNames·task0ExportMaterialNames).
  */
 export const TASK0_DEFAULT_MATERIAL_NAME_B = '템프레진';
 /** zip 안 고정 이름 */

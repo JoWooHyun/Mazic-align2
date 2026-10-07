@@ -35,10 +35,14 @@ export function useStlFilesV2(projectId: string | undefined) {
     void refresh();
   }, [refresh]);
 
+  /**
+   * STL 추가 (repo 경유). init = 처음부터 함께 저장할 선택 필드 — 복제·붙여넣기가 원본의 Task0 재료 슬롯을
+   * 물려받을 때만 넘긴다(D2, utils/task0/task0-material task0CopySlotInit). 드롭·파일 열기·예제는 넘기지 않는다(기본 B).
+   */
   const add = useCallback(
-    async (fileName: string, blob: Blob) => {
+    async (fileName: string, blob: Blob, init?: Pick<STLFileV2, "materialSlot">) => {
       if (!projectId) throw new Error("projectId 가 없습니다.");
-      const created = await repo.createStlFile(projectId, fileName, blob);
+      const created = await repo.createStlFile(projectId, fileName, blob, init);
       await refresh();
       return created;
     },
