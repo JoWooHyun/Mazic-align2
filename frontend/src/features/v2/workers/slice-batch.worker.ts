@@ -17,7 +17,11 @@ import {
   type SlicePolygon,
 } from "../utils/slice-geometry";
 import { rasterizePolygons, type SliceMask } from "../utils/slice-rasterize";
-import { runTask0GcodeExport } from "../utils/task0/task0-export";
+import {
+  runTask0GcodeExport,
+  runTask0JobZipExport,
+  type Task0JobStage,
+} from "../utils/task0/task0-export";
 import { makeZipStore } from "../utils/zip-store";
 
 import type {
@@ -26,6 +30,7 @@ import type {
   SliceBatchRequest,
   SliceBatchResponse,
   Task0GcodeRequest,
+  Task0JobZipRequest,
   WorkerMeshGeometry,
   WorkerSliceOptions,
 } from "./slice-batch.messages";
@@ -43,14 +48,19 @@ function post(msg: SliceBatchResponse, transfer?: Transferable[]) {
  *
  * 규칙: 직전 통지 후 minIntervalMs 미만이면 스킵하되, done === total
  * (마지막 레이어)은 반드시 통지한다 — 진행바가 100%에서 멈추지 않도록.
+ * 단계(stage — Task0 job.zip 만)가 바뀐 첫 통지도 바로 보낸다(화면의 단계 이름이 늦게 바뀌지 않도록).
+ * stage 를 넘기지 않는 기존 경로는 종전과 같은 메시지·같은 간격이다(stage 키 없음).
  */
 function makeProgressThrottle(minIntervalMs = 50) {
   let lastAt = 0;
-  return (done: number, total: number) => {
+  let lastStage: Task0JobStage | undefined;
+  return (done: number, total: number, stage?: Task0JobStage) => {
     const now = Date.now();
-    if (done < total && now - lastAt < minIntervalMs) return;
+    if (done < total && stage === lastStage && now - lastAt < minIntervalMs) return;
     lastAt = now;
-    post({ type: "progress", done, total });
+    lastStage = stage;
+    if (stage === undefined) post({ type: "progress", done, total });
+    else post({ type: "progress", done, total, stage });
   };
 }
 
@@ -177,10 +187,39 @@ function runTask0Gcode(req: Task0GcodeRequest): void {
       layerHeightMm: req.layerHeightMm,
       writer: req.writer,
       exposure: req.exposure,
+      printable: req.printable,
     },
     (done, total) => reportProgress(done, total),
   );
   post({ type: "task0-done", result });
+}
+
+/**
+ * Task0 job.zip 조립 + 검사 (Z3).
+ *
+ * 처리 전부를 순수 함수 runTask0JobZipExport(utils/task0/task0-export.ts)에 맡긴다 — run.gcode(위와 같은 검사) →
+ * 층 마스크 PNG(투사 프레임) → 빈 층 집합 대조 → manifest·exposure·preview·zip → 자기 검사. 검증 스크립트가 같은 함수·같은
+ * 메시지를 넣어 산출 바이트를 확인하므로, 이 함수에는 진행률 배선과 zip 바이트 전달(transfer) 외의 처리를 두지 않는다.
+ * 층당 writer 수십~수백 ms + PNG 약 20 ms 라 반드시 이 워커에서 돈다. 취소는 다른 경로와 같이 서비스의 worker terminate.
+ */
+async function runTask0JobZip(req: Task0JobZipRequest): Promise<void> {
+  const reportProgress = makeProgressThrottle();
+  const result = await runTask0JobZipExport(
+    {
+      meshes: req.meshes.map((m) => m.triangles),
+      topY: req.topY,
+      layerHeightMm: req.layerHeightMm,
+      writer: req.writer,
+      exposure: req.exposure,
+      frame: req.frame,
+      printable: req.printable,
+      generator: req.generator,
+      generatedAt: req.generatedAt,
+    },
+    (stage, done, total) => reportProgress(done, total, stage),
+  );
+  if (result.ok) post({ type: "task0-job-done", result }, [result.zip.buffer]);
+  else post({ type: "task0-job-done", result });
 }
 
 ctx.addEventListener(
@@ -192,8 +231,10 @@ ctx.addEventListener(
         await runPngZip(req);
       } else if (req.kind === "gcode") {
         runGcode(req);
-      } else {
+      } else if (req.kind === "task0-gcode") {
         runTask0Gcode(req);
+      } else {
+        await runTask0JobZip(req);
       }
     } catch (err) {
       post({

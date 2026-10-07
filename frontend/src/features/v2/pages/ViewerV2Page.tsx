@@ -20,7 +20,10 @@ import StlFileList from "../components/StlFileList";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM } from "../types/transform";
 import { SAMPLE_MODELS } from "../utils/sample-models";
-import { task0PrintableAreaForProfile } from "../utils/task0/task0-profile";
+import {
+  isTask0Profile,
+  task0PrintableAreaForProfile,
+} from "../utils/task0/task0-profile";
 
 import { useClipboardActions } from "./viewer/hooks/useClipboardActions";
 import { useViewerShortcuts } from "./viewer/hooks/useViewerShortcuts";
@@ -28,7 +31,7 @@ import { useTransformCommit } from "./viewer/hooks/useTransformCommit";
 import { useSupportEditing } from "./viewer/hooks/useSupportEditing";
 import { useDentalWorkflow } from "./viewer/hooks/useDentalWorkflow";
 import { useSliceExport } from "./viewer/hooks/useSliceExport";
-import { layerCountFor } from "./viewer/utils/layer-count";
+import { previewLayerCount } from "./viewer/utils/layer-count";
 import { useStlDropImport } from "./viewer/hooks/useStlDropImport";
 import ViewerHeader from "./viewer/components/ViewerHeader";
 import SliceModeHeader from "./viewer/components/SliceModeHeader";
@@ -123,6 +126,7 @@ const ViewerV2Page: React.FC = () => {
     handleExportMasksZip,
     handleExportGcode,
     handleExportStl,
+    handleExportTask0JobZip,
     handleExportTask0Gcode,
     task0Report,
   } = useSliceExport({
@@ -487,7 +491,7 @@ const ViewerV2Page: React.FC = () => {
     setSlicePreview((s) => ({
       ...s,
       on: true,
-      layerIdx: layerCountFor(top, s.layerHeightMm) - 1,
+      layerIdx: previewLayerCount(top, s.layerHeightMm, printerProfile) - 1,
     }));
   };
 
@@ -724,8 +728,20 @@ const ViewerV2Page: React.FC = () => {
             <div className="absolute inset-x-0 top-4 flex justify-center px-4 pointer-events-none">
               <div className="bg-red-50/95 backdrop-blur border border-red-300 rounded-md shadow px-4 py-2 text-sm text-red-900 select-none max-w-xl pointer-events-auto">
                 <div className="font-medium">
-                  ⚠ 출력영역을 벗어난 모델 {volumeIssues.length}개 — 이대로
-                  출력하면 잘려 나갑니다.
+                  {/* Task0 (Z3 — Z2 인계): 항목에 서포트 묶음이 들어가고, 잘라 출력하는 게 없다 — 영역 밖이면
+                      내보내기 자체를 막는다(useSliceExport alertIfOutOfTask0Area·코어 1-b). 기존 프로파일 문구는 그대로. */}
+                  {isTask0Profile(printerProfile) ? (
+                    <>
+                      ⚠ Task0 출력 가능 영역을 벗어난 항목(모델·서포트){" "}
+                      {volumeIssues.length}건 — 이대로는 내보낼 수 없습니다. 영역
+                      안으로 옮기세요.
+                    </>
+                  ) : (
+                    <>
+                      ⚠ 출력영역을 벗어난 모델 {volumeIssues.length}개 — 이대로
+                      출력하면 잘려 나갑니다.
+                    </>
+                  )}
                 </div>
                 <ul className="mt-1 space-y-0.5">
                   {volumeIssues.slice(0, 3).map((it) => (
@@ -828,17 +844,19 @@ const ViewerV2Page: React.FC = () => {
                 //   그대로 두면 단면이 모델 위 허공을 가리켜 화면이 빈다.
                 layerIdx: Math.min(
                   s.layerIdx,
-                  layerCountFor(sceneTopY, mm) - 1,
+                  previewLayerCount(sceneTopY, mm, printerProfile) - 1,
                 ),
               }))
             }
             onExportMasksZip={() => void handleExportMasksZip()}
             onExportGcode={() => void handleExportGcode()}
+            onExportTask0JobZip={() => void handleExportTask0JobZip()}
             onExportTask0Gcode={() => void handleExportTask0Gcode()}
             task0Report={task0Report}
             batchBusy={batchExport.busy}
             batchDone={batchExport.done}
             batchTotal={batchExport.total}
+            batchStage={batchExport.stage}
             modelCount={files.length}
             // 가운데 단면 pane 이 같은 마스크를 이미 크게 그린다 — 패널 미니맵은 끈다.
             hideMaskPreview

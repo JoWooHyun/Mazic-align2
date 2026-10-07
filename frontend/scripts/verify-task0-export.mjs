@@ -31,7 +31,8 @@
 //       → F9000) → Task0 파서 print 모드 "F 클램프" 경고 → gcode null + 이유 ③ 층 없음(topY 0) → 이유.
 //   (5) 배선 — 워커 runTask0Gcode 가 코어를 그대로 부름, 서비스 exportTask0Gcode, useSliceExport(deps 에 printerProfile·
 //       층두께 — 규칙 7, octet-stream, `_task0_` 파일 이름, handleExportStl 뒤), confirm 문구(기존 그대로 + Task0),
-//       SliceSidePanel(Task0 일 때만 Task0 버튼, 마스크 ZIP 은 Task0 아닌 쪽), ViewerV2Page 배선, BabylonScene 훅 호출
+//       SliceSidePanel(Task0 일 때만 Task0 버튼 — Z3 부터 job.zip 주·run.gcode 만 보조, 마스크 ZIP 은 Task0 아닌 쪽),
+//       ViewerV2Page 배선, BabylonScene 훅 호출
 //       목록 불변(불변식 1 — 영역 테두리 훅은 useBuildVolumeCheck 안 끝에서 부름).
 //   (6) 대조군 — 이 스크립트가 실제로 결함을 잡는지:
 //       a. 경계를 대칭(플레이트 ±W/2·±D/2)으로 바꾸면 "베드 X 5~15 모델" 사례를 놓친다(= (2) 의 그 단언이 실패).
@@ -611,7 +612,7 @@ function sectionWiring() {
   );
   assert(
     /req\.kind === "pngzip"[\s\S]*?req\.kind === "gcode"[\s\S]*?runTask0Gcode\(req\)/.test(worker),
-    "워커 분기: pngzip → gcode → 그 밖(task0-gcode)",
+    "워커 분기: pngzip → gcode → task0-gcode (Z3 의 task0-jobzip 은 그 뒤 — verify-task0-jobzip-export)",
   );
   const svc = read("utils", "slice-batch-service.ts");
   assert(
@@ -628,8 +629,11 @@ function sectionWiring() {
   );
   assert(/`\$\{safe\}_task0_\$\{lh\}mm\.gcode`/.test(body), "파일 이름 <프로젝트>_task0_<lh>mm.gcode");
   assert(
-    /getSliceGeometry\(\)/.test(body) && /getSceneTopY\(\)/.test(body) && /task0WriterOptionsForProfile\(printerProfile\)/.test(body) && /confirmIfOutOfBounds\(\)/.test(body),
-    "마스크 ZIP 과 같은 mesh 집합·topY, 프로파일 writer 옵션, 출력영역 확인(P-1)",
+    /getSliceGeometry\(\)/.test(body) && /getSceneTopY\(\)/.test(body) && /task0WriterOptionsForProfile\(printerProfile\)/.test(body) &&
+      // Z3: Task0 는 P-1 확인(confirmIfOutOfBounds) 대신 출력 가능 영역 밖이면 막는다(alertIfOutOfTask0Area) + 코어에 영역 전달
+      /if \(alertIfOutOfTask0Area\(\)\) return;/.test(body) && !/confirmIfOutOfBounds\(\)/.test(body) &&
+      /printable: task0PrintableFrameForProfile\(printerProfile\)/.test(body),
+    "마스크 ZIP 과 같은 mesh 집합·topY, 프로파일 writer 옵션, 출력 가능 영역 밖이면 막음(Z3 — confirm 아님)·코어에 영역 전달",
   );
   assert(
     hook.indexOf("const handleExportStl") > 0 && hook.indexOf("const handleExportTask0Gcode") > hook.indexOf("const handleExportStl"),
@@ -645,11 +649,14 @@ function sectionWiring() {
 
   const panel = read("components", "SliceSidePanel.tsx");
   const iBranch = panel.indexOf(") : task0 ? (");
-  const iTask0Btn = panel.indexOf("Task0 G-code (run.gcode)");
+  // Z3: Task0 분기 = job.zip(주) → run.gcode 만(보조). 버튼 글자가 아니라 핸들러로 찾는다(Z3 에서 글자가 바뀜)
+  const iJobBtn = panel.indexOf("onClick={onExportTask0JobZip}");
+  const iTask0Btn = panel.indexOf("onClick={onExportTask0Gcode}");
   const iMaskBtn = panel.indexOf("onClick={onExportMasksZip}");
   assert(
-    /const task0 = isTask0Profile\(printerProfile\)/.test(panel) && iBranch > 0 && iTask0Btn > iBranch && iMaskBtn > iTask0Btn,
-    "패널: Task0 프로파일이면 Task0 버튼만, 마스크 ZIP·FDM G-code 는 Task0 아닌 쪽 분기",
+    /const task0 = isTask0Profile\(printerProfile\)/.test(panel) &&
+      iBranch > 0 && iJobBtn > iBranch && iTask0Btn > iJobBtn && iMaskBtn > iTask0Btn,
+    "패널: Task0 프로파일이면 Task0 버튼만(Z3: job.zip 주 → run.gcode 만 보조), 마스크 ZIP·FDM G-code 는 Task0 아닌 쪽 분기",
   );
 
   const page = read("pages", "ViewerV2Page.tsx");

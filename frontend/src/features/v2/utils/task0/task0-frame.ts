@@ -209,6 +209,28 @@ export function task0LayerCount(topY: number, layerHeightMm: number): number {
   return Math.max(1, Math.ceil(topY / layerHeightMm));
 }
 
+/** topY 정규화 격자 — 1 µm (mm 당 1000칸) */
+const TOP_Y_GRID_PER_MM = 1000;
+
+/**
+ * topY 정규화 (Z3) — 1 µm 격자로 반올림. **Task0 내보내기 코어 입구 한 곳**(task0-export exportGcodeStage)에서만
+ * 부른다 → writer(층 수·메타 topYMm)·층 마스크 PNG 수·manifest layerCount 가 모두 정규화된 같은 값에서 나온다.
+ *
+ * 왜: 씬 최고점(handle.getSceneTopY)은 float32 꼭짓점의 bounding box 라 설계 높이 0.3 mm 가 0.30000001 로 들어온다
+ *   → ceil(0.30000001 / 0.1) = 4 (맨 위에 빈 층 하나 — scripts/gen-task0-sample-zip.mjs 머리 주석, 계획서 §4 Z3 인계).
+ *   float32 상대 오차(2⁻²⁴ ≈ 6e-8)는 Z 이송 상한 2000 mm 에서도 0.12 µm 라 µm 반올림이 µm 단위로 적힌 설계 높이를 되찾는다.
+ * 규격 §3 "층 수 = ceil(topY / lh)" 와 모순 없음 — 식은 그대로 두고 topY 만 µm 로 읽는다. 반올림이 topY 를 옮기는 폭은
+ *   0.5 µm 이하라, 그 때문에 생기거나 없어지는 층 N(N·lh 가 그 0.5 µm 안에 있음)의 단면 높이 (N+0.5)·lh 는 실제
+ *   최고점보다 lh/2 − 0.5 µm 이상 위다 → lh > 1 µm 이면 **비어 있는 맨 위 층 하나만** 달라지고, 형상이 있는 층의
+ *   단면은 하나도 바뀌지 않는다(단면은 정규화와 무관하게 실제 float32 꼭짓점으로 자른다).
+ * 기존 마스크 ZIP 경로(workers runPngZip·pages/viewer/utils/layer-count)는 이 함수를 쓰지 않는다 — 그 산출물은 그대로.
+ * 남는 한계: lh 0.01·0.03 등 일부 층두께에서는 정규화된 topY 로도 float64 나눗셈 꼬리(1.11 / 0.01 = 111.00000000000001)
+ *   때문에 맨 위 빈 층이 하나 더 생길 수 있다 — 층 수 식(task0LayerCount)은 마스크 경로와 같은 식으로 두었다(Z3 보고).
+ */
+export function task0NormalizeTopY(topY: number): number {
+  return Math.round(topY * TOP_Y_GRID_PER_MM) / TOP_Y_GRID_PER_MM;
+}
+
 /** 층 N(0-based) 의 Z = (N + 1)·lh — `;Z:` 와 층 첫 `G1 Z` 값 (규격 §3) */
 export function task0LayerZ(layerIndex: number, layerHeightMm: number): number {
   return (layerIndex + 1) * layerHeightMm;

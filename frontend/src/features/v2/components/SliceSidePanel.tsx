@@ -8,7 +8,10 @@ import {
 } from "../types/printer";
 import { estimatePrintTimeSec } from "../utils/print-time";
 import { sliceBatchService } from "../utils/slice-batch-service";
-import type { Task0ExportReport } from "../utils/task0/task0-export";
+import type {
+  Task0ExportReport,
+  Task0JobStage,
+} from "../utils/task0/task0-export";
 import { isTask0Profile } from "../utils/task0/task0-profile";
 import type { BabylonSceneHandle } from "./BabylonScene";
 import NumberInput from "./common/NumberInput";
@@ -28,6 +31,20 @@ function formatDuration(sec: number): string {
   return `${h}시간 ${mm}분`;
 }
 
+/** 바이트 수 표시 (B / KB / MB) */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/** Task0 job.zip 진행 단계 이름 (Z3) — 단계마다 층 진행을 처음부터 센다 */
+const TASK0_STAGE_LABELS: Record<Task0JobStage, string> = {
+  gcode: "1/3 G-code 생성 — 층",
+  png: "2/3 층 이미지",
+  verify: "3/3 묶기·검사 중…",
+};
+
 interface Props {
   onClose: () => void;
   sceneHandleRef: React.RefObject<BabylonSceneHandle | null>;
@@ -44,15 +61,19 @@ interface Props {
   onExportMasksZip: () => void;
   onExportGcode: () => void;
   /**
-   * Task0 G-code(run.gcode) 내보내기 (Z2). 현재 프로파일이 Task0 일 때만 버튼이 보인다 —
+   * Task0 job.zip 내보내기 (Z3) — Task0 프로파일의 주 버튼. 현재 프로파일이 Task0 일 때만 보인다 —
    * 그때는 마스크 ZIP·FDM G-code 버튼을 숨긴다(아래 내보내기 카드 주석).
    */
+  onExportTask0JobZip?: () => void;
+  /** Task0 G-code(run.gcode) 만 내보내기 (Z2) — Task0 프로파일의 보조 버튼(드라이런 탭 시험용). */
   onExportTask0Gcode?: () => void;
   /** 마지막 Task0 내보내기 결과 — 요약(성공) 또는 이유(막힘). 없으면 표시 안 함. */
   task0Report?: Task0ExportReport | null;
   batchBusy: boolean;
   batchDone: number;
   batchTotal: number;
+  /** 진행 단계 — Task0 job.zip 만 (없으면 종전 "진행 중… n / N" 표시). */
+  batchStage?: Task0JobStage;
 
   modelCount: number;
 
@@ -85,11 +106,13 @@ const SliceSidePanel: React.FC<Props> = ({
   hideMaskPreview = false,
   onExportMasksZip,
   onExportGcode,
+  onExportTask0JobZip,
   onExportTask0Gcode,
   task0Report = null,
   batchBusy,
   batchDone,
   batchTotal,
+  batchStage,
   modelCount,
 }) => {
   const safeLayerIdx = Math.min(layerIdx, Math.max(0, layerCount - 1));
@@ -190,8 +213,8 @@ const SliceSidePanel: React.FC<Props> = ({
           </p>
           {task0 && (
             <p className="text-xs text-amber-700 mt-1">
-              Task0 는 층마다 도포·파킹·블레이드 시간이 더해져 위 출력 시간과 다릅니다 — Task0 G-code 를
-              내보낸 뒤 아래 요약의 예상 시간을 보세요.
+              Task0 는 층마다 도포·파킹·블레이드 시간이 더해져 위 출력 시간과 다릅니다 — job.zip(또는
+              run.gcode)을 내보낸 뒤 아래 요약의 예상 시간을 보세요.
             </p>
           )}
         </Card>
@@ -260,21 +283,30 @@ const SliceSidePanel: React.FC<Props> = ({
         <Card title="내보내기">
           {batchBusy ? (
             <div className="text-sm text-gray-700">
-              {/* total 미확정(직렬화/워커 준비) 동안 "0 / 0" 대신 준비 중 표기 (감사 #10) */}
-              {batchTotal > 0 ? (
-                <>진행 중… {batchDone} / {batchTotal}</>
+              {/* total 미확정(직렬화/워커 준비) 동안 "0 / 0" 대신 준비 중 표기 (감사 #10).
+                  Task0 job.zip (Z3) 은 단계 이름을 앞에 붙이고, 묶기·검사 단계는 층 수 없이 이름만. */}
+              {batchStage === "verify" ? (
+                TASK0_STAGE_LABELS.verify
+              ) : batchTotal > 0 ? (
+                batchStage ? (
+                  <>
+                    {TASK0_STAGE_LABELS[batchStage]} {batchDone} / {batchTotal}
+                  </>
+                ) : (
+                  <>진행 중… {batchDone} / {batchTotal}</>
+                )
               ) : (
                 "준비 중…"
               )}
               <div className="w-full bg-gray-200 rounded-full h-2 mt-2 overflow-hidden">
                 <div
                   className={
-                    batchTotal > 0
+                    batchTotal > 0 && batchStage !== "verify"
                       ? "bg-primary-600 h-2 transition-all"
                       : "bg-primary-400 h-2 w-1/3 animate-pulse"
                   }
                   style={
-                    batchTotal > 0
+                    batchTotal > 0 && batchStage !== "verify"
                       ? { width: `${(batchDone / batchTotal) * 100}%` }
                       : undefined
                   }
@@ -291,21 +323,29 @@ const SliceSidePanel: React.FC<Props> = ({
               </button>
             </div>
           ) : task0 ? (
-            // Task0 프로파일 (Z2) — Task0 G-code 하나만. 기존 마스크 ZIP 은 플레이트를 LCD 에 늘린
-            //   래스터라 Task0 투사 규약(시작 (10,10)·73 µm 정사각 픽셀)과 맞지 않고, FDM G-code 는
-            //   Task0 형식이 아니다(종합 D4: Task0 선택 시 G-code 는 Task0 형식) → 둘 다 숨긴다.
-            //   마스크는 Z3 에서 job.zip(run.gcode + 투사 프레임 마스크)으로 대체한다.
+            // Task0 프로파일 (Z2·Z3) — 주 버튼 job.zip(run.gcode + 투사 프레임 층 마스크 + manifest·exposure·preview),
+            //   보조 버튼 run.gcode 만(드라이런 탭 시험용). 기존 마스크 ZIP 은 플레이트를 LCD 에 늘린 래스터라 Task0 투사
+            //   규약(시작 (10,10)·73 µm 정사각 픽셀)과 맞지 않고, FDM G-code 는 Task0 형식이 아니다(종합 D4: Task0 선택 시
+            //   G-code 는 Task0 형식) → 둘 다 숨긴다. 층 마스크는 job.zip 안에 투사 프레임으로 들어간다.
             <div className="flex flex-col gap-2">
+              <button
+                onClick={onExportTask0JobZip}
+                disabled={modelCount === 0 || !onExportTask0JobZip}
+                className="px-3 py-2 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                Task0 job.zip
+              </button>
               <button
                 onClick={onExportTask0Gcode}
                 disabled={modelCount === 0 || !onExportTask0Gcode}
-                className="px-3 py-2 text-sm bg-primary-600 text-white rounded hover:bg-primary-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                className="px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
-                Task0 G-code (run.gcode)
+                run.gcode 만
               </button>
               <p className="text-xs text-gray-400">
-                Task0 프로파일에서는 마스크 ZIP·FDM G-code 를 숨깁니다 (마스크는 다음 단계
-                job.zip 에 포함).
+                job.zip = run.gcode + 층 마스크 PNG(투사 1920×1080) + manifest·exposure·미리보기 — Task0 에
+                넘기는 파일입니다. run.gcode 만은 드라이런 탭 시험용. Task0 프로파일에서는 마스크 ZIP·FDM
+                G-code 를 숨깁니다.
               </p>
               {task0Report && <Task0ReportView report={task0Report} />}
             </div>
@@ -334,17 +374,22 @@ const SliceSidePanel: React.FC<Props> = ({
 };
 
 /**
- * 마지막 Task0 내보내기 결과 (Z2). 성공 = 파일 이름 + 층·길이·예상 시간 요약, 막힘 = 이유(층 번호·문구).
+ * 마지막 Task0 내보내기 결과 (Z2·Z3). 성공 = 파일 이름 + 층·길이·예상 시간 요약(job.zip 이면 층 이미지 수·zip 크기),
+ * 막힘 = 이유(층 번호·문구).
  * 예상 시간 = 규격서 §11·§13 estimate (도포 + 트래블 + 파킹 + 블레이드 + 층 오버헤드 + 노광, 가속 무시).
  */
 function Task0ReportView({ report }: { report: Task0ExportReport }) {
   if (!report.ok) {
     return (
       <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-        <div className="font-medium">내보내지 않았습니다 — 이유:</div>
+        <div className="font-medium">
+          {report.kind === "jobzip" ? "job.zip" : "run.gcode"} 를 내보내지 않았습니다 — 이유:
+        </div>
         <ul className="list-disc pl-4 mt-1 space-y-0.5">
-          {report.issues.map((msg) => (
-            <li key={msg}>{msg}</li>
+          {report.issues.map((msg, i) => (
+            // 같은 문장이 두 번 나올 수 있다(파서 모드별 같은 경고 등) — 문장만 key 로 쓰면 중복 key.
+            //   목록은 한 번 그리고 바뀌지 않으므로 순번을 붙인다.
+            <li key={`${i}:${msg}`}>{msg}</li>
           ))}
         </ul>
       </div>
@@ -352,6 +397,7 @@ function Task0ReportView({ report }: { report: Task0ExportReport }) {
   }
   const s = report.summary;
   const e = s.estimate;
+  const job = report.kind === "jobzip" ? report.job : null;
   return (
     <div className="text-xs text-gray-700 bg-white border border-gray-200 rounded px-3 py-2">
       <div className="font-medium text-green-700">내보냄 · {report.fileName}</div>
@@ -368,7 +414,20 @@ function Task0ReportView({ report }: { report: Task0ExportReport }) {
         </span>
         <span className="text-gray-500">예상 시간</span>
         <span className="font-mono text-right">{formatDuration(e.totalSec)}</span>
+        {job && (
+          <>
+            <span className="text-gray-500">층 이미지 / zip 크기</span>
+            <span className="font-mono text-right">
+              {job.pngCount}장 / {formatBytes(job.zipBytes)}
+            </span>
+          </>
+        )}
       </div>
+      {job && job.clippedPixels > 0 && (
+        <p className="text-amber-700 mt-1">
+          투사 영역 밖이라 잘린 픽셀 {job.clippedPixels}개 — 그 부분은 노광되지 않습니다(출력 가능 영역 확인).
+        </p>
+      )}
       <p className="text-gray-400 mt-1">
         도포 {formatDuration(e.depositSec)} · 트래블 {formatDuration(e.travelSec)} · 파킹{" "}
         {formatDuration(e.parkSec)} · 블레이드 {formatDuration(e.bladeSec)} · 층 오버헤드{" "}
