@@ -26,7 +26,7 @@
 //   영역 테두리는 이 훅 끝에서 usePrintableAreaOutline 으로 그린다(BabylonScene 훅 목록 불변).
 import { useEffect, useRef } from "react";
 import { Color3, MeshBuilder, VertexBuffer, Vector3 } from "@babylonjs/core";
-import type { LinesMesh, Mesh, Scene } from "@babylonjs/core";
+import type { FloatArray, LinesMesh, Matrix, Mesh, Scene } from "@babylonjs/core";
 
 import type { SceneCtx } from "../scene-refs";
 import type { STLFileV2 } from "../../../types/stl";
@@ -292,12 +292,29 @@ function collectPrintableAreaIssues(
  * 캐시(CX-2 삼각형 캐싱 과제)와 함께 다루는 것이 맞다.
  *
  * 정점을 못 읽으면 null → 호출 측이 그 모델을 건너뛴다(경고 안 띄움).
+ *
+ * 씬 핸들 getModelWorldAabb(transform-handle.ts → model-bounds-cache.ts)도 같은 순회
+ * (positionsWorldAabb)를 쓴다 — Transform 패널의 "크기 (mm)" 와 "출력 영역에 맞춤" 이 이 검사와
+ * **같은 상자**를 보게(데모 빈칸 #1). 호출 전에 mesh.computeWorldMatrix(true) 로 world 행렬을
+ * 최신으로 만들어 둘 것.
  */
-function worldVertexAabb(mesh: Mesh) {
-  const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+export function worldVertexAabb(mesh: Mesh) {
+  return positionsWorldAabb(
+    mesh.getVerticesData(VertexBuffer.PositionKind),
+    mesh.getWorldMatrix(),
+  );
+}
+
+/**
+ * worldVertexAabb 의 순회 본체 — 정점 배열 + world 행렬 → 타이트한 world AABB (데모 빈칸 #1 에서 분리, 로직 그대로).
+ * model-bounds-cache 가 평행이동을 뺀 행렬로 같은 순회를 돌려 캐시한다.
+ */
+export function positionsWorldAabb(
+  positions: FloatArray | null,
+  world: Matrix,
+) {
   if (!positions || positions.length < 3) return null;
 
-  const world = mesh.getWorldMatrix();
   const p = new Vector3();
   let minX = Infinity;
   let minY = Infinity;

@@ -7,6 +7,7 @@ import { useSupportsV2 } from "../hooks/useSupportsV2";
 import { useShortcutsListener, useShortcutHandler } from "../hooks/useShortcuts";
 import { useSupportParamsStore } from "../support";
 import { summarizeSupports } from "../support/support-stats";
+import { modelFitRegionForProfile } from "../utils/model-size";
 import BabylonScene, {
   type BabylonSceneHandle,
   type GizmoMode,
@@ -469,6 +470,12 @@ const ViewerV2Page: React.FC = () => {
     if (!selectedFileId) return null;
     return sceneHandleRef.current?.getModelWorldPivot(selectedFileId) ?? null;
   };
+  // 수치 패널의 크기(mm)·출력 영역에 맞춤 = 선택 모델의 현재 world AABB (데모 빈칸 #1).
+  //   getTransformPivot 과 같은 이유로 평범한 함수(호출 시점에 최신 ref 를 읽는 라이브 게터).
+  const getTransformAabb = () => {
+    if (!selectedFileId) return null;
+    return sceneHandleRef.current?.getModelWorldAabb(selectedFileId) ?? null;
+  };
 
   /**
    * 슬라이스 미리보기 **모드** 진입 (B-38 1단계).
@@ -891,6 +898,9 @@ const ViewerV2Page: React.FC = () => {
             onPreviewTransform={handlePreviewTransform}
             onCommitTransform={handleCommitTransform}
             getTransformPivot={getTransformPivot}
+            getTransformAabb={getTransformAabb}
+            // 맞춤 영역 = 씬 빨간 박스 판정과 같은 출처(Task0 면 출력 가능 영역, 아니면 빌드 크기).
+            fitRegion={modelFitRegionForProfile(printerProfile)}
             onAutoGenerate={support.handleAutoGenerate}
             onClearAllSupports={support.handleClearAllSupports}
             supportCount={supports.length}

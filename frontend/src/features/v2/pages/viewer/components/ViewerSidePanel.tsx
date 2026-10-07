@@ -6,6 +6,8 @@ import DentalPanel from "../../../components/DentalPanel";
 import { SupportParamsPanel } from "../../../support";
 import type { EditMode } from "../../../components/EditModeControls";
 import type { TransformV2 } from "../../../types/transform";
+import type { WorldAabbMm } from "../../../utils/build-volume";
+import type { ModelFitRegion } from "../../../utils/model-size";
 
 type PanelTab = "transform" | "support" | "dental";
 
@@ -36,6 +38,10 @@ interface ViewerSidePanelProps {
   onCommitTransform: (id: string, start: TransformV2, end: TransformV2) => void;
   /** 선택 모델의 현재 bbox 중심 = 회전·스케일 피벗 (B-9). 없으면 무보정 폴백. */
   getTransformPivot?: () => [number, number, number] | null;
+  /** 선택 모델의 현재 world AABB(실제 정점, 서포트 제외) — 크기(mm) 표시·입력·맞춤 (데모 빈칸 #1). */
+  getTransformAabb?: () => WorldAabbMm | null;
+  /** "출력 영역에 맞춤" 영역 — 빨간 박스 판정과 같은 출처 (modelFitRegionForProfile). */
+  fitRegion?: ModelFitRegion | null;
   // Support
   onAutoGenerate: () => void;
   onClearAllSupports: () => void;
@@ -78,6 +84,8 @@ export default function ViewerSidePanel({
   onPreviewTransform,
   onCommitTransform,
   getTransformPivot,
+  getTransformAabb,
+  fitRegion,
   onAutoGenerate,
   onClearAllSupports,
   supportCount,
@@ -141,6 +149,8 @@ export default function ViewerSidePanel({
             onPreview={onPreviewTransform}
             onCommit={onCommitTransform}
             getPivot={getTransformPivot}
+            getAabb={getTransformAabb}
+            fitRegion={fitRegion}
           />
         ) : panelTab === "support" ? (
           <SupportParamsPanel

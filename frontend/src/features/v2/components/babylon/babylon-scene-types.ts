@@ -15,7 +15,7 @@ import type { STLFileV2 } from "../../types/stl";
 import type { LayerGraphParams } from "../../support/detect/types";
 import type { PlacePointsParams } from "../../support/detect/place-points";
 import type { BuildVolumeIssue } from "./hooks/useBuildVolumeCheck";
-import type { PrintableAreaMm } from "../../utils/build-volume";
+import type { PrintableAreaMm, WorldAabbMm } from "../../utils/build-volume";
 
 export type { BuildVolumeIssue };
 
@@ -297,6 +297,13 @@ export interface BabylonSceneHandle {
    * 제자리 회전을 만든다. 모델이 없으면 null.
    */
   getModelWorldPivot: (id: string) => [number, number, number] | null;
+  /**
+   * 모델의 현재 world AABB (mm) — **실제 정점**으로 만든 타이트한 상자, 서포트 제외(모델만).
+   * 출력영역 검사(useBuildVolumeCheck 의 worldVertexAabb)와 같은 계산이라, Transform 패널의
+   * "크기 (mm)" 표시·입력과 "출력 영역에 맞춤" 이 빨간 박스 판정과 같은 상자를 본다(데모 빈칸 #1).
+   * 호출 시점 메쉬를 읽는 라이브 값. 모델이 없거나 정점을 못 읽으면 null.
+   */
+  getModelWorldAabb: (id: string) => WorldAabbMm | null;
   /**
    * Bridge 경로 (base → cp1 → cp2 → cp3 → contact) 가 STL 메쉬와
    * 교차하면 변곡점들을 모든 STL 의 maxY + margin 위로 들어올린 새

@@ -29,6 +29,13 @@ interface NumberInputProps {
   onBegin?: () => void;
   /** 편집 종료 시 1회 호출 (undo 단위의 끝). TransformPanel 의 endDrag. */
   onEnd?: () => void;
+  /**
+   * 커밋 값 검사 (선택). false 면 **거부** — onBegin/onChange/onEnd 를 하나도 부르지 않고 표시를
+   * 원래 값으로 되돌린다. min/max 클램프("고쳐서 받기")와 달리 "받지 않기" 다.
+   * 쓰는 곳: TransformPanel "크기 (mm)"(0·음수, 보인 값 그대로)·"Scale (%)"(보인 값 그대로) — 데모 빈칸 #1.
+   * 없으면 종전 동작 그대로(B-14 "보인 값 = 적용값" — Position·Rotation 칸).
+   */
+  isValid?: (v: number) => boolean;
   disabled?: boolean;
   className?: string;
   /** 접근성 라벨. 축 문자만 옆에 붙는 좁은 칸에서 쓴다. */
@@ -71,6 +78,7 @@ const NumberInput: React.FC<NumberInputProps> = ({
   decimals = 3,
   onBegin,
   onEnd,
+  isValid,
   disabled = false,
   className = "",
   ariaLabel,
@@ -104,6 +112,8 @@ const NumberInput: React.FC<NumberInputProps> = ({
    */
   function commit(raw: string): number {
     const result = commitNumberInput(raw, value, min, max);
+    // 거부 — 부모에 알리지 않고 원래 값을 돌려준다(Enter·blur 처리가 그 값으로 표시를 되돌린다).
+    if (result.changed && isValid && !isValid(result.value)) return value;
     if (result.changed) {
       onBegin?.();
       onChange(result.value);
