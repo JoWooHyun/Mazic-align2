@@ -154,8 +154,29 @@ export function sliceTrianglesAtY(
     ) => {
       // 부호가 다른 edge: 정확히 t 비율로 교차.
       if ((da > EPS && db < -EPS) || (da < -EPS && db > EPS)) {
-        const tt = da / (da - db);
-        cross.push([ax + tt * (bx - ax), az + tt * (bz - az)]);
+        // **보간 방향 고정 — 공유 변 교차점 비트 일치.** 이웃한 두 삼각형은 공유 변을
+        //   서로 반대 방향(a→b / b→a)으로 갖는다. 끝점 순서대로 보간하면 수학적으로
+        //   같은 점이 1 ulp 남짓 달라지고, 그 차이가 x.5 µm 반올림 경계를 넘으면
+        //   chainSegments 의 1 µm 양자화 키가 갈라져 체인이 끊긴다 — 열린 체인이
+        //   현으로 닫히며 단면 일부가 빠진다(마스크 구멍). 교차 좌표가 정확히 x.5 µm 에
+        //   오는 반듯한 치수에서 잦다 — 예제 20 mm 정육면체 lh 0.025 는 800층 중 158층,
+        //   0.3×10.5 막대 lh 0.05 는 층 4 에서 0.71 mm² 누락. 그래서 언제나 **평면 아래(d<0) 끝점에서
+        //   위(d>0) 끝점으로** 보간한다. 교차 변은 두 끝점 d 의 부호가 반드시 달라
+        //   순서가 모호하지 않고, 공유 변의 두 삼각형이 같은 입력으로 같은 식을 계산하므로
+        //   결과가 비트까지 같다(공유 꼭짓점 좌표가 비트 동일한 메시 전제 — 인덱스
+        //   메시를 펼친 extractWorldTriangles·워커 배열이 그렇다).
+        //   cross 에 넣는 **순서는 그대로**라 아래 선분 방향(B-7) 판정·감김은 불변이다.
+        //   (대안인 "변의 꼭짓점 쌍으로 키" 는 SliceSegment 계약·모든 호출자를 바꿔야
+        //   하고 평면 위 꼭짓점 점에는 변이 없어 채택하지 않았다.)
+        const below = da < 0;
+        const lx = below ? ax : bx;
+        const lz = below ? az : bz;
+        const ld = below ? da : db;
+        const ux = below ? bx : ax;
+        const uz = below ? bz : az;
+        const ud = below ? db : da;
+        const tt = ld / (ld - ud);
+        cross.push([lx + tt * (ux - lx), lz + tt * (uz - lz)]);
       } else if (Math.abs(da) < EPS) {
         // 시작 vertex 가 평면 위. 중복 방지를 위해 시작 쪽에서만 1 회.
         cross.push([ax, az]);
@@ -203,6 +224,11 @@ export function sliceTrianglesAtY(
  * 좌표를 1 µm (1e-3 mm) 단위로 양자화하여 endpoint 동등성 비교를 안전
  * 하게 한다. 시작점에서 out-edge 를 따라가다 시작점으로 돌아오면 폴리곤
  * 1 개 완성.
+ *
+ * 반올림 키는 x.5 µm 경계에서 1 ulp 차이에도 갈라진다. 같은 점이 같은 키를
+ * 갖는 근거는 sliceTrianglesAtY 의 **보간 방향 고정**(공유 변 교차점이 비트까지
+ * 같음)이다 — 그 고정을 풀면 체인이 끊겨 단면이 빠진다
+ * (scripts/verify-slice-chain.mjs).
  *
  * **방향 보존(B-7)**: 인접 리스트를 무방향이 아니라 **유방향**(a→b 순방향만)
  * 으로 만든다. 그래야 결과 폴리곤의 점 순서가 선분 방향을 그대로 따르고,
