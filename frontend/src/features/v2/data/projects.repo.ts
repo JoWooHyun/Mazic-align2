@@ -1,4 +1,4 @@
-import { openDb, STORE_PROJECTS } from "./db";
+import { openDb, settleTx, STORE_PROJECTS } from "./db";
 import type { ProjectV2, ProjectV2CreateInput } from "../types/project";
 
 /**
@@ -28,8 +28,7 @@ export async function listProjects(): Promise<ProjectV2[]> {
         cursor.continue();
       }
     };
-    tx.oncomplete = () => resolve(out);
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(out), reject);
   });
 }
 
@@ -38,8 +37,7 @@ export async function getProject(id: string): Promise<ProjectV2 | undefined> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_PROJECTS, "readonly");
     const req = tx.objectStore(STORE_PROJECTS).get(id);
-    req.onsuccess = () => resolve(req.result as ProjectV2 | undefined);
-    req.onerror = () => reject(req.error);
+    settleTx(tx, () => resolve(req.result as ProjectV2 | undefined), reject);
   });
 }
 
@@ -67,8 +65,7 @@ export async function createProject(
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORE_PROJECTS, "readwrite");
         tx.objectStore(STORE_PROJECTS).add(project);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
+        settleTx(tx, () => resolve(), reject);
       });
       return project;
     } catch (err) {
@@ -105,8 +102,7 @@ export async function updateProject(
       store.put(next);
     };
 
-    tx.oncomplete = () => resolve(next as ProjectV2);
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(next as ProjectV2), reject);
   });
 }
 
@@ -115,8 +111,7 @@ export async function deleteProject(id: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_PROJECTS, "readwrite");
     tx.objectStore(STORE_PROJECTS).delete(id);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }
 
@@ -130,7 +125,6 @@ export async function putProject(project: ProjectV2): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_PROJECTS, "readwrite");
     tx.objectStore(STORE_PROJECTS).put(project);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    settleTx(tx, () => resolve(), reject);
   });
 }

@@ -1,6 +1,8 @@
 // files→mesh 동기화 훅 — 원본 effect #2(STL 로드/제거/transform) + #3(오버행 색 재할당).
 //   두 effect 는 원본에서 연속 선언(deps [files] → [overhangAngleDeg])이므로 이 훅에서도
-//   그 순서로 등록한다. manifold man.delete() 짝, painted/margin/island 정리 등 무변경.
+//   그 순서로 등록한다. painted/margin/island 정리 등 무변경.
+//   C3·C7(사고 방지 2차): 모델 삭제·취소된 로드·같은 id 재등록 때 manifold·전용 머티리얼 해제는
+//   resource-release.ts 헬퍼 경유(씬 정리 때 전부 해제는 dispose-scene).
 import { useEffect } from "react";
 import { Mesh } from "@babylonjs/core";
 import { loadStlIntoScene } from "../../../utils/stl-loader";
@@ -18,6 +20,10 @@ import {
   disposeMarginVisualization,
 } from "../dental-actions";
 import { disposeRedesignVisualization } from "../redesign-detect-actions";
+import {
+  disposeStlMesh,
+  releaseStlManifold,
+} from "../resource-release";
 
 export function useFileMeshSync(
   ctx: SceneCtx,
@@ -55,7 +61,9 @@ export function useFileMeshSync(
           for (let i = ctx.paintPointsRef.current.length - 1; i >= 0; i--) {
             if (ctx.paintPointsRef.current[i].mesh === removedMesh) {
               ctx.paintPointsRef.current.splice(i, 1);
-              ctx.paintOverlaysRef.current.splice(i, 1);
+              // 데칼은 STL 자식이라 아래 dispose 로도 사라지지만 데칼마다 만든 전용
+              //   머티리얼(useDentalBrush v2_maskMat)은 남는다 → 지우개와 같이 함께 해제(C7).
+              ctx.paintOverlaysRef.current.splice(i, 1)[0]?.dispose(false, true);
             }
           }
         }
@@ -69,16 +77,13 @@ export function useFileMeshSync(
         //   모델을 지워도 허공에 그대로 남는다(리드 실물 발견).
         //   stlId 구분이 없는 활성 STL 전용 디버그 오버레이라 통째로 지운다.
         disposeRedesignVisualization(ctx);
-        removedMesh?.dispose();
+        // STL 전용 머티리얼까지 해제(C7) — 자식(서포트)의 공유 머티리얼은 보존.
+        if (removedMesh) disposeStlMesh(removedMesh);
         ctx.meshMapRef.current.delete(id);
         // 이 STL 의 painted 목록도 비었음을 부모에 통지 (세션 상태 sync).
         ctx.onPaintedFacesChangeRef.current?.(id, []);
         // manifold 객체도 dispose
-        const m = ctx.stlManifoldMapRef.current.get(id);
-        if (m) {
-          m.delete();
-          ctx.stlManifoldMapRef.current.delete(id);
-        }
+        releaseStlManifold(ctx.stlManifoldMapRef.current, id);
       }
     }
 
@@ -95,7 +100,7 @@ export function useFileMeshSync(
             ctx.liftRef.current,
           );
           if (cancelled) {
-            mesh.dispose();
+            disposeStlMesh(mesh);
             return null;
           }
           // ★ transform 을 **먼저** 적용한 뒤 색칠한다 (B-35). 색칠이 world
@@ -127,6 +132,8 @@ export function useFileMeshSync(
             const t0 = performance.now();
             const man = babylonMeshToManifold(mesh, mod, null);
             if (man) {
+              // 같은 id 의 옛 manifold 가 남아 있으면 덮어쓰기 전에 해제(C3 — 재로드 방어).
+              releaseStlManifold(ctx.stlManifoldMapRef.current, f.id);
               ctx.stlManifoldMapRef.current.set(f.id, man);
               const status = man.status();
               console.log(
