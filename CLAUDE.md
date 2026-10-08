@@ -38,10 +38,10 @@ cd frontend && npm run build      # vite build
 ```
 
 ```
-cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-07 기준 33종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-07 기준 37종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
 ```
 
-- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/7 기준 33종)가 상시 PASS여야 한다
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/7 기준 37종)가 상시 PASS여야 한다
   (**Node 20.6 이상** — `verify-head-normal.mjs` 가 `node:module` register 로더 훅을 쓴다)
   (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
   확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
@@ -54,10 +54,10 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 
 | 경로 | 역할 | 담당/주의 |
 |---|---|---|
-| `pages/ViewerV2Page.tsx` | 전체 통합 골격 (920줄 — 7/20 분리 직후 640에서 다시 불어남): 공유 상태 + 훅 조립 + JSX 골격 | 공용 — useCallback deps 주의. **새 기능은 여기 말고 `viewer/` 하위 훅·컴포넌트로** |
-| `pages/viewer/` | ViewerV2Page의 분리 조각: `hooks/`(서포트 편집·dental·내보내기 등 8개 + types), `components/`(헤더·오버레이·사이드패널·슬라이스 모드 8개), `utils/`(4개) | 구조도: `docs/리팩토링_LLM구조_20260720.md` |
-| `components/BabylonScene.tsx` | **씬 본체** (158줄): SceneCtx + 훅 호출(순서 고정) + 핸들 조립. 편집모드 select/support/dental-brush, handle 패턴 | 유승제 설계 — 구조 변경 시 리뷰 지정 |
-| `components/babylon/` | 씬 기능 조각: `hooks/`(use* 10개 + setup-gizmos·setup-pointer-handlers·dispose-scene), `handle/` 빌더 6개, dental/bridge/재설계 액션. **훅 호출 순서·dispose 순서 불변식 있음** | 변경 전 `docs/리팩토링_LLM구조_20260720.md` §5 필독 |
+| `pages/ViewerV2Page.tsx` | 전체 통합 골격 (971줄 — 7/20 분리 직후 640에서 다시 불어남): 공유 상태 + 훅 조립 + JSX 골격 | 공용 — useCallback deps 주의. **새 기능은 여기 말고 `viewer/` 하위 훅·컴포넌트로** |
+| `pages/viewer/` | ViewerV2Page의 분리 조각: `hooks/`(서포트 편집·dental·내보내기·Task0 재료 등 9개 + types), `components/`(헤더·오버레이·사이드패널·슬라이스 모드 8개), `utils/`(5개) | 구조도: `docs/리팩토링_LLM구조_20260720.md` |
+| `components/BabylonScene.tsx` | **씬 본체** (163줄): SceneCtx + 훅 호출(순서 고정) + 핸들 조립. 편집모드 select/support/dental-brush, handle 패턴 | 유승제 설계 — 구조 변경 시 리뷰 지정 |
+| `components/babylon/` | 씬 기능 조각: `hooks/`(use* 11개 + setup-gizmos·setup-pointer-handlers·dispose-scene), `handle/` 빌더 6개, dental/bridge/재설계 액션. **훅 호출 순서·dispose 순서 불변식 있음** | 변경 전 `docs/리팩토링_LLM구조_20260720.md` §5 필독 |
 | `support/` | 서포트 구조물 (재설계 경로: 검출→라우팅→부품 조립, 레거시 trunk/브릿지, 파라미터, 자동 생성) | **조우현**(2026-08-05 유승제→이관, AI dev-cycle로 진행) |
 | `utils/dental/` | **지현규 알고리즘**: `margin-detect.ts`(🔒잠금), `margin-guard.ts`(🔒상수 잠금 — 원본 1:1 이식), `island-detection.ts`, `dental-support.ts`, `paint-mask.ts` | 지현규 — 로직 변경 시 컨펌 |
 | `utils/gcode/` | FDM G-code (marlin) — 회귀 기준으로만 유지 | 조우현 이식분 — 기존 marlin 출력 바이트 보존 |
