@@ -115,6 +115,7 @@ export function describeViolation(
 //   (checkBuildVolume)으로는 잡을 수 없다. 또 서포트도 도포·노광되므로 **모델과 서포트를 함께** 본다.
 //   영역 값은 utils/task0/task0-frame.ts task0PrintableWorldRect 가 베드 좌표에서 변환해 준다(여기에 상수 없음).
 //   기존 프로파일은 이 경로를 쓰지 않는다 — checkBuildVolume 은 그대로다.
+//   플레이트 아래는 하드 위반 아님(Z3-b, isTask0HardViolation) — 잘린 채 출력되는 정상 사용이라 확인 후 허용.
 
 /** world 출력 가능 영역 (mm). X ∈ [minX, maxX], Z ∈ [minZ, maxZ] — 비대칭 가능. */
 export interface PrintableAreaMm {
@@ -142,6 +143,16 @@ export function checkPrintableArea(
     belowPlate: aabb.minY < -epsMm,
     aboveMax: heightMm > 0 && aabb.maxY > heightMm + epsMm,
   };
+}
+
+/**
+ * Task0 에서 "내보내기 자체를 막아야 하는" 위반인가 (Z3-b).
+ *   가로·세로(X/Z) 영역 밖과 높이 초과는 프린터가 만들 수 없다(투사 밖 = 노광 안 됨, 노즐 범위 밖 = Klipper 거부) → 하드.
+ *   플레이트 아래로 파고든 것(belowPlate)만은 **잘린 채 출력**되는 정상 사용(치과에서 바닥을 일부러 잘라 쓰는 일이 잦다 — 리드 2026-10-08)
+ *   → 하드 아님. 코어(task0-export)도 XY 만 검사하고 단면은 0.5·lh 부터라 Y<0 은 자연히 잘린다.
+ */
+export function isTask0HardViolation(v: BuildVolumeViolation): boolean {
+  return v.minX || v.maxX || v.minZ || v.maxZ || v.aboveMax;
 }
 
 /** 영역 검사 대상 모델 하나 */
