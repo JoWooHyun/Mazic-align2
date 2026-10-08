@@ -25,6 +25,7 @@ import {
   isTask0Profile,
   task0PrintableAreaForProfile,
 } from "../utils/task0/task0-profile";
+import { isTask0HardViolation } from "../utils/build-volume";
 
 import { useClipboardActions } from "./viewer/hooks/useClipboardActions";
 import { useViewerShortcuts } from "./viewer/hooks/useViewerShortcuts";
@@ -545,6 +546,13 @@ const ViewerV2Page: React.FC = () => {
     Math.max(0, layerCount - 1),
   );
 
+  // Task0 출력영역 배너의 갈래 (Z3-b) — 내보내기를 막는 하드 위반(가로·세로 영역 밖·높이 초과·서포트)이 하나라도
+  //   있는가. 없으면 플레이트 아래로 파고든 것뿐이라 "잘린 채 출력" 안내만 한다(useSliceExport alertIfOutOfTask0Area 와
+  //   같은 판정). 평범한 계산으로 둔다 — 위쪽 early return 아래라 훅을 쓸 수 없고, 렌더당 항목 수십 개 이하.
+  const task0HardIssue = volumeIssues.some((it) =>
+    isTask0HardViolation(it.violation),
+  );
+
   return (
     <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       {/*
@@ -756,14 +764,23 @@ const ViewerV2Page: React.FC = () => {
             <div className="absolute inset-x-0 top-4 flex justify-center px-4 pointer-events-none">
               <div className="bg-red-50/95 backdrop-blur border border-red-300 rounded-md shadow px-4 py-2 text-sm text-red-900 select-none max-w-xl pointer-events-auto">
                 <div className="font-medium">
-                  {/* Task0 (Z3 — Z2 인계): 항목에 서포트 묶음이 들어가고, 잘라 출력하는 게 없다 — 영역 밖이면
-                      내보내기 자체를 막는다(useSliceExport alertIfOutOfTask0Area·코어 1-b). 기존 프로파일 문구는 그대로. */}
+                  {/* Task0 (Z3 → Z3-b): 항목에 서포트 묶음이 들어간다. 가로·세로 영역 밖·높이 초과가 하나라도 있으면
+                      내보내기 자체를 막는다(useSliceExport alertIfOutOfTask0Area·코어 1-b). 플레이트 아래로 파고든 것뿐이면
+                      잘린 채 출력되는 정상 사용(리드 2026-10-08)이라 안내만 — 내보낼 때 확인 후 허용. 기존 프로파일 문구는 그대로. */}
                   {isTask0Profile(printerProfile) ? (
-                    <>
-                      ⚠ Task0 출력 가능 영역을 벗어난 항목(모델·서포트){" "}
-                      {volumeIssues.length}건 — 이대로는 내보낼 수 없습니다. 영역
-                      안으로 옮기세요.
-                    </>
+                    task0HardIssue ? (
+                      <>
+                        ⚠ Task0 출력 가능 영역을 벗어난 항목(모델·서포트){" "}
+                        {volumeIssues.length}건 — 이대로는 내보낼 수 없습니다. 영역
+                        안으로 옮기세요.
+                      </>
+                    ) : (
+                      <>
+                        ⚠ 플레이트 아래로 파고든 모델 {volumeIssues.length}개 — 이대로
+                        내보내면 플레이트 아래 부분은 잘린 채 출력됩니다(일부러 자르는
+                        경우라면 그대로 진행).
+                      </>
+                    )
                   ) : (
                     <>
                       ⚠ 출력영역을 벗어난 모델 {volumeIssues.length}개 — 이대로

@@ -38,7 +38,8 @@
 //   (5) 배선(소스) — 워커 runTask0JobZip 이 코어를 요청 값 그대로 부르고 zip.buffer 를 transfer, 진행 스로틀의 단계 처리, 서비스
 //       exportTask0JobZip(application/zip Blob, task0-job-done), useSliceExport(deps 에 printerProfile·층두께 — 규칙 7, 파일 이름
 //       <프로젝트>_task0_<lh>mm.job.zip, 프로파일 writer·투사 프레임·노광·출력 가능 영역, 앱 generator, 핸들러 순서), Task0 두 핸들러는
-//       영역 밖이면 confirm 이 아니라 alert 로 막음(alertIfOutOfTask0Area), 워커 두 경로가 printable 전달, task0Report 무효화(모델·서포트 수·
+//       영역 밖이면 confirm 이 아니라 alert 로 막음(alertIfOutOfTask0Area — Z3-b: 플레이트 아래만이면 확인 후 허용, verify-task0-sink-allow),
+//       워커 두 경로가 printable 전달, task0Report 무효화(모델·서포트 수·
 //       프로파일·층두께·슬라이스 화면) + 도중 변경 epoch, 패널(job.zip 주 버튼 → run.gcode 만 보조, 단계 표시, 이유 key 에 순번),
 //       ViewerV2Page(배선, 출력영역 배너 Task0 제목 "이대로는 내보낼 수 없습니다" + 기존 문구 그대로), 미리보기 층 수 previewLayerCount 세 곳.
 //   (6) 대조군 — 이 스크립트가 실제로 결함을 잡는지:
@@ -726,7 +727,11 @@ function lastDeps(src, startMark, endMark) {
   return m ? m[1] : null;
 }
 
-/** Task0 출력 가능 영역 차단 — 두 핸들러가 alertIfOutOfTask0Area 로 막고 P-1 confirm 은 안 부름 (대조군 g2 가 같은 함수를 쓴다) */
+/**
+ * Task0 출력 가능 영역 차단 — 두 핸들러가 alertIfOutOfTask0Area 로 막고 P-1 confirm 은 안 부름 (대조군 g2 가 같은 함수를 쓴다).
+ * Z3-b: 하드 위반(isTask0HardViolation)은 alert 로 막고, 플레이트 아래로만 파고든 것은 그 뒤 confirm 으로 허용 —
+ *   두 갈래의 상세(동작·문구·대조군)는 verify-task0-sink-allow.mjs.
+ */
 function task0AreaBlockOk(src) {
   const at = src.indexOf("const alertIfOutOfTask0Area = useCallback(");
   if (at < 0) return false;
@@ -740,7 +745,8 @@ function task0AreaBlockOk(src) {
     /if \(alertIfOutOfTask0Area\(\)\) return;/.test(b) && !/confirmIfOutOfBounds/.test(b) &&
     /\n\s*alertIfOutOfTask0Area, \/\/ Task0 출력 가능 영역 차단\n/.test(b);
   return (
-    !/\n\s*\}, \[/.test(fnBody.slice(0, -endMark.length)) && /window\.alert\(/.test(fnBody) && !/window\.confirm/.test(fnBody) &&
+    !/\n\s*\}, \[/.test(fnBody.slice(0, -endMark.length)) && /window\.alert\(/.test(fnBody) &&
+    /isTask0HardViolation\(/.test(fnBody) && fnBody.indexOf("window.alert(") < fnBody.indexOf("window.confirm(") &&
     /내보낼 수 없습니다/.test(fnBody) && /return true;/.test(fnBody) && blocks(job) && blocks(gc)
   );
 }
@@ -824,7 +830,7 @@ function sectionWiring() {
   );
   assert(
     task0AreaBlockOk(hook),
-    "Task0 두 핸들러: 출력 가능 영역 밖이면 confirm 이 아니라 alert 로 이유를 보이고 끝(alertIfOutOfTask0Area, deps volumeIssues), P-1 confirm 은 부르지 않음",
+    "Task0 두 핸들러: 출력 가능 영역 밖(하드 — isTask0HardViolation)이면 confirm 이 아니라 alert 로 이유를 보이고 끝, 플레이트 아래만이면 그 뒤 confirm(Z3-b)(alertIfOutOfTask0Area, deps volumeIssues), P-1 confirm 은 부르지 않음",
   );
   assert(/setBatchExport\(\{ busy: true, done, total, stage \}\)/.test(body), "진행률에 단계(stage)를 담아 패널로");
   const iStl = hook.indexOf("const handleExportStl");

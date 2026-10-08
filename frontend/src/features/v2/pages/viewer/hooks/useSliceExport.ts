@@ -11,6 +11,7 @@ import type {
   BuildVolumeIssue,
 } from "../../../components/BabylonScene";
 import { downloadBlob } from "../../../utils/stl-export";
+import { isTask0HardViolation } from "../../../utils/build-volume";
 import { sliceBatchService } from "../../../utils/slice-batch-service";
 import {
   TASK0_APP_JOB_GENERATOR,
@@ -325,28 +326,48 @@ export function useSliceExport({
   }, [files.length, project?.name, supportsLength, sceneHandleRef]);
 
   /**
-   * Task0 출력 가능 영역 차단 (Z3) — 벗어난 항목(모델·서포트)이 있으면 확인이 아니라 이유를 알리고 **막는다**.
+   * Task0 출력 가능 영역 관문 (Z3 → Z3-b) — 위반을 두 갈래로 나눈다.
    *
-   * 기존 프로파일의 P-1(confirmIfOutOfBounds)은 "일부를 잘라 뽑는 사용" 을 허락하지만 Task0 에는 그런 출력이 없다 —
-   * 투사 밖은 노광되지 않고, 노즐 범위(Y 85) 밖 이동은 Task0(Klipper)가 거부한다. 코어(task0-export 1-b)도 writer 전에
-   * 같은 영역으로 막으므로 여기는 워커를 띄우기 전에 화면이 이미 아는 이유를 바로 알리는 몫이다.
+   * ① 하드 위반(가로·세로 영역 밖·높이 초과, 서포트 묶음은 XY 만 검사되므로 항상 여기) — 확인이 아니라 이유를 알리고 **막는다**.
+   *    투사 밖은 노광되지 않고, 노즐 범위(Y 85) 밖 이동은 Task0(Klipper)가 거부한다. 코어(task0-export 1-b)도 writer 전에
+   *    같은 영역(XY)으로 막으므로 여기는 워커를 띄우기 전에 화면이 이미 아는 이유를 바로 알리는 몫이다.
+   *    섞여 있으면(하드 1건 이상) 차단이고, 알림에는 하드 항목만 나열한다.
+   * ② 플레이트 아래로 파고든 것만 — 확인 후 허용(리드 2026-10-08: 치과에서 바닥을 일부러 밑으로 넣어 잘라 쓰는 일이 잦다).
+   *    코어는 XY 만 검사하고 단면은 0.5·lh 부터라 플레이트 아래 부분은 잘린 채 정상 job.zip 이 나온다.
+   * 판정은 순수 함수 isTask0HardViolation (utils/build-volume.ts, 검증 스크립트와 공유).
    * (confirmIfOutOfBounds 는 그대로 — Task0 두 핸들러는 그것을 부르지 않는다.)
-   * @returns 막았으면 true.
+   * @returns 막았으면 true (하드 위반, 또는 파묻힘 확인에서 취소).
    */
   const alertIfOutOfTask0Area = useCallback((): boolean => {
     if (!volumeIssues || volumeIssues.length === 0) return false;
-    const names = volumeIssues
+    const hard = volumeIssues.filter((it) => isTask0HardViolation(it.violation));
+    if (hard.length > 0) {
+      const names = hard
+        .slice(0, 3)
+        .map((it) => `· ${it.fileName} — ${it.message}`)
+        .join(NL);
+      const more = hard.length > 3 ? `${NL}· 외 ${hard.length - 3}개` : "";
+      window.alert(
+        `⚠️ Task0 출력 가능 영역을 벗어난 항목(모델·서포트)이 ${hard.length}건 있어 내보낼 수 없습니다.${NL}` +
+          `영역 안으로 옮긴 뒤 다시 내보내세요(투사 밖은 노광되지 않고, 노즐 범위 밖 이동은 Task0 가 거부합니다).${NL}${NL}` +
+          `${names}${more}`,
+      );
+      return true;
+    }
+    // 파묻힘만: 확인 후 허용 (Z3-b). 하드가 없는 위반은 belowPlate 뿐이라 sinkDepthMm > 0 — 비면(이론상 없음) 통과.
+    const sunk = volumeIssues.filter((it) => it.sinkDepthMm > 0);
+    if (sunk.length === 0) return false;
+    const names = sunk
       .slice(0, 3)
-      .map((it) => `· ${it.fileName} — ${it.message}`)
+      .map((it) => `· ${it.fileName} — 플레이트 아래 ${it.sinkDepthMm.toFixed(2)} mm`)
       .join(NL);
-    const more =
-      volumeIssues.length > 3 ? `${NL}· 외 ${volumeIssues.length - 3}개` : "";
-    window.alert(
-      `⚠️ Task0 출력 가능 영역을 벗어난 항목(모델·서포트)이 ${volumeIssues.length}건 있어 내보낼 수 없습니다.${NL}` +
-        `영역 안으로 옮긴 뒤 다시 내보내세요(투사 밖은 노광되지 않고, 노즐 범위 밖 이동은 Task0 가 거부합니다).${NL}${NL}` +
-        `${names}${more}`,
+    const more = sunk.length > 3 ? `${NL}· 외 ${sunk.length - 3}개` : "";
+    const ok = window.confirm(
+      `⚠️ 플레이트 아래로 파고든 모델이 ${sunk.length}개 있습니다.${NL}` +
+        `이대로 내보내면 플레이트 아래 부분은 잘린 채 출력됩니다(바닥을 일부러 잘라 쓰는 경우라면 그대로 진행).${NL}` +
+        `올리려면 편집 화면 경고의 "플레이트 위로 올리기"를 누르세요.${NL}${NL}${names}${more}${NL}${NL}계속 내보낼까요?`,
     );
-    return true;
+    return !ok;
   }, [volumeIssues]);
 
   // ----- Task0 job.zip 내보내기 (Z3) — Task0 프로파일의 주 내보내기 -----
