@@ -139,6 +139,31 @@ PR 의 "조우현 확인 포인트"는 이 목록에서 해당 항목을 골라 
 
 1. 고치기 전에 **Task0 사본**(`Documents\Task0\docs\제안_Task0협의_20260929.md`)을 먼저 읽는다 — 그쪽이 최신일 수 있다.
 2. 새 섹션은 **끝에 덧붙이기만** 한다(번호는 마지막 + 1). 기존 섹션 수정·덮어쓰기 금지.
-3. 다 쓴 뒤 양쪽 사본이 같도록 복사한다.
+3. 다 쓴 뒤 양쪽 사본이 같도록 복사한다(Task0 세션도 자기 섹션을 우리 사본에 직접 복사해 둔다).
 4. 규격 변경은 Task0 규격서(`Task0_Gcode_규격서_초안.md`)에서 하고, 협의 문서는 왕복 기록으로만 쓴다.
 5. 리드가 Task0 세션에 직접 준 지시는 이쪽 문서에 안 보일 수 있다 — Task0 의 `docs/결정기록.md`·작업일지로 확인.
+
+## 8. 운영 주의 — 실제로 겪은 것 (2026-10-08, 인수인계_20261007 §5 에서 옮김)
+
+인수인계 문서는 세션마다 보관 폴더로 가므로, 계속 유효한 함정은 여기에 모은다. 새로 겪으면 여기에 덧붙인다.
+
+- **Bash 도구에서 heredoc 안 `\\` 가 `\` 로 줄어든다** → Windows 경로가 `\202` 8진 이스케이프로 깨진 적 2회, JS 문자열의 `\n` 이 실제 줄바꿈으로 들어간 적 1회.
+  역슬래시가 든 편집은 Write/Edit 도구 또는 Write 로 만든 스크립트 파일로 하고, 끝에 제어문자(`[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]`) 검사.
+  node_modules 정션도 Bash `mklink` 대신 PowerShell `New-Item -ItemType Junction`.
+- **`git stash` 금지(병렬 worktree)** — stash 스택은 모든 worktree 공용. "수정 전" 대조는 `git show <기준>:<경로>` 로 뽑아 `frontend/scripts/` 안 임시 폴더 복사본에서
+  (끝나면 삭제 — OS 임시 폴더나 node_modules 아래 복사본은 tsx 가 `@babylonjs/core` 를 다른 모듈 인스턴스로 읽어 `instanceof` 가 틀어짐). 리드의 옛 `stash@{0}` 은 건드리지 말 것.
+- **PR 끼리의 충돌은 `git merge-tree --write-tree A B` 로 미리 시험**하고, 시험 병합 커밋(`git commit-tree`)으로 임시 worktree 를 만들어 tsc·검증·build 까지 돌린다.
+- **병렬 개발**: 서로 다른 파일 영역이면 worktree 여러 개로 coder 를 동시에 돌려도 된다. 같은 파일을 고치면 나중 PR 을 앞 PR 위로 rebase 하고 규약(예: `settleTx`)에 맞춘다.
+- **쌓인 PR 은 GitHub "Create a merge commit" 으로 머지**(squash·rebase 금지 — 다음 PR 에 앞 PR 커밋이 다시 섞여 충돌).
+  리드가 머지를 AI 에 **위임**하면(10/7 — 위임 범위는 그때 지정한 PR 만): `gh pr merge N --merge --delete-branch --match-head-commit <검사한 head>` 로
+  검사한 커밋만 넣고, PR 마다 mergeable 재계산을 기다리며, 끝나면 메인라인에서 tsc·lint·검증 전부·build 를 다시 돌린다.
+- **쌓인 PR 과 문서 PR 이 같은 줄을 고치면 충돌** → 기능 PR 은 다른 열린 PR 이 고치는 문서 줄(로드맵 체크·CLAUDE.md 검증 개수)을 건드리지 않고, 머지 뒤 한 번에 정리한다.
+- **worktree 정리**: `frontend/node_modules` 정션을 먼저 `cmd /c rmdir <정션>`(PowerShell)으로 지운 뒤 `git worktree remove`. 셸 작업 디렉터리가 worktree 안이면 지우기가 막힌다.
+- **Task0 파서 이식을 고치면** `verify-task0-parser` 가 SKIP 이 아니라 "불일치 0건"인지 확인(Python·Task0 리포 있는 PC). worktree 에서는 Task0 리포 기본 경로를 못 찾아 SKIP —
+  `TASK0_DIR=C:/Users/JoWooHyun/Documents/Task0` 를 주고 돌린다.
+- `verify-task0-dual-preview` 는 줄바꿈에 민감 — `git archive` 로 뽑은 CRLF 사본에서는 거짓 FAIL(일반 체크아웃은 `.gitattributes` eol=lf 라 괜찮음).
+- **reviewer 의 FAIL 은 대개 진짜다** — 예: #131 에서 숫자 칸을 클릭했다 빠져나오기만 해도 표시 반올림 값이 적용돼 재설계 서포트가 지워지는 결함을 검수가 잡았다.
+  숫자 입력 칸을 새로 만들 때 "보인 값 그대로면 무변경" 가드를 기본으로.
+- **coder 는 세션 시작 때의 CLAUDE.md 를 본다** — 옛 수치를 사실 오류로 보고하면 실제 파일을 확인할 것.
+- 문서를 옮길 때는 코드 주석·검증 스크립트가 인용하는 문서를 제자리에 둔다(`docs/README.md` "옮기면 안 되는 문서").
+- 리드에게 하는 답변·요약·보고는 **한국어로**.
