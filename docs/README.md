@@ -31,7 +31,7 @@
 | | `판정_CHITUBOX분석_20260821.md` + 원문 `supp94_v2.md`·`view94.md` | CHITUBOX 분석 문서 채택·기각 판정 |
 | 프로파일 | `검수_20260915.md` | 프린터 프로파일 검수(§3 = 프로파일 정비 지도) |
 
-리포 루트: `README.md`(소개) · `SETUP.md`(설치) · `DESIGN.md`(v2 기획·설계) · `CLAUDE.md` · `MazicAlign_작업일지_20260629.txt`(날짜별 작업일지 — `/worklog`)
+리포 루트: `README.md`(소개) · `SETUP.md`(설치) · `DESIGN.md`(v2 기획·설계) · `CLAUDE.md` · `MazicAlign_작업일지_YYYYMM.txt`(월별 작업일지 — `/worklog`. [2] 현재 상태·[3] 계획은 최신 달 파일에만)
 
 ## 옮기면 안 되는 문서
 코드 주석·검증 스크립트·AI 지침(`.claude/`) 중 하나 이상이 경로로 인용한다(2026-10-08 전수 조사 — 19건). 옮기려면 인용하는 쪽도 같이 고칠 것.
