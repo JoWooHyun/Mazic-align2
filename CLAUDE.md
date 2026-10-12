@@ -34,16 +34,16 @@ AI 체제: 2026-09-23~ Opus 5.5 시험(계획·구현·검수 전부).
 ```
 start-dev.bat 더블클릭            # 설치+기동+브라우저 자동 (팀 표준)
 cd frontend && npm run dev        # 수동 (→ http://localhost:5173/v2)
-cd frontend && npm run lint       # ESLint (기존 34건은 알려진 이슈, 새 코드만 clean)
+cd frontend && npm run lint       # ESLint (기존 26건은 알려진 이슈 — 전부 동결된 v1·공용, v2 는 0건 유지)
 cd frontend && npx tsc --noEmit   # 타입 검사 — 0건 유지 (2026-10-02 정리)
 cd frontend && npm run build      # vite build
 ```
 
 ```
-cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-08 기준 38종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-12 기준 38종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
 ```
 
-- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/8 기준 38종)가 상시 PASS여야 한다
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/12 기준 38종)가 상시 PASS여야 한다
   (**Node 20.6 이상** — `verify-head-normal.mjs` 가 `node:module` register 로더 훅을 쓴다)
   (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
   확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
@@ -88,7 +88,7 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 ## 알려진 이슈 (수정 대상 아님 — 별도 정리에서만)
 
 - tsc **0건** (2026-10-02 정리 — 12건이 전부 v2 타입 표기 문제였고 타입만 고쳐 build 산출물 바이트 동일). **이제 새 tsc 에러는 1건도 허용 안 됨**
-- lint 34건: exhaustive-deps·no-explicit-any 등 (2026-09-15 재집계, 10-02 재실측 동일 — 24 errors, 10 warnings. v1 25 + v2 8 + 공용 1)
+- lint **26건**: exhaustive-deps·no-explicit-any 등 (2026-10-12 PR #136 에서 v2 8건 → 0 — 17 errors, 9 warnings. 전부 동결된 v1 25 + 공용 타입 선언 1). **v2 는 0건 — 새 경고 1건도 허용 안 됨**
 - 이 때문에 작업을 중단하지 말 것. 단 **새 코드에서 추가 금지.**
 
 ## 함정 (반복 사고 방지)
