@@ -23,6 +23,7 @@ import { createSliceFillMaterial } from "../../../utils/slice-render";
 import { addBuildPlateAndGrid } from "../../../utils/scene-setup";
 import { task0SlotColorRgb } from "../../../utils/task0/task0-material";
 import { applyZoomLimits, resetCameraOnPlate } from "../../../utils/camera-views";
+import type { PrintableAreaMm } from "../../../utils/build-volume";
 import type { SceneCtx } from "../scene-refs";
 import { setupGizmos } from "./setup-gizmos";
 import { setupPointerHandlers } from "./setup-pointer-handlers";
@@ -32,7 +33,16 @@ export function useSceneBootstrap(
   ctx: SceneCtx,
   plateWidthMm: number,
   plateDepthMm: number,
+  // 데모 수정 1차 ② — Task0 출력 가능 영역(world X/Z, 비대칭). 있으면 플레이트를 이 사각형에 그린다.
+  //   null 이면 종전(원점 중심 plateWidthMm × plateDepthMm).
+  printableAreaMm: PrintableAreaMm | null,
 ): void {
+  // 값으로 비교 — 호출부가 매 렌더 새 객체를 넘기므로 객체를 deps 에 넣으면 플레이트가 매번 재생성된다.
+  const areaMinX = printableAreaMm?.minX;
+  const areaMaxX = printableAreaMm?.maxX;
+  const areaMinZ = printableAreaMm?.minZ;
+  const areaMaxZ = printableAreaMm?.maxZ;
+
   // 1) 씬 부트스트랩
   useEffect(() => {
     const canvas = ctx.canvasRef.current;
@@ -278,23 +288,43 @@ export function useSceneBootstrap(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 1.5) plate 크기 변경 시 furniture 재생성 + 카메라 reset.
+  // 1.5) plate 크기(또는 Task0 출력 가능 영역) 변경 시 furniture 재생성 + 카메라 reset.
+  //   데모 수정 1차 ②: 영역이 있으면 플레이트·격자·외곽선·앞쪽 탭을 그 사각형에 그린다(주황 테두리는 삭제).
+  //   그리는 위치만 바뀐다 — world 원점·모델 좌표·world↔베드 변환은 그대로.
   useEffect(() => {
     const scene = ctx.sceneRef.current;
     const camera = ctx.cameraRef.current;
     if (!scene || !camera) return;
 
+    const area =
+      areaMinX !== undefined &&
+      areaMaxX !== undefined &&
+      areaMinZ !== undefined &&
+      areaMaxZ !== undefined
+        ? { minX: areaMinX, maxX: areaMaxX, minZ: areaMinZ, maxZ: areaMaxZ }
+        : undefined;
+
     ctx.furnitureRef.current?.dispose();
     ctx.furnitureRef.current = addBuildPlateAndGrid(scene, {
       widthMm: plateWidthMm,
       depthMm: plateDepthMm,
+      area,
     });
 
     // 모델이 없을 때만 plate 기준으로 camera reset (모델이 있으면
-    // 사용자 시점 유지).
+    // 사용자 시점 유지). 영역이 있으면 그 사각형 중심·크기 기준.
     if (ctx.meshMapRef.current.size === 0) {
-      resetCameraOnPlate(camera, plateWidthMm, plateDepthMm);
+      if (area) {
+        resetCameraOnPlate(
+          camera,
+          area.maxX - area.minX,
+          area.maxZ - area.minZ,
+          [(area.minX + area.maxX) / 2, (area.minZ + area.maxZ) / 2],
+        );
+      } else {
+        resetCameraOnPlate(camera, plateWidthMm, plateDepthMm);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plateWidthMm, plateDepthMm]);
+  }, [plateWidthMm, plateDepthMm, areaMinX, areaMaxX, areaMinZ, areaMaxZ]);
 }

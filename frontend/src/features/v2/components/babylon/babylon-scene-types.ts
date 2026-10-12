@@ -67,7 +67,8 @@ export interface BabylonSceneProps {
   plateHeightMm?: number;
   /**
    * Task0 출력 가능 영역 (world X/Z mm, 비대칭 — Z2). Task0 프로파일일 때만 준다
-   *   (utils/task0/task0-profile.ts task0PrintableAreaForProfile). 주면 ① 플레이트 위에 영역 테두리를 그리고
+   *   (utils/task0/task0-profile.ts task0PrintableAreaForProfile). 주면 ① 플레이트(평면·격자·외곽선·앞쪽 탭)를
+   *   이 사각형에 그리고(데모 수정 1차 ② — 종전 주황 테두리는 삭제, 그리는 위치만 바뀌고 world 원점은 그대로)
    *   ② 출력영역 검사를 대칭 플레이트 대신 이 영역으로, 모델과 서포트를 함께 한다.
    *   null/미지정이면 기존 동작 그대로.
    */
@@ -471,8 +472,11 @@ export interface BabylonSceneHandle {
    *   ⚠️ triangles 는 transferable 로 워커에 넘어가므로 호출 뒤 재사용 금지.
    *   worldMatrix 는 삼각형을 뽑은 시점의 활성 STL world 행렬 사본 — stlId 와 함께
    *   생성의 대상 모델로 고정해 `routeAndFinalizeRedesignPoints` 에 넘긴다(신규 9).
+   *   데모 수정 1차 ③: stlId 를 주면 그 모델(씬에 없으면 ok:false), 없으면 활성 STL(종전).
    */
-  prepareRedesignDetectInput: () =>
+  prepareRedesignDetectInput: (
+    stlId?: string,
+  ) =>
     | { ok: true; triangles: Float32Array; stlId: string; worldMatrix: number[] }
     | { ok: false; reason: string };
   /** 워커가 돌려준 서포트 점을 뷰어에 표시한다 (S-2). */

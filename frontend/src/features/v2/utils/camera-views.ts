@@ -76,14 +76,19 @@ export function applyViewPreset(
 /**
  * 빈 씬 (모델이 없을 때) 의 표준 카메라 위치.
  * 빌드플레이트 중심을 보고 거리는 plate diag * 1.3.
+ *
+ * center: 플레이트 중심 world [x, z] (mm). 기본 원점. 데모 수정 1차 ② — Task0 는 플레이트를
+ *   출력 가능 영역(비대칭)에 그리므로 그 중심을 넘긴다.
  */
 export function resetCameraOnPlate(
   camera: ArcRotateCamera,
   plateWidthMm: number,
   plateDepthMm: number,
+  center?: readonly [number, number],
 ): void {
   const diag = Math.hypot(plateWidthMm, plateDepthMm);
-  camera.target.copyFrom(Vector3.Zero());
+  if (center) camera.target.copyFromFloats(center[0], 0, center[1]);
+  else camera.target.copyFrom(Vector3.Zero());
   camera.radius = diag * 1.3;
   applyZoomLimits(camera);
   applyViewPreset(camera, "iso");

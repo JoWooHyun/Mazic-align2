@@ -102,13 +102,15 @@ export async function loadStlIntoScene(
   mesh.rotation.x = -Math.PI / 2;
   mesh.bakeCurrentTransformIntoVertices();
 
-  // 1.5) auto-orient: 이미 Y-up 으로 export 된 STL 은 위 회전으로
-  //      옆으로 누운 상태가 된다. AABB 분석으로 가장 긴 축이 Y 가
-  //      아니면 추가 회전. 1.5× 임계로 대칭 모델 (cube 등) 보호.
-  autoOrientUpright(mesh);
+  // 데모 수정 1차 ① — 가로 > 높이×1.5 모델을 세우던 자동 회전 제거(리드 10/12).
+  //   치과 풀아치가 전부 걸려 세워졌고(726층·얇은 고리 단면·옆면 서포트), STL 표준은
+  //   Z-up 이라 보정 근거가 없다. 방향이 틀린 파일은 '바닥면 붙이기'로 고친다.
+  //   ⚠️ 실측(verify-demo-fix1 STL_UP_NOTE): Babylon STL 로더가 기본 설정에서 이미 Y/Z 를 바꿔 넣으므로
+  //   (DO_NOT_ALTER_FILE_COORDINATES=false — STL Z → Babylon Y) 위 1) 회전과 합치면 **STL 의 Y 축이 위**가 된다.
+  //   1) 을 고칠지는 리드 결정 대상(이미 불러 둔 모델·프로젝트 자세가 전부 바뀐다) — 이 수정은 1) 을 건드리지 않는다.
 
   // 1.7) bakeCurrentTransformIntoVertices 는 vertex position 만 회전
-  //      적용하고 normal 은 그대로 둔다. 위 두 회전 후 normal 이
+  //      적용하고 normal 은 그대로 둔다. 위 회전 후 normal 이
   //      옛 좌표 기준이라 Bridge / 단점 픽의 normal 이 잘못된 방향으로
   //      향함 → contact push 가 외부로 → Bridge 가 모델 밖으로 튀어
   //      나가는 증상. 모든 회전 baked 직후 normal 재계산.
@@ -158,35 +160,6 @@ function mergeStlSolids(meshes: Mesh[]): Mesh {
     throw new Error("다중 솔리드 STL 을 하나로 합치지 못했습니다.");
   }
   return merged;
-}
-
-/**
- * AABB 분석으로 가장 긴 축이 Y 가 되게 추가 회전.
- *
- * Z-up 가정의 X 축 -90° 회전 후, 이미 Y-up 으로 export 된 STL 은
- * 옆으로 누워있다 (cylinder.STL 등). 가장 긴 축 (= 출력 방향 추정)
- * 이 Y 가 아니면 그 축을 Y 로 돌린다.
- *
- * 임계 RATIO = 1.5 — 가장 긴 축이 Y 보다 1.5× 이상 길어야 회전.
- * cube / 거의 등방인 모델은 그대로 둠 (사용자 의도 보호).
- */
-function autoOrientUpright(mesh: Mesh): void {
-  mesh.refreshBoundingInfo();
-  const bb = mesh.getBoundingInfo().boundingBox;
-  const dx = bb.maximum.x - bb.minimum.x;
-  const dy = bb.maximum.y - bb.minimum.y;
-  const dz = bb.maximum.z - bb.minimum.z;
-  const RATIO = 1.5;
-
-  if (dx > dy * RATIO && dx >= dz) {
-    // X 가 가장 길다 → Z 축 -90° 회전 → X 가 Y 가 됨.
-    mesh.rotation.z = -Math.PI / 2;
-    mesh.bakeCurrentTransformIntoVertices();
-  } else if (dz > dy * RATIO && dz > dx) {
-    // Z 가 가장 길다 → X 축 +90° 회전 → Z 가 Y 가 됨.
-    mesh.rotation.x = Math.PI / 2;
-    mesh.bakeCurrentTransformIntoVertices();
-  }
 }
 
 /**

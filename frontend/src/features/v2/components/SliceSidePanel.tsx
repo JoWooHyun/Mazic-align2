@@ -169,9 +169,10 @@ const SliceSidePanel: React.FC<Props> = ({
             슬라이스 미리보기
           </h2>
           <p className="text-xs text-gray-500 mt-0.5">
+            {/* 데모 수정 1차 ⑤ — 해상도·비트 깊이 표기 삭제(리드 10/12 "쓸모없는 정보") */}
             {hideMaskPreview
               ? "출력 추정 · 레이어 · 내보내기"
-              : "LCD 1bpp 마스크 (흰 = 모델 영역)"}
+              : "단면 마스크 (흰 = 노광 영역)"}
           </p>
         </div>
         <button

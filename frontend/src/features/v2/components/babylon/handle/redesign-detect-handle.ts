@@ -32,8 +32,9 @@ export function buildRedesignDetectHandle(ctx: SceneCtx): RedesignDetectHandle {
       return routeAndFinalizePoints(ctx, points, params, target);
     },
     // S-2 워커 경로 — 씬 접근(삼각형 추출)과 시각화만 담당.
-    prepareRedesignDetectInput() {
-      return prepareRedesignDetectInput(ctx);
+    //   데모 수정 1차 ③: stlId 를 주면 그 모델, 없으면 활성 STL(종전).
+    prepareRedesignDetectInput(stlId) {
+      return prepareRedesignDetectInput(ctx, stlId);
     },
     renderRedesignPoints(points) {
       renderRedesignPoints(ctx, points);

@@ -95,15 +95,27 @@ export function disposeRedesignVisualization(ctx: SceneCtx): void {
  * 여기가 생성의 **시작 시점**이다. 활성 STL 의 id 와 world 행렬을 함께 돌려주면
  * 호출 측이 그것을 들고 있다가 확정(`routeAndFinalizePoints`)에 넘긴다 — 생성 중
  * 선택이 바뀌어도 결과는 이 모델 기준이다(redesign-target.ts).
+ *
+ * ## 대상 모델 지정 (데모 수정 1차 ③)
+ * `stlId` 를 주면 그 모델(여러 모델 선택 → 하나씩 차례로 생성), 없으면 종전대로 활성 STL
+ * (`getActiveStl` — 선택 첫 번째, 없으면 씬 첫 번째).
  */
 export function prepareRedesignDetectInput(
   ctx: SceneCtx,
+  stlId?: string,
 ):
   | { ok: true; triangles: Float32Array; stlId: string; worldMatrix: number[] }
   | { ok: false; reason: string } {
   const scene = ctx.sceneRef.current;
   if (!scene) return { ok: false, reason: "씬이 준비되지 않았습니다." };
-  const active = getActiveStl(ctx);
+  let active: ReturnType<typeof getActiveStl>;
+  if (stlId !== undefined) {
+    const mesh = ctx.meshMapRef.current.get(stlId);
+    if (!mesh) return { ok: false, reason: "선택한 모델이 씬에 없습니다." };
+    active = { id: stlId, mesh };
+  } else {
+    active = getActiveStl(ctx);
+  }
   if (!active) return { ok: false, reason: "대상 STL이 없습니다." };
   active.mesh.computeWorldMatrix(true);
   const triangles = extractWorldTriangles(active.mesh);

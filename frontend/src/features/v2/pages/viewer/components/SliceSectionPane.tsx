@@ -77,11 +77,12 @@ export default function SliceSectionPane({
           <span className="flex items-center gap-1">
             <LegendSwatch slot="B" /> 보라 = 재료 B(T1)
           </span>
-          <span>· 겹친 곳은 B · {widthPx}×{heightPx}px</span>
+          {/* 데모 수정 1차 ⑤ — 캡션의 해상도(가로×세로 px) 표기 삭제(리드 10/12). 래스터 상한 512 는 그대로. */}
+          <span>· 겹친 곳은 B</span>
         </p>
       ) : (
         <p className="mt-3 text-xs text-gray-400 select-none">
-          LCD 1bpp 마스크 (흰 = 모델 영역) · {widthPx}×{heightPx}px
+          단면 마스크 (흰 = 노광 영역)
         </p>
       )}
     </section>
