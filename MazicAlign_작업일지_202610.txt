@@ -127,19 +127,47 @@
            B->A 잠정 허용, T 전환 6 s, 스침 금지 d. 우리 사본은 Task0 가 복사해 둔 것이 #134 커밋에 같이 들어감.
            우리 할 일은 인수인계_20261012 §5(코드 반영 + §33 발송) - #137
 
+  2026-10-12 (오후) | 머지 뒤 정리 (PR #138) + 사고 방지 3차 (PR #139)
+  --------------------------------------------------------------------------
+    [완료] 리드가 #135·#136·#137 머지 -> 메인라인 a10e850. 머지된 브랜치 3개(feat/v2-task0-sink-allow·
+           chore/v2-lint-zero-20261012·docs/task0-s32-20261012) 원격·로컬 삭제. worktree 없음 확인
+    [신규] #138 머지 뒤 정리(문서만) - CLAUDE.md lint 알려진 이슈 34 -> 26건(10/12 재실측 17 errors·9 warnings, v2 0),
+           검증 38종 날짜, 로드맵 완료 요약에 10/12 머지 4건·품질 기준선 a10e850, 사고 방지 3차 "#135 머지 뒤" 조건 해제,
+           R-2 (a) 완료/(b) 보류 분리, 인수인계 §1(열린 PR 없음)·§3-1 완료·§4-2 #5 완료
+    [신규] #139 사고 방지 3차(dev-cycle: 계획 Fable -> coder -> reviewer) - 10/12 전반 검수 18건 중 작은 것 8건 + R-2(b)
+           ① Delete 키·우클릭·툴바 모델 삭제 전 confirm(공용 헬퍼 confirm-delete-models, 목록 x 와 문구 통일. 서포트 삭제는 종전)
+           ② C11 useSliceExport 언마운트 시 sliceBatchService.cancel()
+           ③ 모델 있는데 씬 높이 0 이면 미리보기 진입 대신 알림 + BabylonScene onMeshesLoaded -> meshLoadTick 으로 층수 재계산
+           ④ 자동 생성 awaitPaint(rAF->setTimeout 0) 뒤 동기 생성 -> "생성 중…" 선표시(runWithBusy 는 run-with-busy.ts 로 이동)
+           ⑤ C5 손상 STL -> onStlLoadError -> 알림 1회 + 목록 "⚠ 손상"(scene-refs 미러 ref 1개 추가, 훅 순서 불변)
+           ⑥ C4 작은 쪽 useStlFilesV2.addMany(stl-add-many) - 드롭 N개에 refresh 1회, 실패는 알림 하나
+           ⑦ useTransformCommit Promise.all 3곳 -> settleAll(allSettled), ViewerV2Page transformPanelSelected useMemo(드래그 되튐),
+             handlePick useCallback(R-2(b)) - 훅 전부 early return 위
+           ⑧ useProjectV2.update 낙관 반영(재료 이름 blur 커밋과 같은 제스처로 job.zip 눌러도 새 이름이 manifest 에)
+           검증 39종째 verify-safety3(기능 4 + 배선 소스 검사, 대조군 31건) + verify-task0-dual-preview 드롭 배선 정규식 갱신.
+           산출물 생성 코드(utils/slice-*·task0·gcode·workers) 무변경 -> 바이트 동일. 로드맵 3주차 [x]·R-2 [x]·4주차 레이스 줄 처리
+    [검수] reviewer FAIL 1건 - verify-safety3 의 "변조 대상 없음" 분기가 assertControl 에 가짜 실패를 넘겨 공허한 PASS
+           -> 플래너가 직접 FAIL 로 수정, 변조 대상을 없는 문자열로 바꾼 사본 2종이 exit 1 임을 재현 -> PASS.
+           coder 가 계획과 달리 한 2건(⑤ 알림 파일당 1회 장치, ⑥ 기존 검증 정규식 갱신) 승인. 커밋 1개로 정리(공저자 Fable 5.1)
+    [주의] #139 는 #138 브랜치 위에 쌓여 있음(로드맵·인수인계 같은 줄 충돌 회피) -> 머지 순서 #138 먼저
+    [다음] §33 발송(정렬 잡 질문·넘침 문턱값·2재료 보고, 코드 무관) -> §32 코드 반영(Task0 고정 sha 전부 바뀜, 별도 PR) -> C9.
+           사고 방지 4차 후보: Ctrl+X 잘라내기 confirm, 손상 STL 재파싱 반복, ③ 문구를 전부 손상일 때 갈라 주기
+
+
 
 ================================================================================
 
 
-[2] 현재 상태 (2026-10-08 기준)
+[2] 현재 상태 (2026-10-12 오후 기준)
 ================================================================================
 
   ※ 시작점: docs/인수인계_20261012.md / 진행 상태: docs/통합로드맵.md(현행판) / 문서 지도: docs/README.md
 
   ── 커밋 상태 ──
-    - 기준 브랜치 integrate/v2-mainline @ a02d43a (#133 문서 재편 머지, 10/8)
-    - 열린 PR: #134(작업일지·문서)·#135(Z3-b)·#136(lint 0) / 의도적 보류 #29(AI 자동 검수 CI)·#101(기둥 연결 2/2)
-    - 품질 기준선: tsc 0 / lint 34(#136 후 26) / 검증 37종(#135 후 38) 상시 PASS / build 성공
+    - 기준 브랜치 integrate/v2-mainline @ a10e850 (#137 머지, 10/12 — #134~#137 전부 머지, 브랜치 삭제 완료)
+    - 열린 PR: #138(머지 뒤 정리, 문서만) -> #139(사고 방지 3차, #138 위에 쌓임 — #138 먼저 머지) /
+      의도적 보류 #29(AI 자동 검수 CI)·#101(기둥 연결 2/2)
+    - 품질 기준선: tsc 0 / lint 26(v1 25 + 공용 1, v2 0) / 검증 38종(#139 후 39) 상시 PASS / build 성공
     - 체제: 2026-09-23~ Opus 5.5 시험(전 역할), 11월 초 외부 데모(드라이런 중심, 단일·2재료)
 
   ── 출력물 ──
