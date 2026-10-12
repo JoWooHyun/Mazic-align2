@@ -17,6 +17,7 @@ import {
   toDisplayAxes,
 } from "../../../types/axis-display";
 import SupportEditToolbar from "./SupportEditToolbar";
+import type { PendingBridge } from "../hooks/useSupportEditing";
 
 interface ViewportOverlaysProps {
   files: STLFileV2[];
@@ -27,7 +28,7 @@ interface ViewportOverlaysProps {
   /** 슬라이스 미리보기 ON — 편집 잠금 상태. */
   slicePreviewOn: boolean;
   bridgeMode: boolean;
-  pendingBridge: unknown | null;
+  pendingBridge: PendingBridge | null;
   selectedSupportId: string | null;
   supports: SupportPointV2[];
   onSetView: (p: ViewPreset) => void;

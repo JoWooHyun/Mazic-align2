@@ -6,6 +6,17 @@
 import * as ClipperLib from 'js-clipper';
 import { Point } from './types';
 
+/**
+ * js-clipper 정수 좌표점(IntPoint) — 이 파일이 읽고 쓰는 X·Y 만 최소 선언.
+ * 모듈 자체는 src/types/js-clipper.d.ts 에서 느슨한 타입이므로 경계에서만 좁힌다(타입 표기 전용, 런타임 무관).
+ */
+interface ClipperIntPoint {
+    X: number;
+    Y: number;
+}
+/** js-clipper Path = IntPoint 배열 (Paths = Path 배열). */
+type ClipperPath = ClipperIntPoint[];
+
 export class PolygonClipper {
     private static readonly SCALE = 10000; // Clipper uses integers
 
@@ -69,17 +80,17 @@ export class PolygonClipper {
         return this.fromClipperPaths(solution);
     }
 
-    private static toClipperPaths(polygons: Point[][]): any[] {
+    private static toClipperPaths(polygons: Point[][]): ClipperPath[] {
         const scale = this.SCALE;
         return polygons.map(poly =>
             poly.map(p => ({ X: Math.round(p.x * scale), Y: Math.round(p.y * scale) }))
         );
     }
 
-    private static fromClipperPaths(paths: any[]): Point[][] {
+    private static fromClipperPaths(paths: ClipperPath[]): Point[][] {
         const scale = this.SCALE;
         return paths.map(path =>
-            path.map((p: any) => ({ x: p.X / scale, y: p.Y / scale }))
+            path.map((p: ClipperIntPoint) => ({ x: p.X / scale, y: p.Y / scale }))
         );
     }
 }

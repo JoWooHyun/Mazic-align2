@@ -2,10 +2,11 @@
 // (ViewerV2Page 의 editMode==="support" 오버레이 마크업 그대로 추출.)
 
 import type { SupportPointV2 } from "../../../support/types";
+import type { PendingBridge } from "../hooks/useSupportEditing";
 
 interface SupportEditToolbarProps {
   bridgeMode: boolean;
-  pendingBridge: unknown | null;
+  pendingBridge: PendingBridge | null;
   selectedSupportId: string | null;
   supports: SupportPointV2[];
   onToggleBridge: () => void;

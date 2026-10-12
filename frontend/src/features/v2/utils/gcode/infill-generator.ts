@@ -54,7 +54,7 @@ export function generateGlobalInfill(
     let scanIndex = 0;
     for (let y = minY; y <= maxY; y += spacing) {
         const scanY = y + 0.0001;
-        let intersections: number[] = [];
+        const intersections: number[] = [];
 
         for (const poly of rotatedPolys) {
             for (let i = 0; i < poly.length; i++) {
@@ -73,8 +73,8 @@ export function generateGlobalInfill(
         const currentLines: [Point, Point][] = [];
         for (let i = 0; i < intersections.length; i += 2) {
             if (i + 1 < intersections.length) {
-                let x1 = intersections[i];
-                let x2 = intersections[i + 1];
+                const x1 = intersections[i];
+                const x2 = intersections[i + 1];
                 currentLines.push([{ x: x1, y: y }, { x: x2, y: y }]);
             }
         }

@@ -36,7 +36,8 @@ type Vec3 = [number, number, number];
 // 변곡점은 추가·삭제·직선복원으로 길이가 바뀐다 — 튜플 3 이 아님.
 type Cps = Vec3[];
 
-interface PendingBridge {
+// Bridge 모드 첫 번째 클릭 지점. ViewportOverlays·SupportEditToolbar 의 prop 타입으로도 쓴다(R-2).
+export interface PendingBridge {
   stlId: string;
   contact: Vec3;
   normal?: Vec3;
