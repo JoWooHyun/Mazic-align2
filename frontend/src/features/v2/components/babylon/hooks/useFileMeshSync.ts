@@ -144,6 +144,15 @@ export function useFileMeshSync(
           return mesh;
         } catch (e) {
           console.error("[v2] STL 로드 실패", f.fileName, e);
+          // 사고 방지 3차 ⑤ (C5) — 종전엔 위 로그만 남아 사용자는 "왜 모델이 안 보이는지" 몰랐다. 페이지에 알린다.
+          //   취소된 로드(files 가 다시 바뀜)는 다음 실행이 같은 파일을 다시 시도하므로 알리지 않는다.
+          if (!cancelled) {
+            ctx.onStlLoadErrorRef.current?.(
+              f.id,
+              f.fileName,
+              e instanceof Error ? e.message : String(e),
+            );
+          }
           return null;
         }
       }),

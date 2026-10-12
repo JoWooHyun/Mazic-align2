@@ -5,15 +5,22 @@ import { useCallback, useRef, useState } from "react";
 
 import type { SampleModelDef } from "../../../utils/sample-models";
 
-import type { AddStlFile } from "./types";
+import type { AddStlFile, AddStlFiles } from "./types";
+
+/** 알림 줄바꿈. */
+const NL = String.fromCharCode(10);
 
 interface UseStlDropImportArgs {
+  /** 한 파일 저장 — 예제 모델 경로. */
   addStlFile: AddStlFile;
+  /** 여러 파일 저장 + 목록 갱신 1회 — 드롭·파일 열기 경로 (사고 방지 3차 ⑥). */
+  addStlFiles: AddStlFiles;
   setSelectedIds: React.Dispatch<React.SetStateAction<ReadonlySet<string>>>;
 }
 
 export function useStlDropImport({
   addStlFile,
+  addStlFiles,
   setSelectedIds,
 }: UseStlDropImportArgs) {
   // 뷰어 영역 드래그앤드롭 오버레이 표시 여부.
@@ -23,8 +30,10 @@ export function useStlDropImport({
 
   // ----- 파일 추가/삭제 -----
   // 브라우저 네이티브 파일 열기 / 드래그앤드롭 공통 저장 경로.
-  // addStlFile → repo.createStlFile → IndexedDB.
+  // addStlFiles(useStlFilesV2.addMany) → repo.createStlFile → IndexedDB.
   // 여러 파일을 순차 저장하고 새로 추가된 파일 전체를 선택 상태로 만든다.
+  // 사고 방지 3차 ⑥ (C4) — 파일마다 refresh 하면 files 가 N번 바뀌어 앞 파일 로드가 취소·재파싱됐다(useFileMeshSync cancelled).
+  //   이제 전부 저장한 뒤 목록 갱신 한 번, 실패한 파일은 알림 한 번에 모은다.
   const addNativeFiles = useCallback(
     async (fileList: File[]) => {
       const stlFiles = fileList.filter((f) =>
@@ -41,21 +50,29 @@ export function useStlDropImport({
       }
       // 전체가 걸러졌으면 위 알림만 하고 종료 (무음 실패 방지).
       if (stlFiles.length === 0) return;
-      const newIds: string[] = [];
-      for (const file of stlFiles) {
-        try {
-          // File 은 Blob 의 서브타입이라 blob 으로 그대로 전달 가능.
-          const created = await addStlFile(file.name, file);
-          newIds.push(created.id);
-        } catch (err) {
-          // IndexedDB 저장 실패 등 — 어떤 파일이 왜 실패했는지 알린다.
-          const msg = err instanceof Error ? err.message : String(err);
-          window.alert(`파일을 저장하지 못했습니다: ${file.name} — ${msg}`);
-        }
+      let result: Awaited<ReturnType<AddStlFiles>>;
+      try {
+        // File 은 Blob 의 서브타입이라 blob 으로 그대로 전달 가능.
+        result = await addStlFiles(
+          stlFiles.map((f) => ({ fileName: f.name, blob: f })),
+        );
+      } catch (err) {
+        // 파일별 실패는 result.failed 로 온다 — 여기는 저장 자체를 시작하지 못한 경우(프로젝트 없음 등).
+        const msg = err instanceof Error ? err.message : String(err);
+        window.alert(`파일을 저장하지 못했습니다: ${msg}`);
+        return;
       }
-      if (newIds.length > 0) setSelectedIds(new Set(newIds));
+      const { created, failed } = result;
+      if (failed.length > 0) {
+        // IndexedDB 저장 실패 등 — 어떤 파일이 왜 실패했는지 한 번에 알린다.
+        window.alert(
+          `파일을 저장하지 못했습니다:${NL}` +
+            failed.map((it) => `· ${it.fileName} — ${it.message}`).join(NL),
+        );
+      }
+      if (created.length > 0) setSelectedIds(new Set(created.map((c) => c.id)));
     },
-    [addStlFile, setSelectedIds],
+    [addStlFiles, setSelectedIds],
   );
 
   // 예제 모델(정육면체/구)을 코드로 생성해 같은 저장 경로로 넣는다.

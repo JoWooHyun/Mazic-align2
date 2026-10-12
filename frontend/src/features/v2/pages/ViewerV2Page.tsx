@@ -44,6 +44,9 @@ import ViewportOverlays from "./viewer/components/ViewportOverlays";
 import ViewportInfoPanels from "./viewer/components/ViewportInfoPanels";
 import ViewerSidePanel from "./viewer/components/ViewerSidePanel";
 
+/** 알림 줄바꿈 (useSliceExport 와 같은 관례). */
+const NL = String.fromCharCode(10);
+
 /**
  * v2 프로젝트 작업 화면.
  *
@@ -61,6 +64,8 @@ const ViewerV2Page: React.FC = () => {
     files,
     loading: filesLoading,
     add: addStlFile,
+    // 드롭·파일 열기 여러 개를 한 번에 저장 + 목록 갱신 1회 (사고 방지 3차 ⑥).
+    addMany: addStlFiles,
     remove: removeStlFile,
     updateTransform,
     updateMaterialSlot,
@@ -119,6 +124,10 @@ const ViewerV2Page: React.FC = () => {
   //   훅이 빈 배열을 올려보내 저절로 사라진다).
   const [volumeIssues, setVolumeIssues] = useState<BuildVolumeIssue[]>([]);
 
+  // 씬의 STL 로드 완료 신호 (BabylonScene onMeshesLoaded 마다 +1 — 사고 방지 3차 ③).
+  //   미리보기 중에 로드가 끝나면 useSliceExport 가 최상층 높이를 다시 읽는다. useSliceExport 보다 위에 둔다.
+  const [meshLoadTick, setMeshLoadTick] = useState(0);
+
   // 슬라이스 프리뷰 상태 + 내보내기 핸들러.
   const {
     slicePreview,
@@ -142,6 +151,8 @@ const ViewerV2Page: React.FC = () => {
     sceneHandleRef,
     // P-1: 출력영역을 벗어난 모델이 있으면 내보내기 전에 확인을 받는다.
     volumeIssues,
+    // 사고 방지 3차 ③ — 미리보기 중 로드 완료 시 층수 재계산.
+    meshLoadTick,
   });
 
   // Task0 2재료 (D1b) — 재료 모드·파일별 재료 슬롯(repo 경유) + 슬라이스 화면 3D 재료 색.
@@ -281,7 +292,7 @@ const ViewerV2Page: React.FC = () => {
     handleDragOver,
     handleDragLeave,
     handleDrop,
-  } = useStlDropImport({ addStlFile, setSelectedIds });
+  } = useStlDropImport({ addStlFile, addStlFiles, setSelectedIds });
 
   // support 편집 델리게이트에서 자주 쓰는 setter/상태를 지역 별칭으로.
   const {
@@ -300,18 +311,24 @@ const ViewerV2Page: React.FC = () => {
   const { setMarginStatus, setIslandStatus } = dental;
 
   // ----- 선택 -----
-  const handlePick = (id: string | null, opts: { multi: boolean }) => {
-    setSelectedIds((prev) => {
-      if (!id) return opts.multi ? prev : new Set();
-      const next = new Set(prev);
-      if (opts.multi) {
-        if (next.has(id)) next.delete(id);
-        else next.add(id);
-        return next;
-      }
-      return new Set([id]);
-    });
-  };
+  // R-2(b) — handlePick useCallback 복원(로드맵 3절 R-2 "(b) `handlePick` useCallback 복원", 리팩토링_LLM구조 §6
+  //   Task B 권고 "handlePick useCallback 복원(보험)"). 함수형 업데이트만 쓰므로 deps 는 setter 하나.
+  //   이 지점은 아래 early return(!projectId) 위라 훅 순서가 렌더마다 같다.
+  const handlePick = useCallback(
+    (id: string | null, opts: { multi: boolean }) => {
+      setSelectedIds((prev) => {
+        if (!id) return opts.multi ? prev : new Set();
+        const next = new Set(prev);
+        if (opts.multi) {
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        }
+        return new Set([id]);
+      });
+    },
+    [setSelectedIds],
+  );
 
   // delete 단축키는 서포트/STL 삭제가 얽혀 useSupportEditing 의 핸들러로 등록.
   useShortcutHandler("delete", handleDeleteSelectedSupport);
@@ -436,6 +453,65 @@ const ViewerV2Page: React.FC = () => {
     setSelectedSupportId,
   ]);
 
+  // ----- 손상 STL (사고 방지 3차 ⑤ C5) -----
+  //   씬이 메시로 못 올린 STL — id → 사유. 목록에 "⚠ 손상" 으로 보이고, 파일을 지우면 아래 effect 가 뺀다.
+  //   종전엔 console.error 만 남아 사용자는 모델이 왜 안 보이는지 몰랐다.
+  const [loadFailed, setLoadFailed] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
+  // 이미 알린 파일 — files 가 바뀔 때마다 씬이 못 올린 파일을 다시 시도·재실패하므로(useFileMeshSync) 알림은 파일당 한 번.
+  const loadFailAlertedRef = useRef<Set<string>>(new Set());
+  const handleStlLoadError = useCallback(
+    (stlId: string, fileName: string, message: string) => {
+      setLoadFailed((prev) =>
+        prev.get(stlId) === message ? prev : new Map(prev).set(stlId, message),
+      );
+      if (loadFailAlertedRef.current.has(stlId)) return;
+      loadFailAlertedRef.current.add(stlId);
+      window.alert(
+        `"${fileName}" 을(를) 불러오지 못했습니다 — 손상된 STL 일 수 있습니다.${NL}${message}${NL}${NL}` +
+          `왼쪽 목록에서 삭제해 주세요. 이 모델은 슬라이스·내보내기에 포함되지 않습니다.`,
+      );
+    },
+    [],
+  );
+  // files 에서 사라진(삭제된) id 는 표시·알림 기록에서 뺀다. 바뀐 것이 없으면 같은 Map 을 돌려 리렌더를 막는다.
+  useEffect(() => {
+    const ids = new Set(files.map((f) => f.id));
+    for (const id of loadFailAlertedRef.current) {
+      if (!ids.has(id)) loadFailAlertedRef.current.delete(id);
+    }
+    setLoadFailed((prev) => {
+      let next: Map<string, string> | null = null;
+      for (const id of prev.keys()) {
+        if (ids.has(id)) continue;
+        if (!next) next = new Map(prev);
+        next.delete(id);
+      }
+      return next ?? prev;
+    });
+  }, [files]);
+
+  // ----- Transform 패널 선택 (단일 선택만 표시) -----
+  //   사고 방지 3차 ⑦ — 매 렌더 새 객체라 TransformPanel 의 `[selected]` effect 가 렌더마다 돌아 드래그 중 입력값이
+  //   되튀었다(⑦). selectedFile 은 files 배열의 원소 참조라 refresh 전까지 정체성이 고정 — 그것으로 메모한다.
+  //   useMemo 를 쓰므로 아래 early return(!projectId) 위에 둔다.
+  const selectedFile =
+    selectedIds.size === 1
+      ? files.find((f) => selectedIds.has(f.id)) ?? null
+      : null;
+  const transformPanelSelected = useMemo(
+    () =>
+      selectedFile
+        ? {
+            id: selectedFile.id,
+            fileName: selectedFile.fileName,
+            transform: selectedFile.transform ?? IDENTITY_TRANSFORM,
+          }
+        : null,
+    [selectedFile],
+  );
+
   if (!projectId) {
     return <Navigate to="/v2/projects" replace />;
   }
@@ -451,19 +527,6 @@ const ViewerV2Page: React.FC = () => {
       return next;
     });
   }
-
-  // 단일 선택만 Transform 패널에 표시.
-  const selectedFile =
-    selectedIds.size === 1
-      ? files.find((f) => selectedIds.has(f.id)) ?? null
-      : null;
-  const transformPanelSelected = selectedFile
-    ? {
-        id: selectedFile.id,
-        fileName: selectedFile.fileName,
-        transform: selectedFile.transform ?? IDENTITY_TRANSFORM,
-      }
-    : null;
 
   // 수치 패널의 회전·스케일 피벗 = 선택 모델의 현재 bbox 중심 (B-9).
   //   패널이 드래그 시작 시점에 한 번 물어 스냅샷으로 쓴다. 씬/모델이 아직
@@ -501,6 +564,14 @@ const ViewerV2Page: React.FC = () => {
     //   getSceneTopY() 는 동기라 여기서 층수를 바로 구할 수 있다 —
     //   setSceneTopY 의 state 반영을 기다릴 필요가 없다.
     const top = sceneHandleRef.current?.getSceneTopY() ?? 0;
+    // 사고 방지 3차 ③ — 모델은 있는데 씬 높이가 0 이면 아직 로드 중(또는 전부 플레이트 아래)이라 슬라이스할 층이 없다.
+    //   종전엔 그대로 들어가 "총 1 layer" 로 굳었다. 모델 0개(빈 프로젝트)는 종전 그대로 들어간다.
+    if ((filesLoading || files.length > 0) && top <= 0) {
+      window.alert(
+        `모델을 아직 불러오는 중이거나 모델이 전부 플레이트 아래에 있어 슬라이스할 층이 없습니다.${NL}잠시 뒤 다시 눌러 주세요.`,
+      );
+      return;
+    }
     setSceneTopY(top);
     // 미리보기 진입 시 편집 모드를 select 로 강제한다.
     //   support/dental-brush 를 켠 채로 두면 보이지 않는(clipPlane 으로
@@ -607,6 +678,8 @@ const ViewerV2Page: React.FC = () => {
             onRemove={handleRemove}
             loading={filesLoading}
             materialSlot={task0Material.listSlots}
+            // 사고 방지 3차 ⑤ (C5) — 메시로 못 올린 파일에 "⚠ 손상" 표시.
+            loadFailed={loadFailed}
           />
         )}
 
@@ -649,6 +722,9 @@ const ViewerV2Page: React.FC = () => {
             //   매 렌더 새 객체지만 씬 훅이 숫자로 비교하므로 재실행은 값이 바뀔 때만.
             printableAreaMm={task0PrintableAreaForProfile(printerProfile)}
             onBuildVolumeIssues={setVolumeIssues}
+            // 사고 방지 3차 ③ — STL 로드 완료 신호(미리보기 층수 재계산), ⑤ — 로드 실패 알림.
+            onMeshesLoaded={() => setMeshLoadTick((n) => n + 1)}
+            onStlLoadError={handleStlLoadError}
             editMode={editMode}
             onAddSupportAt={support.handleAddSupportAt}
             onPickSupport={setSelectedSupportId}

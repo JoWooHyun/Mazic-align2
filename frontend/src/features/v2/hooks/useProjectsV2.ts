@@ -90,13 +90,28 @@ export function useProjectV2(id: string | undefined) {
 
   /**
    * 프로젝트 필드 갱신 (repo 경유 — 규칙 1) 후 화면 상태를 저장된 레코드로 바꾼다.
-   * 지금 쓰는 곳: Task0 재료 모드(task0MaterialMode — D1b). lastModifiedAt 은 repo 가 갱신한다.
+   * 지금 쓰는 곳: Task0 재료 모드(task0MaterialMode — D1b)·재료 이름(D2). lastModifiedAt 은 repo 가 갱신한다.
+   * 실패하면 화면을 저장된 레코드로 되돌리고 원래 오류를 다시 던진다(부르는 쪽의 알림 유지).
    */
   const update = useCallback(
     async (patch: Partial<Omit<ProjectV2, "id" | "createdAt">>) => {
       if (!id) return;
-      const next = await repo.updateProject(id, patch);
-      setProject(next);
+      // 사고 방지 3차 ⑧ — 저장을 기다리기 전에 화면 상태에 먼저 반영한다. 재료 이름 칸에서 Enter 없이 곧바로
+      //   "job.zip" 을 누르면 blur 커밋(이 함수)과 클릭이 같은 제스처라, 종전엔 클릭 핸들러가 옛 이름을 읽어 manifest 에 썼다.
+      //   React 는 blur 이벤트 끝에 이 상태를 동기로 그려 주므로 클릭 시점에는 새 이름의 핸들러가 걸려 있다.
+      setProject((prev) => (prev ? { ...prev, ...patch } : prev));
+      try {
+        const next = await repo.updateProject(id, patch);
+        setProject(next);
+      } catch (e) {
+        // 실패하면 저장된 레코드로 되돌린다(화면이 저장 안 된 값을 계속 보이지 않게).
+        try {
+          setProject((await repo.getProject(id)) ?? null);
+        } catch {
+          // 되돌리기 실패는 무시 — 원래 오류를 우선 알린다.
+        }
+        throw e;
+      }
     },
     [id],
   );

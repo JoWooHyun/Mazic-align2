@@ -50,6 +50,11 @@ interface UseSliceExportArgs {
    * 정상 생성**할 수 있었다(프루사는 베드 밖이면 슬라이스를 막는다).
    */
   volumeIssues?: BuildVolumeIssue[];
+  /**
+   * 씬의 STL 로드 완료 신호 (BabylonScene onMeshesLoaded 마다 +1 — 사고 방지 3차 ③).
+   *   미리보기 중에 로드가 끝나면 최상층 높이를 다시 읽어 층수를 고친다.
+   */
+  meshLoadTick?: number;
 }
 
 export function useSliceExport({
@@ -59,6 +64,7 @@ export function useSliceExport({
   printerProfile,
   sceneHandleRef,
   volumeIssues,
+  meshLoadTick,
 }: UseSliceExportArgs) {
   const [slicePreview, setSlicePreview] = useState<{
     on: boolean;
@@ -114,6 +120,20 @@ export function useSliceExport({
   //   화면이 빈 채로 남는다(패널은 safeLayerIdx 로 표시만 보정하고 있었다).
   const safeIdx = Math.min(slicePreview.layerIdx, layerCount - 1);
   const sliceYNow = (safeIdx + 0.5) * slicePreview.layerHeightMm;
+
+  // 사고 방지 3차 ② (C11) — 뷰어를 떠나면(뒤로가기 등) 진행 중인 내보내기 워커를 끊는다.
+  //   남겨 두면 나중에 파일이 혼자 떨어진다. cancel 은 CancelError 로 reject 되고 각 핸들러의 catch 가 조용히 넘긴다.
+  //   ⚠️ 이 자리(confirmIfOutOfBounds 앞)에 둔다 — 검증 스크립트들이 handleExportGcode ~ handleExportStl,
+  //   handleExportTask0Gcode ~ return 구간을 잘라 deps 를 검사한다.
+  useEffect(() => () => { sliceBatchService.cancel(); }, []);
+
+  // 사고 방지 3차 ③ — 미리보기 중에 STL 로드가 끝나면(드롭 직후 바로 미리보기를 켠 경우) 최상층 높이를 다시 읽어 층수를 고친다.
+  //   종전에는 진입 시점의 topY(0) 가 굳어 "총 1 layer" 로 남았다.
+  useEffect(() => {
+    if (!slicePreview.on) return;
+    const top = sceneHandleRef.current?.getSceneTopY();
+    if (top != null) setSceneTopY(top);
+  }, [meshLoadTick, slicePreview.on, sceneHandleRef]);
 
   /**
    * 출력영역을 벗어난 모델이 있으면 사용자에게 확인을 받는다 (P-1).

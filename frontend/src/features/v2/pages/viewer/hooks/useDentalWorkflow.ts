@@ -25,28 +25,8 @@ import {
   formatAutoReplaceNotice,
   makeUndoPusher,
 } from "../utils/auto-support-replace";
-
-/**
- * 동기(수십~수백 초) 검출 작업을 busy 라벨이 먼저 페인트된 뒤 시작하도록
- * 감싸는 헬퍼. requestAnimationFrame(다음 프레임 직전) → setTimeout(0)(프레임
- * 커밋 후) 로 라벨 페인트를 보장한 뒤 동기 작업(work)을 실행한다.
- * (handleFindMargin / handleDetectIslands 의 동일 패턴 통합 — 의미 불변.)
- */
-function runWithBusy(
-  setBusy: (v: boolean) => void,
-  work: () => void,
-): void {
-  setBusy(true);
-  requestAnimationFrame(() => {
-    setTimeout(() => {
-      try {
-        work();
-      } finally {
-        setBusy(false);
-      }
-    }, 0);
-  });
-}
+// busy 라벨 선표시 헬퍼 — Support 탭 자동 생성도 같은 보장을 쓰도록 utils 로 옮겼다(사고 방지 3차 ④, 의미 불변).
+import { runWithBusy } from "../utils/run-with-busy";
 
 type MarginStatus = { ok: boolean; message: string } | null;
 type IslandStatus =

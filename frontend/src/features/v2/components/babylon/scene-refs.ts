@@ -173,6 +173,8 @@ export interface SceneCtx {
   selectedRef: MutableRefObject<ReadonlySet<string>>;
   onPickRef: MutableRefObject<BabylonSceneProps["onPick"]>;
   onGizmoCommitRef: MutableRefObject<BabylonSceneProps["onGizmoCommit"]>;
+  /** STL 로드 실패 통지 (사고 방지 3차 ⑤ C5) — useFileMeshSync 로드 catch 가 최신 콜백을 부른다. */
+  onStlLoadErrorRef: MutableRefObject<BabylonSceneProps["onStlLoadError"]>;
 
   // ── dental-brush / 마진 / 아일랜드 상태 ──
   paintPointsRef: MutableRefObject<PaintPoint[]>;
@@ -314,6 +316,9 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
   onPickRef.current = props.onPick;
   const onGizmoCommitRef = useRef(props.onGizmoCommit);
   onGizmoCommitRef.current = props.onGizmoCommit;
+  // STL 로드 실패 콜백 (사고 방지 3차 ⑤ C5) — onPaintedFacesChangeRef 와 같은 미러. 다른 ref 순서는 그대로 두고 끝에 붙였다.
+  const onStlLoadErrorRef = useRef(props.onStlLoadError);
+  onStlLoadErrorRef.current = props.onStlLoadError;
 
   return {
     canvasRef,
@@ -387,5 +392,6 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
     selectedRef,
     onPickRef,
     onGizmoCommitRef,
+    onStlLoadErrorRef,
   };
 }
