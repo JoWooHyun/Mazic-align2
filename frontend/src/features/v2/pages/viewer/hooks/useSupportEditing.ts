@@ -20,6 +20,8 @@ import {
   formatAutoReplaceNotice,
   makeUndoPusher,
 } from "../utils/auto-support-replace";
+import { confirmDeleteModels } from "../utils/confirm-delete-models";
+import { awaitPaint } from "../utils/run-with-busy";
 import { useBridgeControlPoints } from "./useBridgeControlPoints";
 import type {
   AddStlFile,
@@ -126,6 +128,10 @@ export function useSupportEditing({
     if (files.length === 0) return;
     setAutoBusy(true);
     try {
+      // 사고 방지 3차 ④ — 동기 생성(수 초)이 라벨 페인트 전에 돌아 '무반응'으로 보였다.
+      //   "생성 중…" 라벨이 그려진 뒤(rAF → setTimeout 0) 생성한다. 연타 가드(autoBusy)는 위 setAutoBusy(true) 가
+      //   먼저라 그대로 유효하다.
+      await awaitPaint();
       const out = sceneHandleRef.current?.generateAutoSupports(
         projectId,
         supportParams,
@@ -386,8 +392,16 @@ export function useSupportEditing({
       return;
     }
     // Select 모드: 선택된 STL 들 모두 제거.
+    //   사고 방지 3차 ① — 지우기 전에 확인을 받는다(모델 삭제는 되돌릴 수 없고 서포트도 함께 지워진다).
+    //   이 함수가 Delete 키(useShortcuts "delete")·컨텍스트 메뉴 "삭제"·툴바 삭제 버튼의 공통 관문이라 셋 다
+    //   여기서 확인을 거친다. 목록 × 버튼(StlFileList)도 같은 문구 헬퍼. 취소하면 선택을 그대로 둔다.
+    //   (Ctrl+X 잘라내기 — useClipboardActions — 는 이번 범위 밖.)
     if (editMode === "select" && selectedIds.size > 0) {
       const ids = Array.from(selectedIds);
+      const names = ids.map(
+        (id) => files.find((f) => f.id === id)?.fileName ?? id,
+      );
+      if (!confirmDeleteModels(names)) return;
       setSelectedIds(new Set());
       void (async () => {
         for (const id of ids) await removeStlFile(id);
@@ -402,6 +416,7 @@ export function useSupportEditing({
     selectedSupportId,
     selectedCp,
     selectedIds,
+    files, // 사고 방지 3차 ① — 확인 문구의 모델 이름(규칙 7)
     handleRemoveSupport,
     handleRemoveBridgeControlPoint,
     removeStlFile,

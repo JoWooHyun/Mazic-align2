@@ -7,6 +7,8 @@ import type { useSupportsV2 } from "../../../hooks/useSupportsV2";
 
 /** useStlFilesV2 의 add — 생성된 STL(.id 포함)을 반환. */
 export type AddStlFile = ReturnType<typeof useStlFilesV2>["add"];
+/** useStlFilesV2 의 addMany — 여러 STL 저장 후 목록 갱신 1회, { created, failed } 반환 (사고 방지 3차 ⑥). */
+export type AddStlFiles = ReturnType<typeof useStlFilesV2>["addMany"];
 /** useStlFilesV2 의 remove. */
 export type RemoveStlFile = ReturnType<typeof useStlFilesV2>["remove"];
 /** useStlFilesV2 의 updateTransform. */

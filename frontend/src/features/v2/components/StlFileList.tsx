@@ -1,5 +1,6 @@
 import type { STLFileV2 } from "../types/stl";
 import type { Task0MaterialSlot } from "../utils/task0/task0-slice";
+import { confirmDeleteModels } from "../pages/viewer/utils/confirm-delete-models";
 import { Task0SlotToggle } from "./Task0MaterialCard";
 
 interface StlFileListProps {
@@ -18,6 +19,11 @@ interface StlFileListProps {
     slotOf: (file: STLFileV2) => Task0MaterialSlot;
     onChange: (id: string, slot: Task0MaterialSlot) => void;
   };
+  /**
+   * 메시로 올리지 못한(손상 등) STL — id → 사유 (사고 방지 3차 ⑤ C5). 있으면 파일명 옆에 "⚠ 손상" 표시,
+   * 사유는 마우스를 올리면 보인다. 목록에서 지우면 페이지가 항목을 뺀다.
+   */
+  loadFailed?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -33,6 +39,7 @@ const StlFileList: React.FC<StlFileListProps> = ({
   loading = false,
   className = "",
   materialSlot,
+  loadFailed,
 }) => {
   return (
     <aside
@@ -68,6 +75,8 @@ const StlFileList: React.FC<StlFileListProps> = ({
         {!loading &&
           files.map((f) => {
             const isSelected = selectedIds.has(f.id);
+            // 사고 방지 3차 ⑤ (C5) — 메시로 못 올린 파일이면 사유(없으면 undefined)
+            const failMessage = loadFailed?.get(f.id);
             return (
               <div
                 key={f.id}
@@ -79,20 +88,32 @@ const StlFileList: React.FC<StlFileListProps> = ({
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span
-                    className={`text-sm truncate ${
-                      isSelected
-                        ? "text-primary-700 font-medium"
-                        : "text-gray-700"
-                    }`}
-                    title={f.fileName}
-                  >
-                    {f.fileName}
+                  {/* 파일명 + 손상 표시(⑤)를 한 묶음으로 — 이름이 길면 이름만 말줄임된다. */}
+                  <span className="flex items-center min-w-0">
+                    <span
+                      className={`text-sm truncate ${
+                        isSelected
+                          ? "text-primary-700 font-medium"
+                          : "text-gray-700"
+                      }`}
+                      title={f.fileName}
+                    >
+                      {f.fileName}
+                    </span>
+                    {loadFailed?.has(f.id) && (
+                      <span
+                        className="ml-1 text-xs text-red-600 flex-shrink-0"
+                        title={failMessage}
+                      >
+                        ⚠ 손상
+                      </span>
+                    )}
                   </span>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (confirm(`"${f.fileName}" 을(를) 삭제할까요?`)) {
+                      // 사고 방지 3차 ① — Delete 키·우클릭 삭제와 같은 확인 문구(confirmDeleteModels).
+                      if (confirmDeleteModels([f.fileName])) {
                         onRemove(f.id);
                       }
                     }}

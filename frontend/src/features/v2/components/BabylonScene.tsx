@@ -52,6 +52,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
       plateHeightMm = 0,
       printableAreaMm = null,
       onBuildVolumeIssues,
+      onMeshesLoaded,
       editMode,
       selectedSupportId,
       pendingBridgePoint,
@@ -76,9 +77,12 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     //   있다. 이 tick 이 올라가야 메쉬를 읽는 훅(#3.5 서포트 동기화·#7 출력영역
     //   검사)이 새 모델을 본다.
     const [meshLoadTick, setMeshLoadTick] = useState(0);
-    useFileMeshSync(ctx, files, overhangAngleDeg, () =>
-      setMeshLoadTick((n) => n + 1),
-    ); // #2 files→mesh + #3 overhang 색
+    // 사고 방지 3차 ③ — 같은 완료 신호를 부모에도 알린다(슬라이스 미리보기 층수 재계산). 콜백 안에서만 부른다 —
+    //   훅 호출 순서·개수(불변식 1)는 그대로.
+    useFileMeshSync(ctx, files, overhangAngleDeg, () => {
+      setMeshLoadTick((n) => n + 1);
+      onMeshesLoaded?.();
+    }); // #2 files→mesh + #3 overhang 색
     // files 는 B-18 수직 이동 감지용(재설계 기둥 길이 재조립). 훅 내부에서 ty 만
     //   신호로 뽑으므로 수평 이동·회전으로는 재조립이 일어나지 않는다.
     // meshLoadTick 은 STL 로드 완료 신호 — 재오픈 시 메시보다 먼저 도착한 stl-local

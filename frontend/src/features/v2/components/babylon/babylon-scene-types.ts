@@ -77,6 +77,10 @@ export interface BabylonSceneProps {
    *   빈 배열 = 전부 정상. 페이지가 이 값으로 경고 배너를 띄운다.
    */
   onBuildVolumeIssues?: (issues: BuildVolumeIssue[]) => void;
+  /** STL 로드가 실제로 끝나(메시가 씬에 올라와) 씬의 높이·형상이 바뀌었을 때 (사고 방지 3차 ③ — 슬라이스 층수 재계산용). */
+  onMeshesLoaded?: () => void;
+  /** STL 을 메시로 올리지 못했을 때 (손상 파일 등 — 사고 방지 3차 ⑤ C5). 종전엔 console.error 만 남아 무음이었다. */
+  onStlLoadError?: (stlId: string, fileName: string, message: string) => void;
   /** 'select' / 'support' — 모드별 픽·드래그·Gizmo 동작. */
   editMode: EditMode;
   /** 'support' 모드에서 모델 표면 픽 시 → 그 위치에 서포트 추가.

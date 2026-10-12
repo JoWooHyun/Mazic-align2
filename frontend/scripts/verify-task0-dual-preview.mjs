@@ -753,7 +753,10 @@ function copyWiringOk(sup, clip, stlHook, drop) {
     /\.set\(toCut\.map\(\(f\) => \(\{ fileName: f\.fileName, blob: f\.blob, \.\.\.task0CopySlotInit\(f\) \}\)\)\)/.test(clip) &&
     /addStlFile\(\s*addCopySuffix\(item\.fileName, files\),\s*item\.blob,\s*task0CopySlotInit\(item\),\s*\)/.test(clip) &&
     /repo\.createStlFile\(projectId, fileName, blob, init\)/.test(stlHook) &&
-    /addStlFile\(file\.name, file\)/.test(drop) && /addStlFile\(def\.fileName, def\.build\(\)\)/.test(drop)
+    // 드롭·파일 열기는 사고 방지 3차 ⑥ 부터 addMany(useStlFilesV2) 경유 — 여전히 슬롯을 넘기지 않는다(기본 B).
+    /repo\.createStlFile\(projectId, n, b\)/.test(stlHook) &&
+    /addStlFiles\(\s*stlFiles\.map\(\(f\) => \(\{ fileName: f\.name, blob: f \}\)\),?\s*\)/.test(drop) &&
+    /addStlFile\(def\.fileName, def\.build\(\)\)/.test(drop)
   );
 }
 

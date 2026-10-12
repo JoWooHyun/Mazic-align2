@@ -17,6 +17,7 @@ import {
   straightCps,
 } from "../../../utils/bridge-path";
 import { proportionalMoveCps } from "../utils/support-transform";
+import { settleAll } from "../utils/settle-all";
 import type { PatchSupport, UpdateTransform } from "./types";
 
 type Vec3 = [number, number, number];
@@ -315,8 +316,12 @@ export function useTransformCommit({
       }
 
 
+      // 사고 방지 3차 ⑦ — 서포트 patch 묶음은 settleAll(allSettled)로 기다린다(커밋·undo·redo 3곳).
+      //   서포트 하나가 이미 지워져 'support not found' 가 나면 종전엔 전체가 죽어 transform undo 가 반쯤 되돌아갔다.
+      //   이제 실패한 것만 경고로 남기고 나머지 patch·뒤 단계(부착 추종·redo 의 재삭제)는 계속된다.
       void (async () => {
-        await Promise.all(
+        await settleAll(
+          "transform:commit",
           newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
         );
         // 변환된 부모 Bridge 들의 새 path 로 부착된 child 들도 따라옴.
@@ -379,7 +384,9 @@ export function useTransformCommit({
           // undo 도 STL 을 다시 이동시키므로 검출 결과 무효화 (감사 B1).
           sceneHandleRef.current?.invalidateDentalResults(id);
           await updateTransform(id, start);
-          await Promise.all(
+          // ⑦ — 하나가 실패해도 나머지 서포트 복원과 아래 재설계 서포트 복원은 계속.
+          await settleAll(
+            "transform:undo",
             oldStates.map(({ id: sid, patch }) => patchSupport(sid, patch)),
           );
           // B-1: 무효화로 삭제됐던 재설계 서포트를 원본 그대로 복원. transform
@@ -392,7 +399,9 @@ export function useTransformCommit({
           // redo 도 마찬가지로 무효화 (감사 B1).
           sceneHandleRef.current?.invalidateDentalResults(id);
           await updateTransform(id, end);
-          await Promise.all(
+          // ⑦ — undo 와 같은 이유.
+          await settleAll(
+            "transform:redo",
             newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
           );
           // B-1: 다시 변형했으므로 재설계 서포트도 다시 삭제 (단일 tx).

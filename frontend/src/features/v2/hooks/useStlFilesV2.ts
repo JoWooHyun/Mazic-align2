@@ -4,6 +4,7 @@ import * as repo from "../data/stl-files.repo";
 import * as supportRepo from "../data/supports.repo";
 import type { STLFileV2 } from "../types/stl";
 import type { TransformV2 } from "../types/transform";
+import { addStlFilesSequential, type AddManyItem } from "../utils/stl-add-many";
 import { useUndoStore } from "./useUndoStore";
 
 /**
@@ -49,6 +50,25 @@ export function useStlFilesV2(projectId: string | undefined) {
     [projectId, refresh],
   );
 
+  /**
+   * 여러 STL 을 한 번에 추가 (드롭·파일 열기 — 사고 방지 3차 ⑥ C4). 순서대로 저장하고 목록 갱신은 끝에 **한 번**.
+   *   파일마다 갱신하면 files 가 N번 바뀌어 앞 파일의 메시 로드가 취소·재파싱됐다(useFileMeshSync cancelled).
+   *   하나가 실패해도 나머지는 저장하고, 실패가 섞여도 갱신은 한 번. 재료 슬롯은 넘기지 않는다(드롭 = 기본 B).
+   *   복제·붙여넣기·예제는 종전 add 그대로.
+   */
+  const addMany = useCallback(
+    async (items: readonly AddManyItem[]) => {
+      if (!projectId) throw new Error("projectId 가 없습니다.");
+      const result = await addStlFilesSequential(
+        (n, b) => repo.createStlFile(projectId, n, b),
+        items,
+      );
+      await refresh();
+      return result;
+    },
+    [projectId, refresh],
+  );
+
   const remove = useCallback(
     async (id: string) => {
       // STL 삭제는 되돌릴 수 없다(P-5 보류). 삭제 이전 이력은 사라진 STL 의
@@ -90,6 +110,7 @@ export function useStlFilesV2(projectId: string | undefined) {
     error,
     refresh,
     add,
+    addMany,
     remove,
     updateTransform,
     updateMaterialSlot,
