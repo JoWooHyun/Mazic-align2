@@ -36,7 +36,11 @@ export async function exportProjectArchive(projectId: string): Promise<Blob> {
   const meta: ArchiveMetadata = {
     version: 1,
     project,
-    stlFiles: stlFiles.map(({ blob: _b, ...rest }) => rest),
+    // blob 은 metadata 에서 뺀다(바이트는 아래 stl/<id>.stl 엔트리로 따로) — void = 의도적 미사용 표시.
+    stlFiles: stlFiles.map(({ blob, ...rest }) => {
+      void blob;
+      return rest;
+    }),
     supports,
   };
 

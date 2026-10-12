@@ -404,10 +404,13 @@ export function useTransformCommit({
     },
     // supports 는 본문에서 supportsRef.current 를 쓰지만(stale 방지), 원본과
     //   동일한 콜백 재생성 주기를 유지하기 위해 dep 로 그대로 둔다.
+    // supportsRef 는 useRef 객체라 identity 가 안 바뀐다 — dep 에 넣어도 재생성 주기 변화 없음(규칙 7).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- supports 는 위 사유로 의도한 여분 dep
     [
       sceneHandleRef,
       updateTransform,
       supports,
+      supportsRef,
       patchSupport,
       followAttachedChildren,
       removeSupports,
