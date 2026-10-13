@@ -217,17 +217,27 @@ function yRange(tris) {
   return [lo, hi];
 }
 
-/** 예제 구(바이너리 STL) → 삼각형 배열 (파일 좌표 그대로 — 바닥 y 0, XZ 중심 원점) */
-async function sampleSphereTris() {
-  const def = SAMPLE_MODELS.find((m) => m.id === "sphere20");
+/**
+ * 예제 모델(바이너리 STL) → world 삼각형 배열 (감김 정규화 전).
+ *   STL 파일은 Z-up — 앱의 stl-loader 와 같이 Babylon STL 로더의 (x, y, z) → (x, z, y) 교환으로 world(Y-up)에 넣는다
+ *   (데모 수정 1차 ①-b, 추가 회전 없음). 결과는 바닥 y 0, XZ 중심 원점.
+ */
+async function sampleWorldTris(id) {
+  const def = SAMPLE_MODELS.find((m) => m.id === id);
   const buf = await def.build().arrayBuffer();
   const dv = new DataView(buf);
   const n = dv.getUint32(80, true);
   const t = new Float32Array(n * 9);
+  const toWorld = [0, 2, 1]; // 파일 축 → world 축
   for (let i = 0; i < n; i++) {
-    for (let k = 0; k < 9; k++) t[i * 9 + k] = dv.getFloat32(84 + i * 50 + 12 + k * 4, true);
+    for (let k = 0; k < 9; k++) t[i * 9 + (k - (k % 3)) + toWorld[k % 3]] = dv.getFloat32(84 + i * 50 + 12 + k * 4, true);
   }
-  return normalizeTriangleWinding(t);
+  return t;
+}
+
+/** 예제 구 → world 삼각형 배열 (바닥 y 0, XZ 중심 원점) */
+async function sampleSphereTris() {
+  return normalizeTriangleWinding(await sampleWorldTris("sphere20"));
 }
 
 // ── 판정 도구 ────────────────────────────────────────────────────────────
@@ -430,21 +440,13 @@ function caseRepro() {
 }
 
 /**
- * (a2) 예제 정육면체(SAMPLE_MODELS cube20, 파일 좌표 ±10·0~20) lh 0.025 — 측면 대각선 교차 x = −10 + y 가
+ * (a2) 예제 정육면체(SAMPLE_MODELS cube20, world 좌표 ±10·0~20 — 로더와 같은 (x, z, y) 교환) lh 0.025 — 측면 대각선 교차 x = −10 + y 가
  *   y = (N+0.5)·0.025 에서 언제나 x.5 µm 라 수정 전에는 800층 중 다수가 끊겼다(층두께 입력은 0.005 단위라
  *   0.015·0.025·0.035… 모두 같은 처지). 면적 해석값 400 mm².
  */
 async function caseSampleCube() {
   console.log("\n(a2) 예제 정육면체 cube20 lh 0.025 (800층)");
-  const def = SAMPLE_MODELS.find((m) => m.id === "cube20");
-  const buf = await def.build().arrayBuffer();
-  const dv = new DataView(buf);
-  const n = dv.getUint32(80, true);
-  const t = new Float32Array(n * 9);
-  for (let i = 0; i < n; i++) {
-    for (let k = 0; k < 9; k++) t[i * 9 + k] = dv.getFloat32(84 + i * 50 + 12 + k * 4, true);
-  }
-  const cube = normalizeTriangleWinding(t);
+  const cube = normalizeTriangleWinding(await sampleWorldTris("cube20"));
   const res = {};
   for (const [name, slice] of Object.entries(SLICERS)) {
     res[name] = addStats({}, scanShape(slice, cube, 0.025, { area: () => 400, exact: true }));

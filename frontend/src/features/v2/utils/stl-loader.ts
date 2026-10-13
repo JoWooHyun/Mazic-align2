@@ -57,7 +57,11 @@ export function setModelDiffuseMode(mesh: Mesh, overhang: boolean): void {
 /**
  * STL Blob → Babylon Mesh.
  *
- *  1. STL Z-up → Babylon Y-up: X 축 -90° 회전을 vertex 에 베이크.
+ *  1. 축: Babylon STL 로더가 기본 설정(DO_NOT_ALTER_FILE_COORDINATES=false)에서 정점·법선을
+ *     (x, z, y) 로 넣는다 = STL Z-up → Babylon Y-up. 그 결과를 그대로 쓴다(추가 회전 없음 —
+ *     데모 수정 1차 ①-b, 리드 10/13). 위(world Y) = STL Z, 깊이(world Z) = STL Y.
+ *     종전(X −90° 추가)은 STL Y 가 위가 돼 치과 STL 이 90° 눕혀 읽혔다.
+ *     내보내기(stl-export)는 같은 (x, z, y) 교환으로 되돌려 왕복이 맞는다.
  *  2. 빌드플레이트 정렬 (vertex shift):
  *       · X, Z = AABB center (모델이 플레이트 한가운데로)
  *       · Y    = AABB minimum → base 를 Y = liftMm 에 정렬
@@ -96,25 +100,18 @@ export async function loadStlIntoScene(
   // 0) Babylon STL 로더가 face normal 을 (0,0,0) 영벡터로 import
   //    하는 STL (cylinder.STL 등) 에 대비해 vertex normal 을
   //    강제 재계산. 이미 정상 normal 이 있어도 멱등.
+  //    로더는 normal 도 정점과 같은 (x, z, y) 로 넣으므로 축은 이미 맞다. 종전에는 아래 1) 의
+  //    회전 베이크 뒤에 한 번 더 재계산했는데(1.7) 회전이 없어져 이 한 번이면 된다.
   mesh.createNormals(true);
 
-  // 1) STL Z-up → Babylon Y-up.
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.bakeCurrentTransformIntoVertices();
-
+  // 1) 데모 수정 1차 ①-b — STL 축 Z-up(리드 10/13): Babylon 로더가 이미 Z→Y 로 바꾸므로 추가 회전 없음.
+  //    종전(X −90° 추가 베이크)은 STL Y 가 위가 돼 치과 STL(exocad·3Shape — 표준 Z-up)이 90° 눕혀 읽혔다
+  //    (verify-demo-fix1 (b) — STL 60 × 20 × 10 박스가 높이 10 으로 놓인다).
+  //    ⚠️ 저장된 프로젝트·이미 불러 둔 모델은 다시 불러오면 자세가 90° 달라진다(저장된 transform 은 그대로라).
+  //
   // 데모 수정 1차 ① — 가로 > 높이×1.5 모델을 세우던 자동 회전 제거(리드 10/12).
   //   치과 풀아치가 전부 걸려 세워졌고(726층·얇은 고리 단면·옆면 서포트), STL 표준은
   //   Z-up 이라 보정 근거가 없다. 방향이 틀린 파일은 '바닥면 붙이기'로 고친다.
-  //   ⚠️ 실측(verify-demo-fix1 STL_UP_NOTE): Babylon STL 로더가 기본 설정에서 이미 Y/Z 를 바꿔 넣으므로
-  //   (DO_NOT_ALTER_FILE_COORDINATES=false — STL Z → Babylon Y) 위 1) 회전과 합치면 **STL 의 Y 축이 위**가 된다.
-  //   1) 을 고칠지는 리드 결정 대상(이미 불러 둔 모델·프로젝트 자세가 전부 바뀐다) — 이 수정은 1) 을 건드리지 않는다.
-
-  // 1.7) bakeCurrentTransformIntoVertices 는 vertex position 만 회전
-  //      적용하고 normal 은 그대로 둔다. 위 회전 후 normal 이
-  //      옛 좌표 기준이라 Bridge / 단점 픽의 normal 이 잘못된 방향으로
-  //      향함 → contact push 가 외부로 → Bridge 가 모델 밖으로 튀어
-  //      나가는 증상. 모든 회전 baked 직후 normal 재계산.
-  mesh.createNormals(true);
 
   // 2) 빌드플레이트에 정렬 (XZ center, Y base=liftMm).
   alignMeshToPlate(mesh, liftMm);
@@ -141,7 +138,8 @@ export async function loadStlIntoScene(
  * 종전에는 meshes[0] 만 추적해 나머지 솔리드가 씬에 **떠돌았다** — 화면엔 보이지만
  * 이동·슬라이스·내보내기·삭제 어디에도 잡히지 않고 씬 정리 때까지 남았다.
  * 한 파일 = 한 모델이므로 전부 합친다(원본 메시는 MergeMeshes 가 dispose).
- * 이 시점의 메시들은 머티리얼·변환이 없는 로더 원본이라 합쳐도 정점 데이터만 이어진다.
+ * 이 시점의 메시들은 머티리얼·변환이 없는 로더 원본이라 합쳐도 정점 데이터만 이어진다
+ * (축도 블록마다 로더의 (x, z, y) 그대로 — 단일 솔리드와 같은 규칙, 합친 뒤 추가 회전 없음).
  * 면이 없는 빈 블록은 합치기 전에 버린다.
  */
 function mergeStlSolids(meshes: Mesh[]): Mesh {

@@ -1,6 +1,7 @@
 // 데모 수정 1차 헤드리스 검증 — 10/12 리드 실기 테스트 5건
 //   ① 풀아치 자동 회전 제거 · ② Task0 플레이트 = 출력 가능 영역(주황 테두리 삭제) · ③ 여러 모델 재설계 서포트 차례 생성
-//   · ④ Vite optimizeDeps(내보내기 중 새로고침) · ⑤ 슬라이스 미리보기 캡션의 해상도 표기 삭제.
+//   · ④ Vite optimizeDeps(내보내기 중 새로고침) · ⑤ 슬라이스 미리보기 캡션의 해상도 표기 삭제
+//   · ①-b STL 축 Z-up(리드 10/13) — stl-loader 의 X −90° 추가 회전 제거, stl-export 왕복, 예제 모델 Z-up.
 //
 //   실행: npx tsx scripts/verify-demo-fix1.mjs
 //   ⚠️ plain node 로 돌리면 확장자 없는 TS import 를 못 풀어 오탐이 난다(CLAUDE.md).
@@ -10,11 +11,24 @@
 //       (a) scene-setup addBuildPlateAndGrid — area 를 주면 평면 bbox = 영역(±0.01), 격자는 (minX, minZ) 모서리에서
 //           10 mm 간격, 앞쪽 탭은 영역 앞변 중앙. area 가 없으면 종전(원점 중심 ±75 / ±42.5, 격자는 원점에서).
 //           camera-views resetCameraOnPlate — center 를 주면 그 점을 본다, 없으면 원점.
-//       (b) stl-loader — 가로 60 × 높이 10 × 깊이 20 mm 비대칭 박스(바이너리 STL, 여기서 생성 — 축 대응은 STL_UP_NOTE)를
-//           불러도 긴 축이 X(세워지지 않음). 대조군 = git 의 수정 전 stl-loader(40cb275) — 긴 축이 Y 로 세워져 실패해야 한다.
+//       (b) stl-loader — STL (X 60 · Y 20 · Z 10) 비대칭 박스(바이너리 STL, 여기서 생성 — 축 대응은 STL_UP_NOTE)를
+//           불러 world AABB = X 60 · 위(Y) 10 · 깊이(Z) 20 (STL Z 가 위, 세워지지 않음), 키랄 사면체로 STL (x, y, z) →
+//           world (x, z, y) 부호까지(회전·거울상 없음). 대조군 = git 의 수정 전 stl-loader 두 판 — 40cb275(자동 회전으로
+//           세움), 9b76877(X −90° 추가 회전 — 위가 STL Y 20) — 과 깊이 부호를 뒤집은 변조판이 실패해야 한다.
 //       (c) redesign-detect-actions prepareRedesignDetectInput(ctx, stlId) — 지정한 모델(선택과 무관), 없으면 활성
 //           (선택 첫 번째), 씬에 없는 id 는 ok:false.
-//   (2) 소스 검사 — autoOrient 0회, 영역 테두리 훅 삭제·참조 0회, BabylonScene useSceneBootstrap 4번째 인자·훅 14개 불변,
+//       (e) ①-b 왕복 — 박스(XY 중심·바닥 z 0 이라 플레이트 정렬이 항등)·키랄 사면체를 stl-loader 로 불러 변환 없이
+//           stl-export meshesToStlBlob → 정점 집합 = 원본(±1e-6), 삼각형마다 꼭짓점 순환 순서(감김)까지 같음, 기입 법선 = 외적.
+//           대조군 = 되돌리기(x, z, y)를 뺀 변조판, 정점 1·2 교환을 되살린 변조판(속 뒤집힘), git 9b76877 의 export
+//           (X +90° — 새 로더 결과를 Y 부호가 뒤집힌 거울상으로 낸다. 박스는 정점 집합이 대칭이라 같고 X·Z 면 대각선이
+//           달라 잡히며, 사면체는 정점 집합부터 다르다).
+//       (f) ①-b 예제 모델 — 새 로더 + Z-up 예제(cube20·sphere20)의 world 삼각형(extractWorldTriangles — 앱 슬라이스 입력)이
+//           git 9b76877 의 로더 + Y-up 예제와 순서까지 같고(차 ≤ 1e-9 mm — 종전 회전 베이크 잡음뿐) Task0 run.gcode
+//           (generateTask0Gcode lh 0.1)·투사 마스크 전 층(rasterizeTask0Mask) 바이트가 같다 = 앱의 예제 큐브·구 출력 불변.
+//           대조군 = 예제를 Y-up 그대로 둔 판
+//           (9b76877 예제 + 새 로더), 큐브 삼각형 순서를 바꾼 변조판.
+//   (2) 소스 검사 — autoOrient 0회, v2 전체 로더식 `rotation.x = -Math.PI / 2` 0회, stl-loader 회전·베이크 없음·normal 재계산 1회,
+//       stl-export (x, z, y)·인덱스 순서 그대로, 영역 테두리 훅 삭제·참조 0회, BabylonScene useSceneBootstrap 4번째 인자·훅 14개 불변,
 //       부트스트랩 plate effect deps 가 숫자, useDentalWorkflow 순차 루프·취소 중단·deps, ViewerV2Page 배선,
 //       캡션에 px·1bpp 없음, vite.config optimizeDeps(워커 entries·js-clipper include), 영역 검사 그대로.
 //   (3) ★ 대조군 원칙: 기능 모듈은 임시 폴더 사본의 핵심 한 곳을 변조해 같은 검사에 넣고, 소스 검사는 핵심 문자열을
@@ -23,6 +37,7 @@
 //       모듈 인스턴스를 쓰도록 절대 URL 로 바꾼다(verify-safety2 와 같은 방식).
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -33,6 +48,8 @@ const FRONTEND = join(__dirname, "..");
 const V2 = join(FRONTEND, "src", "features", "v2");
 /** 수정 전 기준 커밋 (#139 머지) — ① 대조군이 여기서 수정 전 stl-loader 를 꺼낸다. */
 const BASE_COMMIT = "40cb275";
+/** ①-b(STL 축 Z-up) 수정 전 커밋 — 대조군·(f) 기준이 여기서 X −90° 판 stl-loader·종전 stl-export·Y-up 예제를 꺼낸다. */
+const AXIS_BASE_COMMIT = "9b76877";
 
 // ── assert 유틸 (verify-safety3 와 같은 구조) ─────────────────────────────
 let failed = 0;
@@ -127,6 +144,36 @@ async function functionalControl(label, rel, mutations, suite) {
   }
   assertControl(results, label);
 }
+/** git 기준 커밋의 v2 파일 텍스트(LF). 못 꺼내면 null. */
+function gitShowV2(commit, rel) {
+  try {
+    return execFileSync("git", ["show", `${commit}:frontend/src/features/v2/${rel}`], {
+      cwd: FRONTEND,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).replace(/\r\n/g, "\n");
+  } catch {
+    return null;
+  }
+}
+/**
+ * git 옛 판 v2 파일을 import 해 suite 에 넣고 **실패해야** 통과(대조군). 옛 판을 못 꺼내거나 marker(그 판의 핵심 문자열)가
+ * 없으면 대조군이 아무것도 검사하지 못한 것 — 그 자체를 FAIL 로 센다.
+ */
+async function gitControl(label, commit, rel, marker, suite) {
+  const text = gitShowV2(commit, rel);
+  if (!text || !text.includes(marker)) {
+    assert(false, `[대조군] ${label} — ${commit}:${rel} 를 git 에서 꺼내지 못함 / 핵심 문자열 없음 ${JSON.stringify(marker)}`);
+    return;
+  }
+  let r;
+  try {
+    r = await suite(await importText(text, join(V2, rel)));
+  } catch (e) {
+    r = [{ ok: false, label: `검사 도중 예외: ${e?.message ?? e}` }];
+  }
+  assertControl(r, label);
+}
 
 // ── Babylon (Node) 준비 ─────────────────────────────────────────────────
 const { NullEngine, Scene, ArcRotateCamera, MeshBuilder, Vector3, VertexBuffer } = await import("@babylonjs/core");
@@ -156,6 +203,8 @@ const REL = {
   camera: "utils/camera-views.ts",
   loader: "utils/stl-loader.ts",
   redesign: "components/babylon/redesign-detect-actions.ts",
+  export: "utils/stl-export.ts",
+  sample: "utils/sample-models.ts",
 };
 const realMod = async (rel) => import(pathToFileURL(join(V2, rel)).href);
 
@@ -273,14 +322,14 @@ function suitePlate(setupMod, camMod) {
   return res;
 }
 
-// ── ① 비대칭 박스 STL ──────────────────────────────────────────────────
-//   STL_UP_NOTE (실측, 데모 수정 1차): Babylon STL 로더가 기본 설정(DO_NOT_ALTER_FILE_COORDINATES=false)에서 이미
-//   Y/Z 를 바꿔 넣고(STL Z → Babylon Y), stl-loader 1) 의 X −90° 가 그것을 다시 돌려 **STL 의 Y 축이 위**가 된다.
-//   그래서 박스는 STL (X 60, Y 10, Z 20) 으로 만든다 — 새 판은 높이 10 으로 눕고, 수정 전 판은 60 > 10×1.5 라 X 를 세운다.
-/** 축 정렬 박스 [0,sx]×[0,sy]×[0,sz] 를 바이너리 STL Blob 으로 (법선은 외적, 리틀엔디언 — sample-models 와 같은 형식). */
-function boxStlBlob(sx, sy, sz) {
-  const P = (x, y, z) => [x * sx, y * sy, z * sz];
-  // 면마다 사각형 4점(바깥에서 보아 반시계) → 삼각형 2개
+// ── ① / ①-b 비대칭 박스·키랄 사면체 STL ─────────────────────────────────
+//   STL_UP_NOTE (실측, 데모 수정 1차 → ①-b 로 수정): Babylon STL 로더가 기본 설정(DO_NOT_ALTER_FILE_COORDINATES=false)에서
+//   정점을 (x, z, y) 로 넣는다(STL Z → Babylon Y). 종전 stl-loader 1) 의 X −90° 가 그것을 다시 돌려 **STL 의 Y 축이 위**였고,
+//   ①-b(리드 10/13)에서 그 추가 회전을 지워 이제 **STL Z 가 위**, STL Y 가 깊이(world Z)다.
+//   그래서 박스는 STL (X 60, Y 20, Z 10) — 새 판은 위 10·깊이 20, 9b76877 판은 위 20, 40cb275 판은 60 > 20×1.5 라 X 를 세운다.
+/** 축 정렬 상자 [lo, hi] 의 삼각형 12개 [[a, b, c], ...] — 면마다 사각형 4점(바깥에서 보아 반시계) → 삼각형 2개. */
+function boxTris(lo, hi) {
+  const P = (x, y, z) => [x ? hi[0] : lo[0], y ? hi[1] : lo[1], z ? hi[2] : lo[2]];
   const quads = [
     [P(0, 0, 0), P(0, 1, 0), P(1, 1, 0), P(1, 0, 0)], // −Z
     [P(0, 0, 1), P(1, 0, 1), P(1, 1, 1), P(0, 1, 1)], // +Z
@@ -289,7 +338,22 @@ function boxStlBlob(sx, sy, sz) {
     [P(0, 0, 0), P(0, 0, 1), P(0, 1, 1), P(0, 1, 0)], // −X
     [P(1, 0, 0), P(1, 1, 0), P(1, 1, 1), P(1, 0, 1)], // +X
   ];
-  const tris = quads.flatMap(([a, b, c, d]) => [[a, b, c], [a, c, d]]);
+  return quads.flatMap(([a, b, c, d]) => [[a, b, c], [a, c, d]]);
+}
+/** 축 정렬 박스 [0,sx]×[0,sy]×[0,sz] 를 바이너리 STL Blob 으로 */
+function boxStlBlob(sx, sy, sz) {
+  return trisStlBlob(boxTris([0, 0, 0], [sx, sy, sz]));
+}
+/** 키랄 사면체 꼭짓점 — 직각 모서리 O 에서 세 변 40·15·7 이 서로 달라 거울 대칭이 없다. AABB 가 XY 중심 원점·바닥 z 0 이라
+ *  stl-loader 의 플레이트 정렬(alignMeshToPlate)이 항등이다(불러온 world 정점 = 로더 교환 결과 그대로). */
+const TV = { O: [-20, -7.5, 0], A: [20, -7.5, 0], B: [-20, 7.5, 0], C: [-20, -7.5, 7] };
+/** 키랄 사면체 삼각형 — 바깥에서 보아 반시계(CCW 외향): 바닥 −Z · −X · −Y · 빗면 */
+const TETRA_TRIS = [[TV.O, TV.B, TV.A], [TV.O, TV.C, TV.B], [TV.O, TV.A, TV.C], [TV.A, TV.B, TV.C]];
+/** ①-b 왕복용 박스 60 × 20 × 10 — XY 중심 원점·바닥 z 0(플레이트 정렬 항등) */
+const BOX_RT_TRIS = boxTris([-30, -10, 0], [30, 10, 10]);
+
+/** 삼각형 목록을 바이너리 STL Blob 으로 (법선은 외적, 리틀엔디언 — sample-models 와 같은 형식). */
+function trisStlBlob(tris) {
   const buf = new ArrayBuffer(84 + tris.length * 50);
   const dv = new DataView(buf);
   dv.setUint32(80, tris.length, true);
@@ -309,24 +373,170 @@ function boxStlBlob(sx, sy, sz) {
   return new Blob([buf]);
 }
 
-/** ① stl-loader 모듈로 비대칭 박스를 불러 긴 축 확인 */
+/** 메시의 world 정점 목록 [[x,y,z], ...] (정점 버퍼 순서) */
+function worldVerts(mesh) {
+  mesh.computeWorldMatrix(true);
+  const w = mesh.getWorldMatrix();
+  const p = mesh.getVerticesData(VertexBuffer.PositionKind) ?? [];
+  const out = [];
+  const v = new Vector3();
+  for (let i = 0; i < p.length; i += 3) {
+    Vector3.TransformCoordinatesFromFloatsToRef(p[i], p[i + 1], p[i + 2], w, v);
+    out.push([v.x, v.y, v.z]);
+  }
+  return out;
+}
+const sameVec = (a, b, eps = 1e-6) => Math.abs(a[0] - b[0]) <= eps && Math.abs(a[1] - b[1]) <= eps && Math.abs(a[2] - b[2]) <= eps;
+/** 두 점 목록이 (중복 무시) 같은 점 집합인가 (±eps) */
+function sameVertexSet(a, b, eps = 1e-6) {
+  if (a.length === 0 || b.length === 0) return false;
+  return a.every((p) => b.some((q) => sameVec(p, q, eps))) && b.every((q) => a.some((p) => sameVec(p, q, eps)));
+}
+/** 삼각형 목록 a·b 가 1:1 로 대응하는가 — 각 삼각형의 꼭짓점 **순환 순서(감김)**까지 같아야 한다(시작점만 다를 수 있음) */
+function sameTriangles(a, b, eps = 1e-6) {
+  if (a.length !== b.length || a.length === 0) return false;
+  const used = new Array(b.length).fill(false);
+  const cyc = (s, t) => [0, 1, 2].some((r) => [0, 1, 2].every((k) => sameVec(s[k], t[(k + r) % 3], eps)));
+  return a.every((s) => {
+    const j = b.findIndex((t, i) => !used[i] && cyc(s, t));
+    if (j < 0) return false;
+    used[j] = true;
+    return true;
+  });
+}
+/** 바이너리 STL ArrayBuffer → [{ n, v: [a, b, c] }] */
+function parseStlTris(buf) {
+  const dv = new DataView(buf);
+  const n = dv.getUint32(80, true);
+  const out = [];
+  if (buf.byteLength !== 84 + n * 50) return out;
+  for (let i = 0; i < n; i++) {
+    const o = 84 + i * 50;
+    const f = (k) => dv.getFloat32(o + k * 4, true);
+    out.push({ n: [f(0), f(1), f(2)], v: [[f(3), f(4), f(5)], [f(6), f(7), f(8)], [f(9), f(10), f(11)]] });
+  }
+  return out;
+}
+
+/** ① / ①-b stl-loader 모듈로 비대칭 박스·키랄 사면체를 불러 축 대응 확인 */
 async function suiteLoader(loaderMod) {
   const { res, check } = makeChecker();
   const scene = newScene();
-  const mesh = await loaderMod.loadStlIntoScene(scene, boxStlBlob(60, 10, 20), "box", 0);
+  const mesh = await loaderMod.loadStlIntoScene(scene, boxStlBlob(60, 20, 10), "box", 0);
   mesh.refreshBoundingInfo();
   const bb = mesh.getBoundingInfo().boundingBox;
   const dx = bb.maximum.x - bb.minimum.x;
   const dy = bb.maximum.y - bb.minimum.y;
   const dz = bb.maximum.z - bb.minimum.z;
-  // 긴 축(60)이 X 그대로이고 높이(Y)는 짧은 두 변(10·20) 중 하나 — 축 비율로 세우는 회전이 없다.
-  //   (높이가 STL 의 어느 축인지는 이 검사의 관심이 아니다 — 아래 STL_UP_NOTE 참고)
+  // ①-b: STL Z(10) 가 위(world Y), STL Y(20) 가 깊이(world Z), 긴 축(60)은 X 그대로 — 세우는 회전도 추가 회전도 없다.
   check(
-    near(dx, 60) && near(Math.min(dy, dz), 10) && near(Math.max(dy, dz), 20),
-    `① 60 × 10 × 20 박스: 긴 축이 X 그대로 — 세워지지 않음 (X ${dx.toFixed(2)} · Y(높이) ${dy.toFixed(2)} · Z ${dz.toFixed(2)})`,
+    near(dx, 60) && near(dy, 10) && near(dz, 20),
+    `①-b STL 60 × 20 × 10 박스(STL Z 높이 10): world X 60 · 위(Y) 10 · 깊이(Z) 20 — STL Z 가 위, 세워지지 않음 (X ${dx.toFixed(2)} · Y ${dy.toFixed(2)} · Z ${dz.toFixed(2)})`,
   );
   check(near(bb.minimum.y, 0), `① 바닥 Y = 0 (리프트 0) (${bb.minimum.y.toFixed(3)})`);
+  // 부호·거울상 — 키랄 사면체(플레이트 정렬 항등): STL (x, y, z) → world (x, z, y). AABB 만으로는 못 잡는 깊이 부호 뒤집힘을 잡는다.
+  const tet = await loaderMod.loadStlIntoScene(scene, trisStlBlob(TETRA_TRIS), "tet", 0);
+  const got = worldVerts(tet);
+  const want = Object.values(TV).map(([x, y, z]) => [x, z, y]);
+  check(
+    sameVertexSet(got, want),
+    `①-b 키랄 사면체: STL (x, y, z) → world (x, z, y) — STL +Z 꼭짓점이 위, STL +Y 꼭짓점이 world +Z (회전·거울상 없음)`,
+  );
   scene.dispose();
+  return res;
+}
+
+/** ①-b (e) 로드 → export 왕복 — loaderMod.loadStlIntoScene → exportMod.meshesToStlBlob(변환 없이) */
+async function suiteRoundTrip(loaderMod, exportMod) {
+  const { res, check } = makeChecker();
+  const scene = newScene();
+  for (const [name, tris] of [["박스 60 × 20 × 10", BOX_RT_TRIS], ["키랄 사면체", TETRA_TRIS]]) {
+    const mesh = await loaderMod.loadStlIntoScene(scene, trisStlBlob(tris), `rt-${name}`, 0);
+    const out = parseStlTris(await exportMod.meshesToStlBlob([mesh]).arrayBuffer());
+    const outTris = out.map((t) => t.v);
+    check(
+      out.length === tris.length && sameVertexSet(outTris.flat(), tris.flat()),
+      `(e) ${name}: 로드 → export 정점 집합 = 원본 (±1e-6, 삼각형 ${out.length}/${tris.length})`,
+    );
+    check(sameTriangles(outTris, tris), `(e) ${name}: 삼각형마다 꼭짓점 순환 순서(감김)까지 원본과 같음 — 외향 그대로`);
+    const normalsOk =
+      out.length > 0 &&
+      out.every(({ n, v: [a, b, c] }) => {
+        const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        const w = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        const x = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
+        const len = Math.hypot(...x) || 1;
+        return sameVec(n, x.map((k) => k / len), 1e-5);
+      });
+    check(normalsOk, `(e) ${name}: 기입 법선 = 감김 외적(단위)`);
+  }
+  scene.dispose();
+  return res;
+}
+
+/** ①-b (f) 예제 모델 world 삼각형 — 앱 슬라이스 입력(extractWorldTriangles)과 같은 추출 */
+async function sampleWorldTris(loaderMod, sampleMod, id) {
+  const scene = newScene();
+  try {
+    const def = sampleMod.SAMPLE_MODELS.find((s) => s.id === id);
+    const mesh = await loaderMod.loadStlIntoScene(scene, def.build(), id, 0);
+    return sliceSectionMod.extractWorldTriangles(mesh);
+  } finally {
+    scene.dispose();
+  }
+}
+const topYOf = (t) => {
+  let top = -Infinity;
+  for (let i = 1; i < t.length; i += 3) top = Math.max(top, t[i]);
+  return top;
+};
+const sha16 = (s) => createHash("sha256").update(s).digest("hex").slice(0, 16);
+/** Task0 투사 마스크 층별 sha (lh 0.1, 전 층, roi bbox — ROI 4값 + 픽셀) — job.zip PNG 의 원본 래스터와 같은 함수 */
+function task0MaskShas(t) {
+  const n = Math.round(topYOf(t) / 0.1);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const m = task0MaskMod.rasterizeTask0Mask(task0SliceMod.task0LayerPolygonsBed([t], i, 0.1), { roi: "bbox" });
+    out.push(createHash("sha256").update(`${m.col0},${m.row0},${m.width},${m.height};`).update(m.data).digest("hex").slice(0, 16));
+  }
+  return out;
+}
+const SAMPLE_IDS = ["cube20", "sphere20"];
+/** (f) 기준 — git AXIS_BASE_COMMIT 의 로더 + Y-up 예제로 만든 world 삼각형·Task0 run.gcode. 못 꺼내면 null. */
+async function axisBaseSampleRef() {
+  const loaderText = gitShowV2(AXIS_BASE_COMMIT, REL.loader);
+  const sampleText = gitShowV2(AXIS_BASE_COMMIT, REL.sample);
+  if (!loaderText?.includes("mesh.rotation.x = -Math.PI / 2;") || !sampleText?.includes("[-h, 0, -h]")) return null;
+  const loaderMod = await importText(loaderText, join(V2, REL.loader));
+  const sampleMod = await importText(sampleText, join(V2, REL.sample));
+  const ref = {};
+  for (const id of SAMPLE_IDS) {
+    const t = await sampleWorldTris(loaderMod, sampleMod, id);
+    ref[id] = { t, gcode: task0WriterMod.generateTask0Gcode([t], topYOf(t), 0.1).gcode, masks: task0MaskShas(t) };
+  }
+  return { ref, sampleMod };
+}
+/** (f) 새 로더 + 예제 → world 삼각형(순서 포함)·Task0 run.gcode 가 기준과 같은가 */
+async function suiteSampleWorld(loaderMod, sampleMod, ref) {
+  const { res, check } = makeChecker();
+  for (const id of SAMPLE_IDS) {
+    const t = await sampleWorldTris(loaderMod, sampleMod, id);
+    const r = ref[id].t;
+    let maxD = t.length === r.length ? 0 : Infinity;
+    for (let i = 0; i < t.length && maxD !== Infinity; i++) maxD = Math.max(maxD, Math.abs(t[i] - r[i]));
+    check(
+      maxD <= 1e-9,
+      `(f) 예제 ${id}: world 삼각형(순서 포함) = ${AXIS_BASE_COMMIT} 로더 + Y-up 예제 — 최대 차 ${maxD.toExponential(1)} mm (삼각형 ${t.length / 9})`,
+    );
+    const g = task0WriterMod.generateTask0Gcode([t], topYOf(t), 0.1).gcode;
+    check(g === ref[id].gcode, `(f) 예제 ${id}: Task0 run.gcode(lh 0.1) 바이트 = 종전 (sha256 ${sha16(g)}… / 종전 ${sha16(ref[id].gcode)}…)`);
+    const masks = task0MaskShas(t);
+    const rm = ref[id].masks;
+    check(
+      masks.length === rm.length && masks.length > 0 && masks.every((h, i) => h === rm[i]),
+      `(f) 예제 ${id}: Task0 투사 마스크 전 층(${masks.length}/${rm.length}) ROI·바이트 = 종전`,
+    );
+  }
   return res;
 }
 
@@ -371,38 +581,89 @@ function suiteRedesign(mod) {
   return res;
 }
 
+const sliceSectionMod = await realMod("utils/slice-section.ts");
+const task0WriterMod = await realMod("utils/task0/task0-gcode-writer.ts");
+const task0SliceMod = await realMod("utils/task0/task0-slice.ts");
+const task0MaskMod = await realMod("utils/task0/task0-mask.ts");
+
 console.log("(1) 기능 검사");
 const setupReal = await realMod(REL.setup);
 const cameraReal = await realMod(REL.camera);
+const loaderReal = await realMod(REL.loader);
+const exportReal = await realMod(REL.export);
+const sampleReal = await realMod(REL.sample);
 assertAll(suitePlate(setupReal, cameraReal));
-assertAll(await suiteLoader(await realMod(REL.loader)));
+assertAll(await suiteLoader(loaderReal));
 assertAll(suiteRedesign(await realMod(REL.redesign)));
+assertAll(await suiteRoundTrip(loaderReal, exportReal));
+// (f) 기준은 git 의 ①-b 전 판에서 만든다 — 못 꺼내면 비교를 못 한 것이므로 FAIL.
+const axisBase = await axisBaseSampleRef();
+if (!axisBase) {
+  assert(false, `(f) ${AXIS_BASE_COMMIT} 의 stl-loader(X −90°)·sample-models(Y-up) 를 git 에서 꺼내지 못함 / 핵심 문자열 없음`);
+} else {
+  assertAll(await suiteSampleWorld(loaderReal, sampleReal, axisBase.ref));
+}
 
 console.log("\n(1') 기능 대조군 — 수정 전·변조 구현이 실제로 실패하는가");
 // ① 수정 전 stl-loader (git 기준 커밋) — 자동 회전으로 세워져 실패해야 한다.
-{
-  let before = null;
-  try {
-    before = execFileSync("git", ["show", `${BASE_COMMIT}:frontend/src/features/v2/utils/stl-loader.ts`], {
-      cwd: FRONTEND,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).replace(/\r\n/g, "\n");
-  } catch {
-    before = null;
-  }
-  if (!before || !before.includes("autoOrientUpright(mesh);")) {
-    // 수정 전 판을 못 꺼내면 대조군이 아무것도 검사하지 못한 것 — 그 자체를 FAIL 로 센다.
-    assert(false, `[대조군] ① 수정 전 stl-loader(${BASE_COMMIT}) 를 git 에서 꺼내지 못함 / autoOrientUpright 호출 없음`);
-  } else {
+await gitControl(`① 수정 전 stl-loader(${BASE_COMMIT}) — 비대칭 박스를 세움`, BASE_COMMIT, REL.loader, "autoOrientUpright(mesh);", suiteLoader);
+// ①-b 수정 전 stl-loader — X −90° 추가 회전으로 STL Y(20) 가 위가 돼 실패해야 한다.
+await gitControl(
+  `①-b 수정 전 stl-loader(${AXIS_BASE_COMMIT}) — X −90° 추가 회전(위 = STL Y)`,
+  AXIS_BASE_COMMIT,
+  REL.loader,
+  "mesh.rotation.x = -Math.PI / 2;",
+  suiteLoader,
+);
+await functionalControl(
+  "①-b 로더가 깊이 부호를 뒤집음(거울상 — AABB 는 같음)",
+  REL.loader,
+  [["  // 2) 빌드플레이트에 정렬", "  mesh.scaling.z = -1;\n  mesh.bakeCurrentTransformIntoVertices();\n  // 2) 빌드플레이트에 정렬"]],
+  suiteLoader,
+);
+// (e) 왕복 대조군
+await functionalControl(
+  "(e) export 가 되돌리기 없이 world 좌표 그대로 씀",
+  REL.export,
+  [
+    ["[w0.x, w0.z, w0.y]", "[w0.x, w0.y, w0.z]"],
+    ["[w1.x, w1.z, w1.y]", "[w1.x, w1.y, w1.z]"],
+    ["[w2.x, w2.z, w2.y]", "[w2.x, w2.y, w2.z]"],
+  ],
+  (m) => suiteRoundTrip(loaderReal, m),
+);
+await functionalControl(
+  "(e) export 정점 1·2 교환 되살림(반사와 겹쳐 속 뒤집힘)",
+  REL.export,
+  [["const i1 = indices[i + 1] * 3;\n      const i2 = indices[i + 2] * 3;", "const i1 = indices[i + 2] * 3;\n      const i2 = indices[i + 1] * 3;"]],
+  (m) => suiteRoundTrip(loaderReal, m),
+);
+await gitControl(
+  `(e) 수정 전 stl-export(${AXIS_BASE_COMMIT}) — X +90°(x, −z, y) 로 거울상`,
+  AXIS_BASE_COMMIT,
+  REL.export,
+  "[w0.x, -w0.z, w0.y]",
+  (m) => suiteRoundTrip(loaderReal, m),
+);
+// (f) 예제 모델 대조군
+if (!axisBase) {
+  assert(false, "[대조군] (f) 기준이 없어 예제 모델 대조군을 돌리지 못함");
+} else {
+  {
     let r;
     try {
-      r = await suiteLoader(await importText(before, join(V2, REL.loader)));
+      r = await suiteSampleWorld(loaderReal, axisBase.sampleMod, axisBase.ref);
     } catch (e) {
       r = [{ ok: false, label: `검사 도중 예외: ${e?.message ?? e}` }];
     }
-    assertControl(r, `① 수정 전 stl-loader(${BASE_COMMIT}) — 비대칭 박스를 세움`);
+    assertControl(r, `(f) 예제를 Y-up 그대로 둠(${AXIS_BASE_COMMIT} 예제 + 새 로더)`);
   }
+  await functionalControl(
+    "(f) 예제 큐브 삼각형 순서 바뀜",
+    REL.sample,
+    [["    [b0, b1, b2],\n    [b0, b2, b3],\n", "    [b0, b2, b3],\n    [b0, b1, b2],\n"]],
+    (m) => suiteSampleWorld(loaderReal, m, axisBase.ref),
+  );
 }
 await functionalControl("② scene-setup 이 area 를 무시(종전 원점 중심)", REL.setup, [["  const area = opts.area;\n", "  const area = undefined;\n"]], (m) => suitePlate(m, cameraReal));
 await functionalControl("② 격자 원점을 world 원점으로(영역 모서리 아님)", REL.setup, [["  const gridOriginX = area ? rectMinX : 0;\n", "  const gridOriginX = 0;\n"]], (m) => suitePlate(m, cameraReal));
@@ -430,6 +691,7 @@ const OUTLINE_HOOK_FILE = join(V2, "components", "babylon", "hooks", "usePrintab
 const WIRE = {
   loader: "utils/stl-loader.ts",
   sample: "utils/sample-models.ts",
+  export: "utils/stl-export.ts",
   scene: "components/BabylonScene.tsx",
   boot: "components/babylon/hooks/useSceneBootstrap.ts",
   bv: "components/babylon/hooks/useBuildVolumeCheck.ts",
@@ -456,13 +718,21 @@ function wiringChecks(raw) {
 
   // ① 자동 회전 제거 — 주석까지 포함한 원문에서 0회
   check(count(raw.loader, "autoOrient") === 0 && count(raw.sample, "autoOrient") === 0, "① stl-loader·sample-models 에 autoOrient 0회");
-  const iRot = t.loader.indexOf("mesh.rotation.x = -Math.PI / 2;");
-  const iBake = t.loader.indexOf("mesh.bakeCurrentTransformIntoVertices();", iRot);
-  const iNorm = t.loader.indexOf("mesh.createNormals(true);", iBake);
+  // ①-b 로더 결과 그대로 — 회전·배율·베이크 없음, normal 재계산 1회 → 플레이트 정렬 (주석 제외 코드에서)
+  const iNorm = t.loader.indexOf("mesh.createNormals(true);");
   const iAlign = t.loader.indexOf("alignMeshToPlate(mesh, liftMm);", iNorm);
   check(
-    iRot > 0 && iBake > iRot && iNorm > iBake && iAlign > iNorm && count(t.loader, "bakeCurrentTransformIntoVertices()") === 1,
-    "① loadStlIntoScene: X −90° 회전 베이크 1회 → normal 재계산 → 플레이트 정렬 (추가 회전 베이크 없음)",
+    iNorm > 0 && iAlign > iNorm && count(t.loader, "mesh.createNormals(true);") === 1 &&
+      !/\.(rotation|rotationQuaternion|scaling)\b/.test(t.loader) && !t.loader.includes("bakeCurrentTransformIntoVertices") &&
+      !t.loader.includes("bakeTransformIntoVertices"),
+    "①-b loadStlIntoScene: 로더의 (x, z, y) 그대로 — 회전·배율·베이크 없음, normal 재계산 1회 → 플레이트 정렬",
+  );
+  // ①-b stl-export: Babylon (x, y, z) → STL (x, z, y), 정점 순서는 인덱스 그대로(반사가 감김을 뒤집음)
+  check(
+    t.export.includes("[w0.x, w0.z, w0.y]") && t.export.includes("[w1.x, w1.z, w1.y]") && t.export.includes("[w2.x, w2.z, w2.y]") &&
+      t.export.includes("const i1 = indices[i + 1] * 3;") && t.export.includes("const i2 = indices[i + 2] * 3;") &&
+      !t.export.includes("-w0.z"),
+    "①-b stl-export: (x, y, z) → (x, z, y) — 로드 교환의 역, 정점 1·2 교환 없음",
   );
 
   // ② 플레이트 = 영역, 주황 테두리 삭제
@@ -537,6 +807,10 @@ function wiringChecks(raw) {
 console.log("\n(2) 소스 검사");
 assert(count(Object.values(TREE).join("\n"), "autoOrient") === 0, `① v2 전체(${Object.keys(TREE).length}개 파일)에 autoOrient 0회`);
 assert(
+  count(Object.values(TREE).join("\n"), "rotation.x = -Math.PI / 2") === 0,
+  `①-b v2 전체(${Object.keys(TREE).length}개 파일)에 로더식 X −90° 회전(rotation.x = -Math.PI / 2) 0회`,
+);
+assert(
   !existsSync(OUTLINE_HOOK_FILE) && count(Object.values(TREE).join("\n"), "usePrintableAreaOutline") === 0,
   "② 영역 주황 테두리 훅 파일 삭제 + v2 전체 참조 0회",
 );
@@ -555,7 +829,11 @@ function wireControl(label, key, from, to) {
   }
   assertControl(wiringChecks({ ...wireTexts, [key]: wireTexts[key].replace(from, to) }), label);
 }
-wireControl("① 자동 회전 호출 되살림", "loader", "  // 1.7) bakeCurrentTransformIntoVertices", "  autoOrientUpright(mesh);\n  // 1.7) bakeCurrentTransformIntoVertices");
+wireControl("① 자동 회전 호출 되살림", "loader", "  // 2) 빌드플레이트에 정렬", "  autoOrientUpright(mesh);\n  // 2) 빌드플레이트에 정렬");
+wireControl("①-b 로더 X −90° 회전 베이크 되살림", "loader", "  // 2) 빌드플레이트에 정렬", "  mesh.rotation.x = -Math.PI / 2;\n  mesh.bakeCurrentTransformIntoVertices();\n  // 2) 빌드플레이트에 정렬");
+wireControl("①-b normal 재계산 중복(종전 1.7 되살림)", "loader", "  // 2) 빌드플레이트에 정렬", "  mesh.createNormals(true);\n  // 2) 빌드플레이트에 정렬");
+wireControl("①-b export 를 종전 X +90° 로", "export", "[w0.x, w0.z, w0.y]", "[w0.x, -w0.z, w0.y]");
+wireControl("①-b export 정점 1·2 교환 되살림", "export", "const i1 = indices[i + 1] * 3;", "const i1 = indices[i + 2] * 3;");
 wireControl("② useSceneBootstrap 에 영역 인자 안 넘김(종전)", "scene", "useSceneBootstrap(ctx, plateWidthMm, plateDepthMm, printableAreaMm);", "useSceneBootstrap(ctx, plateWidthMm, plateDepthMm);");
 wireControl("② BabylonScene 훅 하나 추가(불변식 1 위반)", "scene", "    const ctx = useSceneRefs(props);\n", "    const ctx = useSceneRefs(props);\n    useState(0);\n");
 wireControl("② plate effect deps 에 객체(매 렌더 재생성)", "boot", "}, [plateWidthMm, plateDepthMm, areaMinX, areaMaxX, areaMinZ, areaMaxZ]);", "}, [plateWidthMm, plateDepthMm, printableAreaMm]);");
