@@ -382,8 +382,9 @@ function sectionLabels() {
   assert(
     /const MASK_MAX_PX = 512;/.test(pane) && /materialSlots=\{materialSlots\}/.test(pane) &&
       /주황 = 재료 A\(T0\)/.test(pane) && /보라 = 재료 B\(T1\)/.test(pane) && /겹친 곳은 B/.test(pane) &&
-      /LCD 1bpp 마스크 \(흰 = 모델 영역\) · \{widthPx\}×\{heightPx\}px/.test(pane),
-    "단면 pane: 해상도 상한 512 그대로, 2재료면 범례(주황 = 재료 A(T0) · 보라 = 재료 B(T1) · 겹친 곳은 B), 아니면 종전 문구",
+      // 데모 수정 1차 ⑤ — 캡션의 해상도 px·"LCD 1bpp" 표기 삭제(리드 10/12).
+      /단면 마스크 \(흰 = 노광 영역\)/.test(pane) && !/\{widthPx\}×\{heightPx\}px/.test(pane) && !/1bpp/.test(pane),
+    "단면 pane: 해상도 상한 512 그대로, 2재료면 범례(주황 = 재료 A(T0) · 보라 = 재료 B(T1) · 겹친 곳은 B), 아니면 '단면 마스크' 문구(px 표기 없음)",
   );
   const page = read("pages", "ViewerV2Page.tsx");
   assert(/<SliceSectionPane[\s\S]*?materialSlots=\{task0Material\.sliceSlots\}[\s\S]*?\/>/.test(page), "ViewerV2Page: 단면 pane 에 슬롯 표(useTask0Material sliceSlots)를 넘기기만");

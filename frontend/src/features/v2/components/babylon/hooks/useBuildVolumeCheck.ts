@@ -23,7 +23,8 @@
 //   판정은 순수 함수 `checkItemsInPrintableArea`(utils/build-volume.ts, 검증 스크립트와 공유).
 //   서포트는 붙은 모델별로 묶어 한 건으로 올린다(kind "support"). printableArea 가 없으면 기존 검사
 //   그대로(모델만, 대칭) — 서포트 신호도 deps 에 넣지 않아 재실행 빈도까지 종전과 같다.
-//   영역 테두리는 이 훅 끝에서 usePrintableAreaOutline 으로 그린다(BabylonScene 훅 목록 불변).
+//   데모 수정 1차 ② — 영역 주황 테두리(옛 영역 테두리 훅)는 삭제했다. Task0 는 플레이트 자체를 출력 가능 영역에
+//   그린다(useSceneBootstrap #1.5 → scene-setup area). 이 훅의 검사·배너·내보내기 차단은 그대로.
 import { useEffect, useRef } from "react";
 import { Color3, MeshBuilder, VertexBuffer, Vector3 } from "@babylonjs/core";
 import type { FloatArray, LinesMesh, Matrix, Mesh, Scene } from "@babylonjs/core";
@@ -31,7 +32,6 @@ import type { FloatArray, LinesMesh, Matrix, Mesh, Scene } from "@babylonjs/core
 import type { SceneCtx } from "../scene-refs";
 import type { STLFileV2 } from "../../../types/stl";
 import type { SupportParams, SupportPointV2 } from "../../../support/types";
-import { usePrintableAreaOutline } from "./usePrintableAreaOutline";
 import {
   checkBuildVolume,
   checkItemsInPrintableArea,
@@ -197,11 +197,6 @@ export function useBuildVolumeCheck(
     supportParamsDep,
     partsReadyDep,
   ]);
-
-  // Task0 출력 가능 영역 테두리 (Z2). 검사 effect 뒤에 붙인다 — BabylonScene 의 훅 호출 목록
-  //   (불변식 1, verify-support-follow 가 고정)을 바꾸지 않으려고 이 훅 안에서 부른다.
-  //   영역이 없으면(기존 프로파일) 아무것도 그리지 않는다.
-  usePrintableAreaOutline(ctx, area);
 }
 
 /**

@@ -33,7 +33,7 @@
 //       층두께 — 규칙 7, octet-stream, `_task0_` 파일 이름, handleExportStl 뒤), confirm 문구(기존 그대로 + Task0),
 //       SliceSidePanel(Task0 일 때만 Task0 버튼 — Z3 부터 job.zip 주·run.gcode 만 보조, 마스크 ZIP 은 Task0 아닌 쪽),
 //       ViewerV2Page 배선, BabylonScene 훅 호출
-//       목록 불변(불변식 1 — 영역 테두리 훅은 useBuildVolumeCheck 안 끝에서 부름).
+//       목록 불변(불변식 1). 데모 수정 1차 ② 로 영역 주황 테두리 훅은 삭제 — useBuildVolumeCheck 안 훅은 검사 effect 뿐.
 //   (6) 대조군 — 이 스크립트가 실제로 결함을 잡는지:
 //       a. 경계를 대칭(플레이트 ±W/2·±D/2)으로 바꾸면 "베드 X 5~15 모델" 사례를 놓친다(= (2) 의 그 단언이 실패).
 //       b. 서포트를 빼고 검사하면 "서포트만 밖" 사례를 놓친다.
@@ -697,9 +697,10 @@ function sectionWiring() {
   const bv = read("components", "babylon", "hooks", "useBuildVolumeCheck.ts");
   const fnBody = bv.slice(bv.indexOf("export function useBuildVolumeCheck("), bv.indexOf("function collectPrintableAreaIssues("));
   const hookCalls = [...fnBody.matchAll(/\b(use[A-Z]\w*)\s*\(/g)].map((m) => m[1]);
+  // 데모 수정 1차 ② — 영역 주황 테두리 훅(옛 usePrintableAreaOutline)은 삭제. Task0 는 플레이트 자체를 영역에 그린다.
   assert(
-    JSON.stringify(hookCalls) === JSON.stringify(["useBuildVolumeCheck", "useRef", "useEffect", "usePrintableAreaOutline"]),
-    `영역 테두리 훅은 useBuildVolumeCheck 안 끝(검사 effect 다음)에서 무조건 호출 (${hookCalls.join(" → ")})`,
+    JSON.stringify(hookCalls) === JSON.stringify(["useBuildVolumeCheck", "useRef", "useEffect"]),
+    `useBuildVolumeCheck 안 훅 = 검사 effect 뿐 — 영역 테두리 훅 없음 (${hookCalls.join(" → ")})`,
   );
 }
 

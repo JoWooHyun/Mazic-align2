@@ -72,7 +72,9 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     //   bootstrap cleanup 이 먼저 실행돼 isUnmountingRef 를 세팅해야, 뒤에 오는 brush
     //   cleanup 이 pending 무효화를 "타이머만 정리"로 처리한다. 따라서 아래 순서를
     //   #1/#1.5 → #2/#3 → #3.5 → #4/#5 → #5.5 → #5.6/#5.7 → #6 → #6.5 로 고정한다.
-    useSceneBootstrap(ctx, plateWidthMm, plateDepthMm); // #1 씬 부트스트랩 + #1.5 plate
+    // 데모 수정 1차 ② — Task0 출력 가능 영역을 넘겨 플레이트를 그 사각형에 그린다. 인자만 추가 —
+    //   훅 호출 순서·개수(불변식 1)는 그대로.
+    useSceneBootstrap(ctx, plateWidthMm, plateDepthMm, printableAreaMm); // #1 씬 부트스트랩 + #1.5 plate
     // STL 로드 완료 신호 (H3). 로드는 비동기라 같은 커밋에서는 meshMapRef 가 비어
     //   있다. 이 tick 이 올라가야 메쉬를 읽는 훅(#3.5 서포트 동기화·#7 출력영역
     //   검사)이 새 모델을 본다.
@@ -123,7 +125,7 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     // #7 출력영역 초과 경고 (C-2). 씬 상태를 읽기만 하고 아무도 이 훅에
     //   의존하지 않으므로, 불변식 1(훅 순서)을 흔들지 않도록 맨 끝에 둔다.
     //   Z2: Task0 출력 가능 영역·서포트 신호는 인자만 추가 — 훅 호출 순서는 그대로.
-    //   영역 테두리(usePrintableAreaOutline)는 이 훅 안 끝에서 부른다 — 이 컴포넌트의 훅 목록은 불변.
+    //   (데모 수정 1차 ② — 영역 주황 테두리는 삭제, 플레이트 자체를 영역에 그린다(#1.5).)
     useBuildVolumeCheck(
       ctx,
       files,

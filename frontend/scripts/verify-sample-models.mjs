@@ -7,8 +7,9 @@
 //   검사 항목:
 //     (a) 바이너리 STL 구조 — 헤더 80 + uint32 개수 + 50바이트×N 이 파일 길이와 일치
 //     (b) 법선 위생 — 모든 법선이 단위벡터(‖n‖≈1), 면적 0(degenerate) 삼각형 없음
-//     (c) 정육면체 — AABB 가 정확히 20×20×20, minY=0, XZ 중심 0, 삼각형 12개
-//     (d) 구 — AABB 20×20×20, minY=0, 모든 정점이 중심(0,10,0)에서 반지름 10±ε
+//     (c) 정육면체 — AABB 가 정확히 20×20×20, minZ=0, XY 중심 0, 삼각형 12개
+//     (d) 구 — AABB 20×20×20, minZ=0, 모든 정점이 중심(0,0,10)에서 반지름 10±ε
+//     (c)(d) 는 STL 파일 좌표 = **Z-up**(데모 수정 1차 ①-b, 리드 10/13 — stl-loader 가 STL Z 를 위로 읽는다)
 //     (e) winding/법선 외향성 — 기입된 법선과 winding 에서 다시 계산한 법선이 일치하고,
 //         둘 다 도형 중심 반대편(바깥)을 향한다
 //     (f) **변조 대조군** — 법선을 0 으로 만든 STL, winding 을 뒤집은 STL 을 만들어
@@ -206,10 +207,10 @@ function caseCube(tris, count) {
     size.every((s) => Math.abs(s - 20) < TOL),
     `AABB 가 정확히 20 × 20 × 20 mm (${size.map((v) => v.toFixed(4)).join(" × ")})`,
   );
-  assert(Math.abs(min[1]) < TOL, `바닥이 y=0 (minY ${min[1].toExponential(2)})`);
+  assert(Math.abs(min[2]) < TOL, `바닥이 z=0 (minZ ${min[2].toExponential(2)})`);
   assert(
-    Math.abs(min[0] + max[0]) < TOL && Math.abs(min[2] + max[2]) < TOL,
-    "XZ 중심이 원점 — 불러오자마자 플레이트 한가운데",
+    Math.abs(min[0] + max[0]) < TOL && Math.abs(min[1] + max[1]) < TOL,
+    "XY 중심이 원점 — 불러오자마자 플레이트 한가운데",
   );
 
   // 6면의 축 정렬 법선이 모두 나오는지 (면 하나가 빠지면 잡힌다).
@@ -236,18 +237,18 @@ function caseSphere(tris, count) {
     size.every((s) => Math.abs(s - 20) < 1e-3),
     `AABB 가 20 × 20 × 20 mm (${size.map((v) => v.toFixed(4)).join(" × ")})`,
   );
-  assert(Math.abs(min[1]) < TOL, `바닥이 y=0 에 닿는다 (minY ${min[1].toExponential(2)})`);
+  assert(Math.abs(min[2]) < TOL, `바닥이 z=0 에 닿는다 (minZ ${min[2].toExponential(2)})`);
   assert(
-    Math.abs(min[0] + max[0]) < 1e-3 && Math.abs(min[2] + max[2]) < 1e-3,
-    "XZ 중심이 원점",
+    Math.abs(min[0] + max[0]) < 1e-3 && Math.abs(min[1] + max[1]) < 1e-3,
+    "XY 중심이 원점",
   );
 
-  // 모든 정점이 중심 (0, 10, 0) 에서 반지름 10 ± ε.
+  // 모든 정점이 중심 (0, 0, 10) 에서 반지름 10 ± ε.
   let minR = Infinity;
   let maxR = 0;
   for (const t of tris) {
     for (const p of t.v) {
-      const r = Math.hypot(p[0], p[1] - 10, p[2]);
+      const r = Math.hypot(p[0], p[1], p[2] - 10);
       minR = Math.min(minR, r);
       maxR = Math.max(maxR, r);
     }
@@ -255,7 +256,7 @@ function caseSphere(tris, count) {
   console.log(`  정점 반지름 ${minR.toFixed(6)} ~ ${maxR.toFixed(6)} mm`);
   assert(
     Math.abs(minR - 10) < 1e-3 && Math.abs(maxR - 10) < 1e-3,
-    `모든 정점이 중심 (0,10,0) 에서 반지름 10mm (${minR.toFixed(6)}~${maxR.toFixed(6)})`,
+    `모든 정점이 중심 (0,0,10) 에서 반지름 10mm (${minR.toFixed(6)}~${maxR.toFixed(6)})`,
   );
 }
 
@@ -334,8 +335,8 @@ async function main() {
   for (const def of SAMPLE_MODELS) {
     const blob = def.build();
     const buffer = await blob.arrayBuffer();
-    // 두 도형 모두 중심이 (0, 10, 0) — 바닥이 y=0 이고 높이 20mm.
-    const center = [0, 10, 0];
+    // 두 도형 모두 중심이 (0, 0, 10) — 바닥이 z=0 이고 높이 20mm (Z-up).
+    const center = [0, 0, 10];
 
     const { count, tris } = caseCommon(def, buffer, center);
     if (def.id === "cube20") caseCube(tris, count);

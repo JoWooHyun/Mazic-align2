@@ -281,6 +281,9 @@ const ViewerV2Page: React.FC = () => {
     layerHeightMm: slicePreview.layerHeightMm,
     refreshSupports,
     onNotice: showViewportNotice,
+    // 데모 수정 1차 ③ — 여러 모델 선택 시 서포트 생성(재설계)을 선택한 모델마다 차례로.
+    selectedIds,
+    files,
   });
 
   // 네이티브 열기 + 드래그앤드롭.
@@ -718,7 +721,7 @@ const ViewerV2Page: React.FC = () => {
             plateWidthMm={printerProfile.buildVolumeMm[0]}
             plateDepthMm={printerProfile.buildVolumeMm[1]}
             plateHeightMm={printerProfile.buildVolumeMm[2]}
-            // Task0 프로파일이면 비대칭 출력 가능 영역(테두리 + 모델·서포트 검사), 아니면 null (Z2).
+            // Task0 프로파일이면 비대칭 출력 가능 영역(플레이트를 그 영역에 그림 — 데모 수정 1차 ② + 모델·서포트 검사), 아니면 null (Z2).
             //   매 렌더 새 객체지만 씬 훅이 숫자로 비교하므로 재실행은 값이 바뀔 때만.
             printableAreaMm={task0PrintableAreaForProfile(printerProfile)}
             onBuildVolumeIssues={setVolumeIssues}
@@ -910,6 +913,8 @@ const ViewerV2Page: React.FC = () => {
               editMode={editMode}
               plateWidthMm={printerProfile.buildVolumeMm[0]}
               plateDepthMm={printerProfile.buildVolumeMm[1]}
+              // 데모 수정 1차 ② — Task0 면 플레이트 = 출력 가능 영역이라 표기도 영역 크기로.
+              printableAreaMm={task0PrintableAreaForProfile(printerProfile)}
               supportSummary={supportSummary}
             />
           )}

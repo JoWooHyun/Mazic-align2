@@ -16,11 +16,19 @@ import {
 export interface SceneFurniture {
   plate: Mesh;
   plateOutline: LinesMesh;
-  /** 앞쪽 표시 사다리꼴 (B-26). 앞변 = 내부 z = −depthMm/2. */
+  /** 앞쪽 표시 사다리꼴 (B-26). 앞변 = 그린 사각형의 내부 z 최소 (area 가 없으면 −depthMm/2). */
   frontMarker: LinesMesh;
   grid: LinesMesh;
   axes: LinesMesh;
   dispose: () => void;
+}
+
+/** 플레이트로 그릴 사각형 (world X/Z mm). 원점 대칭이 아닐 수 있다. */
+export interface PlateArea {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
 }
 
 export interface PlateOptions {
@@ -30,9 +38,21 @@ export interface PlateOptions {
   depthMm: number;
   /** 격자 간격 (mm). 보통 10. */
   gridStepMm?: number;
+  /**
+   * 데모 수정 1차 ② — 플레이트를 이 사각형(world X/Z mm)에 그린다. Task0 프로파일의 출력 가능 영역
+   *   (task0PrintableAreaForProfile — 베드 X 10~150·Y 10~85 = world X −65~75·Z −32.5~42.5, 비대칭)을 준다.
+   *   리드 10/12: "출력 가능 영역에 맞게, 테두리 따로 표현 안 해도 됨, 하드웨어를 맞춰 놓기 때문".
+   *   평면·외곽선·격자·앞쪽 탭을 이 사각형으로 만들고, 격자는 (minX, minZ) 모서리(= 베드 (10, 10))에서
+   *   gridStepMm 간격으로 시작한다. **그리는 위치만 바뀐다** — world 원점(모델 좌표)·world↔베드 변환
+   *   (task0-frame worldToBed)은 그대로라 산출물 바이트는 불변. 원점 좌표축도 world 원점에 그대로 둔다.
+   *   없으면 종전(원점 중심 widthMm × depthMm, 격자는 원점에서).
+   */
+  area?: PlateArea;
 }
 
 const DEFAULT_GRID_STEP_MM = 10;
+/** 격자 줄 수 계산의 부동소수 여유 (mm/step 단위) — 정수 배수에서 줄이 빠지지 않게. */
+const GRID_EPS = 1e-9;
 
 export function addBuildPlateAndGrid(
   scene: Scene,
@@ -40,13 +60,25 @@ export function addBuildPlateAndGrid(
 ): SceneFurniture {
   const { widthMm, depthMm } = opts;
   const step = opts.gridStepMm ?? DEFAULT_GRID_STEP_MM;
+  // 데모 수정 1차 ② — 그릴 사각형. area 가 없으면 종전 원점 중심 widthMm × depthMm.
+  const area = opts.area;
+  const rectMinX = area ? area.minX : -widthMm / 2;
+  const rectMaxX = area ? area.maxX : widthMm / 2;
+  const rectMinZ = area ? area.minZ : -depthMm / 2;
+  const rectMaxZ = area ? area.maxZ : depthMm / 2;
+  const rectW = rectMaxX - rectMinX;
+  const rectD = rectMaxZ - rectMinZ;
+  const centerX = (rectMinX + rectMaxX) / 2;
+  const centerZ = (rectMinZ + rectMaxZ) / 2;
 
-  // 1) 평면 (Y=0)
+  // 1) 평면 (Y=0) — 사각형 중심으로 옮긴다(area 가 없으면 원점 그대로).
   const plate = MeshBuilder.CreateGround(
     "v2_plate",
-    { width: widthMm, height: depthMm },
+    { width: rectW, height: rectD },
     scene,
   );
+  plate.position.x = centerX;
+  plate.position.z = centerZ;
   const plateMat = new StandardMaterial("v2_plate_mat", scene);
   plateMat.diffuseColor = new Color3(0.78, 0.8, 0.85);
   plateMat.specularColor = new Color3(0.05, 0.05, 0.05);
@@ -55,18 +87,18 @@ export function addBuildPlateAndGrid(
   plate.isPickable = false;
 
   // 2) 평면 외곽선 (눈에 띄게 진하게)
-  const halfW = widthMm / 2;
-  const halfD = depthMm / 2;
+  const halfW = rectW / 2;
+  const halfD = rectD / 2;
   const outlineY = 0.02;
   const plateOutline = MeshBuilder.CreateLines(
     "v2_plate_outline",
     {
       points: [
-        new Vector3(-halfW, outlineY, -halfD),
-        new Vector3(halfW, outlineY, -halfD),
-        new Vector3(halfW, outlineY, halfD),
-        new Vector3(-halfW, outlineY, halfD),
-        new Vector3(-halfW, outlineY, -halfD),
+        new Vector3(rectMinX, outlineY, rectMinZ),
+        new Vector3(rectMaxX, outlineY, rectMinZ),
+        new Vector3(rectMaxX, outlineY, rectMaxZ),
+        new Vector3(rectMinX, outlineY, rectMaxZ),
+        new Vector3(rectMinX, outlineY, rectMinZ),
       ],
     },
     scene,
@@ -79,21 +111,22 @@ export function addBuildPlateAndGrid(
   //   같은 개념을 선으로 구현한다: 앞변 중앙에서 **바깥으로 튀어나온 사다리꼴**.
   //
   //   어느 변이 "앞"인가: Front 프리셋(alpha=-π/2, beta=π/2)의 카메라는 내부
-  //   −Z 쪽에 선다. 따라서 사용자가 "앞"이라 부르는 변은 **내부 z = −depthMm/2**.
-  //   (표시 규약 B-13 에서 내부 −Z = 표시 +Y.)
+  //   −Z 쪽에 선다. 따라서 사용자가 "앞"이라 부르는 변은 **내부 z 최소 변**
+  //   (area 가 없으면 −depthMm/2). (표시 규약 B-13 에서 내부 −Z = 표시 +Y.)
+  //   데모 수정 1차 ②: 탭은 그린 사각형의 앞변 중앙(centerX)에 단다.
   //
   //   외곽선과 같은 선 메시로 그려 머티리얼을 새로 만들지 않는다(누수 여지 0).
   const tabDepth = Math.min(halfW, halfD) * 0.12; // 플레이트 크기에 비례
   const tabHalfW = tabDepth * 1.1;
-  const frontZ = -halfD;
+  const frontZ = rectMinZ;
   const frontMarker = MeshBuilder.CreateLines(
     "v2_plate_front",
     {
       points: [
-        new Vector3(-tabHalfW, outlineY, frontZ),
-        new Vector3(-tabHalfW * 0.45, outlineY, frontZ - tabDepth),
-        new Vector3(tabHalfW * 0.45, outlineY, frontZ - tabDepth),
-        new Vector3(tabHalfW, outlineY, frontZ),
+        new Vector3(centerX - tabHalfW, outlineY, frontZ),
+        new Vector3(centerX - tabHalfW * 0.45, outlineY, frontZ - tabDepth),
+        new Vector3(centerX + tabHalfW * 0.45, outlineY, frontZ - tabDepth),
+        new Vector3(centerX + tabHalfW, outlineY, frontZ),
       ],
     },
     scene,
@@ -103,22 +136,30 @@ export function addBuildPlateAndGrid(
   frontMarker.isPickable = false;
 
   // 3) 그리드 라인 (10mm 간격)
+  //   격자 원점: area 가 없으면 world 원점(종전 — 원점에서 ±방향으로 step 배수),
+  //   있으면 (minX, minZ) 모서리(데모 수정 1차 ② — Task0 는 베드 (10, 10) = 출력 가능 영역 모서리).
+  //   ⚠️ 격자 원점이 바뀌어도 모델 좌표(world 원점)는 바뀌지 않는다 — 표시용 선일 뿐이다.
+  //   줄 번호 k 는 사각형 안에 드는 범위만: x = gridOriginX + k·step ∈ [rectMinX, rectMaxX].
   const gridLines: Vector3[][] = [];
-  const xCount = Math.floor(halfW / step);
-  const zCount = Math.floor(halfD / step);
+  const gridOriginX = area ? rectMinX : 0;
+  const gridOriginZ = area ? rectMinZ : 0;
+  const xFirst = Math.ceil((rectMinX - gridOriginX) / step - GRID_EPS);
+  const xLast = Math.floor((rectMaxX - gridOriginX) / step + GRID_EPS);
+  const zFirst = Math.ceil((rectMinZ - gridOriginZ) / step - GRID_EPS);
+  const zLast = Math.floor((rectMaxZ - gridOriginZ) / step + GRID_EPS);
   const gridY = 0.01;
-  for (let i = -xCount; i <= xCount; i++) {
-    const x = i * step;
+  for (let i = xFirst; i <= xLast; i++) {
+    const x = gridOriginX + i * step;
     gridLines.push([
-      new Vector3(x, gridY, -halfD),
-      new Vector3(x, gridY, halfD),
+      new Vector3(x, gridY, rectMinZ),
+      new Vector3(x, gridY, rectMaxZ),
     ]);
   }
-  for (let j = -zCount; j <= zCount; j++) {
-    const z = j * step;
+  for (let j = zFirst; j <= zLast; j++) {
+    const z = gridOriginZ + j * step;
     gridLines.push([
-      new Vector3(-halfW, gridY, z),
-      new Vector3(halfW, gridY, z),
+      new Vector3(rectMinX, gridY, z),
+      new Vector3(rectMaxX, gridY, z),
     ]);
   }
   const grid = MeshBuilder.CreateLineSystem(

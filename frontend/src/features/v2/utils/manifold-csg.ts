@@ -137,7 +137,7 @@ export function manifoldToBabylonMesh(
       positions instanceof Float32Array ? Array.from(positions) : positions,
     );
     // manifold-3d 는 CCW outward (right-handed). Babylon 은 left-handed
-    // CW=front. winding swap 으로 통일 → stl-export 의 winding swap 과
+    // CW=front. winding swap 으로 통일 → stl-export 의 (x, z, y) 반사(감김 뒤집힘)와
     // 일관 처리 (Bridge mesh 가 slicer 에서 inside-out 인식되는 것 방지).
     const flippedIdx: number[] = [];
     for (let i = 0; i < mesh.triVerts.length; i += 3) {

@@ -4,10 +4,15 @@ import { Mesh, Vector3, VertexBuffer } from "@babylonjs/core";
  * 여러 Babylon Mesh 를 합쳐 binary STL Blob 으로 만든다.
  *
  * 좌표계 변환: Babylon (Y-up, left-handed) → STL (Z-up).
- *   Babylon (x, y, z) → STL (x, -z, y)   ← X 축 +90°
+ *   Babylon (x, y, z) → STL (x, z, y)   ← stl-loader(Babylon STL 로더)의 Y/Z 교환을 그대로 되돌림
  *
- * 우리 stl-loader 가 import 시 X 축 -90° 회전을 vertex 에 베이크
- * 했으므로 export 에서 +90° 를 적용하면 원본 STL 좌표계로 복귀.
+ * 데모 수정 1차 ①-b(STL 축 Z-up, 리드 10/13): stl-loader 가 로더의 (x, z, y) 교환만 쓰므로(추가 회전
+ * 없음) export 도 같은 교환이면 로드 → export 가 원본 정점·감김 그대로 돌아온다(verify-demo-fix1 (e)).
+ * 종전은 로더 교환을 빼먹은 채 X +90° 로 되돌려(x, −z, y) 원본의 Y/Z 가 바뀐 **거울상**이 나갔다.
+ *
+ * 감김: 교환은 반사(행렬식 −1)라 그것만으로 감김이 뒤집힌다 — Babylon(left-handed, CW=front)의
+ * 삼각형이 STL(right-handed)에서 CCW=외향이 되므로 정점 순서는 인덱스 그대로 쓴다(종전의 순수 회전
+ * + 정점 1·2 교환과 감김 결과가 같다 — 서포트 등 STL 이 아닌 메시도 종전과 같은 감김으로 나간다).
  *
  * 각 face 의 normal 은 vertex 위치로부터 직접 재계산 (winding
  * 기반 outward). STL 파일에 저장된 normal 은 일반적으로 face normal.
@@ -30,11 +35,11 @@ export function meshesToStlBlob(meshes: Mesh[]): Blob {
 
     for (let i = 0; i < indices.length; i += 3) {
       // Babylon (left-handed, CW=front) → STL (right-handed, CCW=front)
-      // → 두 vertex swap 으로 winding 뒤집기. 그래야 외부 슬라이서가
-      //   face normal 을 올바른 외부 방향으로 인식.
+      // → 아래 (x, z, y) 교환(반사)이 winding 을 뒤집으므로 정점 순서는 인덱스 그대로.
+      //   그래야 외부 슬라이서가 face normal 을 올바른 외부 방향으로 인식.
       const i0 = indices[i] * 3;
-      const i1 = indices[i + 2] * 3;
-      const i2 = indices[i + 1] * 3;
+      const i1 = indices[i + 1] * 3;
+      const i2 = indices[i + 2] * 3;
 
       const local0 = new Vector3(positions[i0], positions[i0 + 1], positions[i0 + 2]);
       const local1 = new Vector3(positions[i1], positions[i1 + 1], positions[i1 + 2]);
@@ -45,10 +50,10 @@ export function meshesToStlBlob(meshes: Mesh[]): Blob {
       const w1 = Vector3.TransformCoordinates(local1, world);
       const w2 = Vector3.TransformCoordinates(local2, world);
 
-      // Babylon → STL: (x, y, z) → (x, -z, y)
-      const s0: [number, number, number] = [w0.x, -w0.z, w0.y];
-      const s1: [number, number, number] = [w1.x, -w1.z, w1.y];
-      const s2: [number, number, number] = [w2.x, -w2.z, w2.y];
+      // Babylon → STL: (x, y, z) → (x, z, y) — 로드 교환의 역(자기 자신)
+      const s0: [number, number, number] = [w0.x, w0.z, w0.y];
+      const s1: [number, number, number] = [w1.x, w1.z, w1.y];
+      const s2: [number, number, number] = [w2.x, w2.z, w2.y];
 
       // face normal (STL 좌표에서 직접 계산)
       const e1x = s1[0] - s0[0];

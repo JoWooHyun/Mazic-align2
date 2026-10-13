@@ -40,10 +40,10 @@ cd frontend && npm run build      # vite build
 ```
 
 ```
-cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-12 기준 39종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-13 기준 40종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
 ```
 
-- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/12 기준 39종)가 상시 PASS여야 한다
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/13 기준 40종)가 상시 PASS여야 한다
   (**Node 20.6 이상** — `verify-head-normal.mjs` 가 `node:module` register 로더 훅을 쓴다)
   (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
   확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
@@ -68,7 +68,7 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 | `utils/{exposure,print-time,mask-png}.ts` | 노광 보간, 시간 추정, 마스크 PNG | 기본값 단일 소스 유지 |
 | `data/*.repo.ts` + `data/db.ts` | IndexedDB 계층 | 스키마 변경은 협의 |
 | `types/printer.ts` | 프린터 프로파일 (노광 4종 + 리프트 4종, DEFAULT_* + PROFILE_FIELD_LIMITS) | 값 변경은 마스크 ZIP manifest 노광값·예상 시간 변경 — 규칙 5·6 |
-| `utils/sample-models.ts` | 예제 모델(20mm 큐브·구) 바이너리 STL 코드 생성 | 비등방 도형 추가 시 Y-up 전제 재검토 |
+| `utils/sample-models.ts` | 예제 모델(20mm 큐브·구) 바이너리 STL 코드 생성 — **STL 표준 Z-up**(2026-10-13) | 비등방 도형 추가 시 `verify-sample-models` 좌표 갱신 |
 | `components/DentalPanel.tsx` 등 | 우측 패널 UI들 | |
 
 `src/components·pages·services`(v2 밖)는 구 v1 — 동결, 수정 금지 (Step 3-2 정리 예정).
@@ -96,6 +96,7 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 - **Tailwind 가 `src/**/*.{ts,tsx}` 의 주석·문자열 단어도 클래스로 읽는다.** `inline`·`hidden`·`block`·`fixed`·`table` 같은 단어가 TS 에 새로 들어가면
   CSS 가 늘어 build 산출물 해시가 바뀐다(Z1-a1 에서 실측 — 내부 키 `"inline"` → `trailing_comment` 로 회피). "build 산출물 동일" 을 주장하는 PR 은 이 단어를 피할 것.
 - **build 산출물 비교는 같은 체크아웃 안에서**(수정 전 build 를 떠 두고 sha256 비교). `git archive` 판과 작업 트리를 비교하면 autocrlf 때문에 `index.html` 이 거짓으로 달라진다.
+- **STL 축**: Babylon `STLFileLoader` 는 기본으로 STL (x, y, z) 를 (x, z, y) 로 넣어 **STL Z 를 위(Y)** 로 바꾼다(왼손 엔진용 반사). `utils/stl-loader.ts` 에 회전을 더 얹으면 안 된다 — 2026-10-13 까지 X −90° 가 한 번 더 걸려 치과 STL 이 90° 눕혀 읽혔다(데모 수정 1차 ①-b). 베드 좌표(`task0-frame` 베드 Y = world Z)가 반사를 한 번 더 해 출력은 거울상이 아니다. 수치 패널 표시축(`types/axis-display.ts`)은 별도 규약.
 - **Task0 파서 이식(`utils/task0/task0-gcode-parser.ts`)을 고치면** `verify-task0-parser.mjs` 출력이 "SKIP(차분 검사)" 가 아니라 "불일치 0건" 인지 확인할 것 —
   Task0 리포·Python 이 없는 PC 에서는 차분 검사가 SKIP 되고, 그때는 미묘한 이식 오류를 못 잡는다.
 

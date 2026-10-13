@@ -18,12 +18,14 @@ import * as supportRepo from "../../../data/supports.repo";
 import type { BabylonSceneHandle } from "../../../components/BabylonScene";
 import type { RedesignTarget } from "../../../components/babylon/redesign-target";
 import type { SupportParams } from "../../../support";
+import type { STLFileV2 } from "../../../types/stl";
 import type { RefreshSupports } from "./types";
 import {
   applyAutoSupportReplace,
   commitRedesignGeneration,
   formatAutoReplaceNotice,
   makeUndoPusher,
+  type AutoReplaceResult,
 } from "../utils/auto-support-replace";
 // busy 라벨 선표시 헬퍼 — Support 탭 자동 생성도 같은 보장을 쓰도록 utils 로 옮겼다(사고 방지 3차 ④, 의미 불변).
 import { runWithBusy } from "../utils/run-with-busy";
@@ -47,6 +49,12 @@ interface UseDentalWorkflowArgs {
   refreshSupports: RefreshSupports;
   /** 뷰포트 하단 안내(5초) — 자동 서포트 교체 결과 알림 (신규 8). */
   onNotice: (message: string) => void;
+  /**
+   * 데모 수정 1차 ③ — 현재 선택. 두 개 이상이면 "서포트 생성(재설계)"가 선택한 모델을 하나씩 차례로 만든다.
+   */
+  selectedIds: ReadonlySet<string>;
+  /** 데모 수정 1차 ③ — 모델 목록. 여러 모델 생성의 순서(files 순서)와 실패 문구의 모델 이름. */
+  files: STLFileV2[];
 }
 
 export function useDentalWorkflow({
@@ -56,6 +64,8 @@ export function useDentalWorkflow({
   layerHeightMm,
   refreshSupports,
   onNotice,
+  selectedIds,
+  files,
 }: UseDentalWorkflowArgs) {
   // P-2: 검출·점생성 파라미터(사용자 조절). 스토어에서 직접 읽어
   //   프롭 스레딩 없이 최신값을 쓴다.
@@ -208,19 +218,24 @@ export function useDentalWorkflow({
    * 신규 9: 입력을 만드는 순간의 활성 STL(id·world 행렬)을 `target` 으로 함께
    * 돌려준다 — 이것이 이 생성의 대상 모델이다. 검출 중 선택이 바뀌어도 확정·저장은
    * target 기준으로 한다.
+   *
+   * 데모 수정 1차 ③: `stlId` 를 주면 그 모델을 검출한다(여러 모델 차례 생성). 없으면 종전대로 활성 STL.
+   *   `phasePrefix`(예: "모델 2/3 · ")는 진행률 문구 앞에 붙는다 — 빈 문자열이면 종전 문구 그대로.
+   *   입력 준비 실패는 상태 문구를 직접 쓰지 않고 `{ ok: false, reason }` 으로 돌려준다 — 여러 모델이면
+   *   사유를 모아 두고 다음 모델로 넘어가야 해서다(한 모델 경로는 호출 측이 종전과 같은 문구를 쓴다).
+   *   null = 씬 핸들 없음(종전과 같이 조용히 끝).
    */
-  const runDetectInWorker = useCallback(async () => {
-    const prep = sceneHandleRef.current?.prepareRedesignDetectInput();
+  const runDetectInWorker = useCallback(async (stlId?: string, phasePrefix = "") => {
+    const prep = sceneHandleRef.current?.prepareRedesignDetectInput(stlId);
     if (!prep) return null;
     if (!prep.ok) {
-      setRedesignStatus({ ok: false, message: prep.reason });
-      return null;
+      return { ok: false as const, reason: prep.reason };
     }
     const target: RedesignTarget = {
       stlId: prep.stlId,
       worldMatrix: prep.worldMatrix,
     };
-    setRedesignProgress({ done: 0, total: 1, phase: "준비" });
+    setRedesignProgress({ done: 0, total: 1, phase: `${phasePrefix}준비` });
     try {
       const detected = await detectService.run(
         {
@@ -238,9 +253,15 @@ export function useDentalWorkflow({
           },
           placePoints: { ...DEFAULT_PLACE_POINTS_PARAMS, ...detectParams },
         },
-        (done, total, phase) => setRedesignProgress({ done, total, phase }),
+        (done, total, phase) =>
+          setRedesignProgress({
+            done,
+            total,
+            // 접두가 있으면 빈 단계명도 "처리 중"으로 채운다(패널은 빈 문구일 때만 "처리 중"을 보인다).
+            phase: phasePrefix ? `${phasePrefix}${phase || "처리 중"}` : phase,
+          }),
       );
-      return { detected, target };
+      return { ok: true as const, detected, target };
     } finally {
       setRedesignProgress(null);
     }
@@ -263,8 +284,13 @@ export function useDentalWorkflow({
     setRedesignBusy(true);
     setRedesignStatus(null);
     try {
+      // 디버그 경로는 종전(활성 1개) 그대로 — 데모 수정 1차 ③ 의 여러 모델 차례 생성은 서포트 생성 버튼만.
       const run = await runDetectInWorker();
       if (!run) return;
+      if (!run.ok) {
+        setRedesignStatus({ ok: false, message: run.reason });
+        return;
+      }
       const res = run.detected;
       sceneHandleRef.current?.renderRedesignPoints(res.points);
       setRedesignStatus({
@@ -305,83 +331,178 @@ export function useDentalWorkflow({
   //   뷰어 이탈 (신규 11): 언마운트되면 저장하지 않고, 라우팅을 못 하면 원시 점으로
   //   폴백하지 않는다(commitRedesignGeneration).
   //   연타: redesignBusy 로 버튼이 비활성화되고 여기서도 한 번 더 막는다.
+  //
+  //   데모 수정 1차 ③ — 여러 모델 선택 → 선택한 모델을 **하나씩 차례로**(files 순서, 리드 10/12).
+  //   선택이 하나·없음이면 종전대로 활성 1개. 모델 하나 = 위 흐름 한 번(검출 → 확정 →
+  //   교체 저장)이라 undo 도 모델마다 1회다(auto-support-replace 가 모델 단위 — 그대로 둔다).
+  //   여러 모델일 때: 한 모델이 거절·점 없음·실패면 사유를 모아 두고 다음 모델로 계속, 뷰어 이탈(cancelled·
+  //   aliveRef)·검출 취소(DetectCancelError)면 즉시 중단. 문구·안내는 끝난 뒤 한 번에.
+  //   한 모델일 때: 문구·안내·예외 처리 전부 종전 그대로.
   const handleGenerateRedesignSupports = useCallback(async () => {
     if (!projectId || redesignBusy) return;
     setRedesignBusy(true);
     setRedesignStatus(null);
+    // 대상: 두 개 이상 선택이면 files 순서대로 그 모델들. 하나·없음은 모델을 지정하지 않는다(undefined) —
+    //   종전 경로(활성 STL = 선택 첫 번째, 없으면 씬 첫 번째) 그대로라 한 모델 동작이 바뀌지 않는다.
+    const picked = files.filter((f) => selectedIds.has(f.id)).map((f) => f.id);
+    const targetIds: (string | undefined)[] = picked.length > 1 ? picked : [undefined];
+    const multi = targetIds.length > 1;
+    const nameOf = (id: string | undefined) =>
+      files.find((f) => f.id === id)?.fileName ?? id ?? "활성 모델";
+    // 여러 모델 결과 모음.
+    let savedModels = 0;
+    let savedPoints = 0;
+    let routeFailed = 0;
+    let routeFailedIsland = 0;
+    const skipped: string[] = [];
+    const replaced: AutoReplaceResult = {
+      removedCount: 0,
+      addedCount: 0,
+      keptAttachedCount: 0,
+    };
     try {
-      // S-2: 검출은 워커에서. 화면이 안 멈추고 진행률·취소가 된다.
-      const run = await runDetectInWorker();
-      if (!run) return;
-      const { detected: res, target } = run;
-      const outcome = await commitRedesignGeneration({
-        isCancelled: () => !aliveRef.current,
-        // 표면 스냅 + 3단 폴백 라우팅 + world→stl-local 변환 (S-4b-2c) — 대상은 target.
-        route: () =>
-          sceneHandleRef.current?.routeAndFinalizeRedesignPoints(
-            res.points,
-            supportParams,
-            target,
-          ),
-        save: (points) =>
-          applyAutoSupportReplace({
-            label: "redesign-supports",
-            targetStlIds: new Set([target.stlId]),
-            generated: points,
-            replace: (pick, add) =>
-              supportRepo.replaceSupportsInProject(projectId, pick, add),
-            refresh: refreshSupports,
-            pushUndo: makeUndoPusher(),
-          }),
-      });
-      // 뷰어를 떠났다 — 저장도 안내도 하지 않는다.
-      if (outcome.kind === "cancelled") return;
-      if (outcome.kind === "rejected") {
-        setRedesignStatus({ ok: false, message: outcome.reason });
-        return;
+      for (const [idx, stlId] of targetIds.entries()) {
+        // 뷰어를 떠났으면 다음 모델로 가지 않는다(신규 11 — 저장도 안내도 하지 않는다).
+        if (!aliveRef.current) return;
+        try {
+          // S-2: 검출은 워커에서. 화면이 안 멈추고 진행률·취소가 된다.
+          const run = await runDetectInWorker(
+            stlId,
+            multi ? `모델 ${idx + 1}/${targetIds.length} · ` : "",
+          );
+          if (!run) return;
+          if (!run.ok) {
+            if (!multi) {
+              setRedesignStatus({ ok: false, message: run.reason });
+              return;
+            }
+            skipped.push(`${nameOf(stlId)} — ${run.reason}`);
+            continue;
+          }
+          const { detected: res, target } = run;
+          const outcome = await commitRedesignGeneration({
+            isCancelled: () => !aliveRef.current,
+            // 표면 스냅 + 3단 폴백 라우팅 + world→stl-local 변환 (S-4b-2c) — 대상은 target.
+            route: () =>
+              sceneHandleRef.current?.routeAndFinalizeRedesignPoints(
+                res.points,
+                supportParams,
+                target,
+              ),
+            save: (points) =>
+              applyAutoSupportReplace({
+                label: "redesign-supports",
+                targetStlIds: new Set([target.stlId]),
+                generated: points,
+                replace: (pick, add) =>
+                  supportRepo.replaceSupportsInProject(projectId, pick, add),
+                refresh: refreshSupports,
+                pushUndo: makeUndoPusher(),
+              }),
+          });
+          // 뷰어를 떠났다 — 저장도 안내도 하지 않는다(남은 모델도 하지 않는다).
+          if (outcome.kind === "cancelled") return;
+          if (outcome.kind === "rejected") {
+            if (!multi) {
+              setRedesignStatus({ ok: false, message: outcome.reason });
+              return;
+            }
+            skipped.push(`${nameOf(target.stlId)} — ${outcome.reason}`);
+            continue;
+          }
+          const report = outcome.report;
+          console.log("[재설계 라우팅]", report);
+          if (outcome.kind === "empty") {
+            if (!multi) {
+              setRedesignStatus({ ok: true, message: "생성할 서포트 점이 없습니다." });
+              return;
+            }
+            skipped.push(`${nameOf(target.stlId)} — 생성할 서포트 점이 없습니다`);
+            continue;
+          }
+          const finalized = outcome.points;
+          // 검출 디버그 오버레이(마젠타/주황/파랑 점) 정리 — 저장이 끝나면 기둥이
+          //   실물로 서므로 오버레이는 역할이 끝났다. world 좌표 고정이라 남겨두면
+          //   모델을 움직였을 때 허공에 떠 보인다(B-4). 상태 메시지는 통계 표시용으로
+          //   유지하고, 디버그 버튼 경로(handleRunRedesignDetect)는 점 눈확인이
+          //   목적이므로 오버레이를 그대로 둔다.
+          sceneHandleRef.current?.clearRedesignDetect();
+          if (multi) {
+            // 여러 모델 — 합계만 모으고 문구·안내는 루프가 끝난 뒤 한 번에.
+            savedModels++;
+            savedPoints += finalized.length;
+            routeFailed += report?.failed ?? 0;
+            routeFailedIsland += report?.failedIslandCount ?? 0;
+            replaced.removedCount += outcome.result.removedCount;
+            replaced.addedCount += outcome.result.addedCount;
+            replaced.keptAttachedCount += outcome.result.keptAttachedCount;
+            continue;
+          }
+          // 라우팅 요약 — 실패 점이 있으면 저장은 성공(ok:true)이되 경고 문구를 붙인다.
+          //   실패를 조용히 삼키면 "서포트가 안 붙은 자리"를 사용자가 모른 채 출력한다
+          //   (연구 7절-6). 아일랜드 실패는 출력 자체가 무너지므로 따로 센다.
+          let routeSummary = "";
+          if (report) {
+            routeSummary =
+              ` · 점 ${report.input}(중복 제거 후 ${report.afterDedupe})` +
+              ` → 기둥 ${report.clusters} · 합류 ${report.joined} · 수직 ${report.vertical}` +
+              ` · 경사 ${report.bent} · 앵커 ${report.anchored} · 실패 ${report.failed}`;
+            if (report.failed > 0) {
+              routeSummary +=
+                ` · ⚠️ 실패 ${report.failed}개(아일랜드 ${report.failedIslandCount}개)` +
+                " — 서포트가 못 닿은 점";
+            }
+            if (report.degenerateStruts > 0) {
+              routeSummary += ` · 퇴화 거절 ${report.degenerateStruts}개`;
+            }
+          }
+          setRedesignStatus({
+            ok: true,
+            message:
+              `서포트 점 ${finalized.length}개 저장 · 뷰어에 기둥 생성 ` +
+              `(아일랜드 ${res.stats.islandCount} · 오버행 ${res.stats.overhangCount})` +
+              routeSummary,
+          });
+          // undo 항목은 applyAutoSupportReplace 가 이미 남겼다 — 여기서는 교체 안내만.
+          const notice = formatAutoReplaceNotice(outcome.result);
+          if (notice) onNotice(notice);
+        } catch (e) {
+          // 한 모델이면 종전대로 바깥 catch 가 알린다. 여러 모델이면 검출 취소만 전체 중단,
+          //   나머지 예외(저장 실패 등)는 그 모델만 건너뛴다 — 교체는 한 transaction 이라 그 모델의
+          //   기존 서포트는 그대로다.
+          if (!multi || e instanceof DetectCancelError) throw e;
+          skipped.push(
+            `${nameOf(stlId)} — 서포트 생성 실패: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
       }
-      const report = outcome.report;
-      console.log("[재설계 라우팅]", report);
-      if (outcome.kind === "empty") {
-        setRedesignStatus({ ok: true, message: "생성할 서포트 점이 없습니다." });
-        return;
-      }
-      const finalized = outcome.points;
-      // 검출 디버그 오버레이(마젠타/주황/파랑 점) 정리 — 저장이 끝나면 기둥이
-      //   실물로 서므로 오버레이는 역할이 끝났다. world 좌표 고정이라 남겨두면
-      //   모델을 움직였을 때 허공에 떠 보인다(B-4). 상태 메시지는 통계 표시용으로
-      //   유지하고, 디버그 버튼 경로(handleRunRedesignDetect)는 점 눈확인이
-      //   목적이므로 오버레이를 그대로 둔다.
-      sceneHandleRef.current?.clearRedesignDetect();
-      // 라우팅 요약 — 실패 점이 있으면 저장은 성공(ok:true)이되 경고 문구를 붙인다.
-      //   실패를 조용히 삼키면 "서포트가 안 붙은 자리"를 사용자가 모른 채 출력한다
-      //   (연구 7절-6). 아일랜드 실패는 출력 자체가 무너지므로 따로 센다.
-      let routeSummary = "";
-      if (report) {
-        routeSummary =
-          ` · 점 ${report.input}(중복 제거 후 ${report.afterDedupe})` +
-          ` → 기둥 ${report.clusters} · 합류 ${report.joined} · 수직 ${report.vertical}` +
-          ` · 경사 ${report.bent} · 앵커 ${report.anchored} · 실패 ${report.failed}`;
-        if (report.failed > 0) {
-          routeSummary +=
-            ` · ⚠️ 실패 ${report.failed}개(아일랜드 ${report.failedIslandCount}개)` +
+      if (multi) {
+        let message =
+          `모델 ${targetIds.length}개 중 ${savedModels}개 생성 · 서포트 점 합계 ${savedPoints}개` +
+          " (되돌리기는 모델별)";
+        if (routeFailed > 0) {
+          message +=
+            ` · ⚠️ 실패 ${routeFailed}개(아일랜드 ${routeFailedIsland}개)` +
             " — 서포트가 못 닿은 점";
         }
-        if (report.degenerateStruts > 0) {
-          routeSummary += ` · 퇴화 거절 ${report.degenerateStruts}개`;
+        if (skipped.length > 0) {
+          message += ` · 건너뛴 모델 ${skipped.length}개: ${skipped.join(" / ")}`;
         }
+        setRedesignStatus({ ok: skipped.length === 0, message });
+        const notice = formatAutoReplaceNotice(replaced);
+        if (notice) onNotice(`${notice} · 되돌리기는 모델별`);
       }
-      setRedesignStatus({
-        ok: true,
-        message:
-          `서포트 점 ${finalized.length}개 저장 · 뷰어에 기둥 생성 ` +
-          `(아일랜드 ${res.stats.islandCount} · 오버행 ${res.stats.overhangCount})` +
-          routeSummary,
-      });
-      // undo 항목은 applyAutoSupportReplace 가 이미 남겼다 — 여기서는 교체 안내만.
-      const notice = formatAutoReplaceNotice(outcome.result);
-      if (notice) onNotice(notice);
     } catch (e) {
+      // 여러 모델 도중 검출을 취소했다 — 이미 끝난 모델은 저장돼 있으므로 몇 개까지 됐는지 알린다.
+      if (multi && e instanceof DetectCancelError) {
+        setRedesignStatus({
+          ok: false,
+          message:
+            `검출을 취소했습니다 — 모델 ${targetIds.length}개 중 ${savedModels}개 생성` +
+            " (되돌리기는 모델별)",
+        });
+        return;
+      }
       // 저장/스냅 중 예외도 사용자에게 실패 사유를 남긴다(감사 #5 취지).
       //   교체는 한 transaction 이라 저장 실패 시 기존 서포트는 그대로다.
       setRedesignStatus({
@@ -394,6 +515,9 @@ export function useDentalWorkflow({
   }, [
     projectId,
     redesignBusy,
+    // 데모 수정 1차 ③ — 대상 모델 목록(선택·files 순서·이름).
+    files,
+    selectedIds,
     // S-4b-2c: 라우팅이 반경(trunkDiameterMm)·화살촉 높이까지 보므로 params
     //   객체 전체를 의존성으로 둔다(종전엔 liftMm 만 썼다).
     supportParams,

@@ -6,6 +6,7 @@ import {
   type SupportSummary,
 } from "../../../support/support-stats";
 import type { EditMode } from "../../../components/EditModeControls";
+import type { PrintableAreaMm } from "../../../utils/build-volume";
 
 interface ViewportInfoPanelsProps {
   filesLength: number;
@@ -19,6 +20,11 @@ interface ViewportInfoPanelsProps {
   plateWidthMm: number;
   plateDepthMm: number;
   /**
+   * 데모 수정 1차 ② — Task0 출력 가능 영역(world X/Z mm). 있으면 3D 플레이트가 이 영역에 그려지므로
+   *   "플레이트 150.0 × 85.0" 대신 "출력 영역 140.0 × 75.0" 처럼 영역 크기를 보인다. 없으면 종전 표기.
+   */
+  printableAreaMm?: PrintableAreaMm | null;
+  /**
    * 현재 서포트 구성 요약 (C-4). null/전체 0 이면 패널을 숨긴다.
    *   근거: `docs/판정_CHITUBOX분석_20260821.md` C-4 (`docs/supp94_v2.md` 46장).
    */
@@ -31,6 +37,7 @@ export default function ViewportInfoPanels({
   editMode,
   plateWidthMm,
   plateDepthMm,
+  printableAreaMm = null,
   supportSummary = null,
 }: ViewportInfoPanelsProps) {
   return (
@@ -79,8 +86,19 @@ export default function ViewportInfoPanels({
           <span>Z (위)</span>
         </div>
         <div className="mt-1 text-gray-500">
-          플레이트 {plateWidthMm.toFixed(1)} × {plateDepthMm.toFixed(1)} mm ·
-          격자 10 mm
+          {printableAreaMm ? (
+            <>
+              출력 영역{" "}
+              {(printableAreaMm.maxX - printableAreaMm.minX).toFixed(1)} ×{" "}
+              {(printableAreaMm.maxZ - printableAreaMm.minZ).toFixed(1)} mm ·
+              격자 10 mm
+            </>
+          ) : (
+            <>
+              플레이트 {plateWidthMm.toFixed(1)} × {plateDepthMm.toFixed(1)} mm ·
+              격자 10 mm
+            </>
+          )}
         </div>
       </div>
 

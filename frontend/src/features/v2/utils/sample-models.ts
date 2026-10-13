@@ -6,17 +6,18 @@
 //   · 치수 정확성 보장 — "20mm 정육면체" 가 정말 20.000mm 인지 코드로 단언할 수 있고,
 //     verify-sample-models.mjs 가 AABB 를 직접 재서 회귀를 막는다.
 //
-// 좌표계: 이 파일이 만드는 것은 **STL 파일 자체**다. STL 관례대로 Z-up 이 아니라,
-//   불러오자마자 플레이트에 앉도록 "바닥이 y=0, XZ 중심이 원점"(y ∈ [0, size],
-//   x·z ∈ [-size/2, size/2]) 으로 생성한다. 실제 화면 배치는 stl-loader 의
-//   alignMeshToPlate 가 어차피 다시 맞추지만, 파일 단독으로 열어도 말이 되는 형태로 둔다.
+// 좌표계: 이 파일이 만드는 것은 **STL 파일 자체**다. STL 관례대로 **Z-up** —
+//   "바닥이 z=0, XY 중심이 원점"(z ∈ [0, size], x·y ∈ [-size/2, size/2]) 으로 생성한다.
+//   실제 화면 배치는 stl-loader 의 alignMeshToPlate 가 어차피 다시 맞추지만, 파일 단독으로
+//   (다른 슬라이서에서) 열어도 플레이트에 바로 앉는 형태로 둔다.
 //
-//   ⚠️ 이 Y-up 생성은 **등방 도형(20×20×20)이라 안전한 것**이다. stl-loader 는 STL 을
-//   Z-up 으로 가정해 X −90° 를 베이크한 뒤 `autoOrientUpright` 를 돌리는데, 그 함수는
-//   축 비율이 1.5배를 넘을 때만 세운다(stl-loader.ts RATIO). 큐브·구는 세 축이 같아
-//   임계에 안 걸려 no-op 이므로 결과가 의도대로 나온다.
-//   **비등방 예제(원기둥·육각기둥 등)를 추가한다면 의도치 않게 회전되므로,
-//   그때는 Z-up 생성으로 전환할지 먼저 검토할 것.**
+//   데모 수정 1차 ①-b(STL 축 Z-up, 리드 10/13): stl-loader 는 Babylon STL 로더의 (x, z, y) 교환만
+//   쓴다(추가 회전 없음) — 위(world Y) = STL Z, 깊이(world Z) = STL Y. 비등방 예제를 추가해도 Z 를 높이로 만들면 된다.
+//   종전 판은 로더가 STL Y 를 위로 읽던 때라 Y-up 으로 만들었다. 지금 정점은 그 Y-up 판을 X +90° 돌린
+//   자리((x, y, z) → (x, −z, y) — 순수 회전이라 CCW 외향 그대로)이고 **정점 이름·삼각형 순서는 그대로**다.
+//   그래서 불러온 world 삼각형 순서가 종전(Y-up 파일 + 로더 X −90°)과 같고 정점 차이는 종전 회전 베이크의
+//   부동소수점 잡음(5e-15 mm 미만)뿐이다 — 앱의 예제 큐브·구 Task0 run.gcode·마스크 바이트가 종전과 같다
+//   (verify-demo-fix1 (f)). 슬라이스·마스크·G-code 가 world 삼각형 순서를 따르므로 순서까지 맞춘 것.
 //
 // 법선: 실제 외향 법선을 계산해 기입한다(0 으로 두지 않는다 — 오버행 검출이 법선을 쓴다).
 //   삼각형 winding 은 반시계(CCW, 오른손 법칙)로 바깥을 향한다. 앞뒤가 뒤집히면
@@ -118,33 +119,34 @@ const SPHERE_LON = 32;
 
 /**
  * 20×20×20mm 정육면체 — 삼각형 12개 (면당 2개).
- * 바닥이 y=0, XZ 중심이 원점 → x·z ∈ [−10, 10], y ∈ [0, 20].
+ * 바닥이 z=0, XY 중심이 원점 → x·y ∈ [−10, 10], z ∈ [0, 20].
  */
 function buildCube(): Blob {
   const h = CUBE_SIZE / 2;
   const top = CUBE_SIZE;
-  // 바닥 4점 (y=0) / 윗면 4점 (y=20). 위에서 볼 때 반시계 순서.
-  const b0: readonly [number, number, number] = [-h, 0, -h];
-  const b1: readonly [number, number, number] = [h, 0, -h];
-  const b2: readonly [number, number, number] = [h, 0, h];
-  const b3: readonly [number, number, number] = [-h, 0, h];
-  const t0: readonly [number, number, number] = [-h, top, -h];
-  const t1: readonly [number, number, number] = [h, top, -h];
-  const t2: readonly [number, number, number] = [h, top, h];
-  const t3: readonly [number, number, number] = [-h, top, h];
+  // 바닥 4점 (z=0) / 윗면 4점 (z=20). 위(+Z)에서 볼 때 시계 순서 — 종전 Y-up 판의 같은 이름 점을
+  //   X +90° 돌린 자리라 순서를 그대로 둔다(머리 주석 ①-b).
+  const b0: readonly [number, number, number] = [-h, h, 0];
+  const b1: readonly [number, number, number] = [h, h, 0];
+  const b2: readonly [number, number, number] = [h, -h, 0];
+  const b3: readonly [number, number, number] = [-h, -h, 0];
+  const t0: readonly [number, number, number] = [-h, h, top];
+  const t1: readonly [number, number, number] = [h, h, top];
+  const t2: readonly [number, number, number] = [h, -h, top];
+  const t3: readonly [number, number, number] = [-h, -h, top];
 
   // 각 면을 바깥에서 봤을 때 CCW 가 되도록 감는다(= 오른손 법칙 법선이 바깥).
   const tris: Tri[] = [
-    // 아랫면 (법선 −Y)
+    // 아랫면 (법선 −Z)
     [b0, b1, b2],
     [b0, b2, b3],
-    // 윗면 (법선 +Y)
+    // 윗면 (법선 +Z)
     [t0, t3, t2],
     [t0, t2, t1],
-    // 앞면 z=+h (법선 +Z)
+    // 앞면 y=−h (법선 −Y)
     [b3, t2, t3],
     [b3, b2, t2],
-    // 뒷면 z=−h (법선 −Z)
+    // 뒷면 y=+h (법선 +Y)
     [b1, t0, t1],
     [b1, b0, t0],
     // 오른면 x=+h (법선 +X)
@@ -160,7 +162,7 @@ function buildCube(): Blob {
 
 /**
  * 지름 20mm 구 — UV(위도-경도) 분할, 위도 32 × 경도 32.
- * 중심을 y=10 에 두어 바닥이 y=0 에 닿는다.
+ * 중심을 z=10 에 두어 바닥이 z=0 에 닿는다 (종전 Y-up 판의 점을 X +90° 돌린 자리 — (x, y, z) → (x, −z, y)).
  *
  * 극점 근처 링은 삼각형 하나로 축약한다 — 극에 모이는 정점을 쿼드로 감으면
  * 면적 0 삼각형(degenerate)이 생기고, 검출 코드가 NaN 법선을 보게 된다.
@@ -168,7 +170,7 @@ function buildCube(): Blob {
  */
 function buildSphere(): Blob {
   const r = SPHERE_RADIUS;
-  const cy = SPHERE_RADIUS; // 중심 y — 바닥이 y=0.
+  const cz = SPHERE_RADIUS; // 중심 z — 바닥이 z=0.
 
   /** 위도 인덱스 i(0=남극, SPHERE_LAT=북극), 경도 인덱스 j → 구면 위 한 점. */
   const point = (i: number, j: number): readonly [number, number, number] => {
@@ -176,10 +178,11 @@ function buildSphere(): Blob {
     const phi = (Math.PI * i) / SPHERE_LAT;
     const theta = (2 * Math.PI * (j % SPHERE_LON)) / SPHERE_LON;
     const sinPhi = Math.sin(phi);
+    // y 는 종전 z 식의 부호만 바꾼 것 — (−r)·a = −(r·a) 가 부동소수점에서도 정확해 종전 점을 정확히 돌린 값이다.
     return [
       r * sinPhi * Math.cos(theta),
-      cy - r * Math.cos(phi),
-      r * sinPhi * Math.sin(theta),
+      -r * sinPhi * Math.sin(theta),
+      cz - r * Math.cos(phi),
     ];
   };
 
