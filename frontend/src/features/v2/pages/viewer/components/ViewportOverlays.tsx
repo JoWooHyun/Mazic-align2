@@ -119,6 +119,7 @@ export default function ViewportOverlays({
           //   `toDisplayAxes` 를 거치므로 **두 패널의 같은 축 값이 서로 달랐다.**
           //   축 색도 `DISPLAY_AXIS_LABELS` 순서(X 빨강·Y 초록·Z 파랑)에 맞춘다 —
           //   이제 "위로 뻗는 축 = Z = 파랑"이 씬 축 라인·범례와 일치한다.
+          //   표시 축 = STL·베드 축 (x, z, y) — 2026-10-15 부터 Y 도 베드 Y 와 같은 부호(종전 (x, −z, y) 는 Y 가 반대).
           //
           //   ⚠️ TransformPanel 의 bbox 기준점 환산(B-12, toDisplayPosition)은
           //   적용하지 않는다. 그건 피벗을 실시간으로 읽어야 하는데 이 오버레이는

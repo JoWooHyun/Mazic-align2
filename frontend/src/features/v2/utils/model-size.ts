@@ -8,8 +8,8 @@
  * ## 크기 = 모델의 world AABB (서포트 제외)
  * 출력영역 검사(useBuildVolumeCheck 의 worldVertexAabb — **실제 정점**으로 만든 타이트한 상자, B-21)와
  * 같은 상자를 쓴다(씬 핸들 getModelWorldAabb). 그래서 "크기" 칸 · "출력 영역에 맞춤" · 빨간 박스 판정이
- * 한 상자를 본다. 표시 축은 Position·Scale 과 같은 Z-up 규약(B-13) — 크기는 부호가 없으므로
- * 배율처럼 축 교환만 한다(`swapScaleAxes`, 위치용 toDisplayAxes 의 −z 부호를 붙이면 안 된다).
+ * 한 상자를 본다. 표시 축은 Position·Scale 과 같은 Z-up 규약(B-13 — 표시 = STL·베드 축 (x, z, y)) —
+ * 크기는 부호가 없으므로 배율처럼 축 교환만 한다(`swapScaleAxes` — 위치용 toDisplayAxes 와 같은 y/z 교환).
  *
  * ## 회전된 모델의 크기 입력
  * 배율(sx·sy·sz)은 회전 **전** 모델 로컬 축에 걸린다(matrixFromTransform: S → R → T).
