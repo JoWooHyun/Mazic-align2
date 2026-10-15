@@ -40,10 +40,10 @@ cd frontend && npm run build      # vite build
 ```
 
 ```
-cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-13 기준 40종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-15 기준 41종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
 ```
 
-- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/13 기준 40종)가 상시 PASS여야 한다
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/15 기준 41종)가 상시 PASS여야 한다
   (**Node 20.6 이상** — `verify-head-normal.mjs` 가 `node:module` register 로더 훅을 쓴다)
   (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
   확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
@@ -84,6 +84,8 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 7. **useCallback deps**: `printerProfile` 등 반응형 값 참조 시 deps 누락 주의 (stale closure — 반복 사고 유형).
 8. 단위: 길이 mm, 시간 s(속도 mm/s — G-code F 는 mm/min 환산), 온도 ℃. UI 레이블에 단위 명시.
 9. 주석/커밋 한국어, 식별자 영어. 새 코드에서 새 tsc 에러·lint 경고 금지.
+10. **Task0 내보내기는 경고하고 진행**(리드 2026-10-15): 품질 문제(얇은 부분 채움 실패·2재료 커버리지·B 우선·트래블 스침·도포≠노광)는 `warnings` 로 알리고 파일을 낸다.
+    `ok:false` 로 막는 것은 **기계가 거부하는 조건**(층 없음·출력 영역 밖·XY 범위 밖·Task0 파서 오류·층 수 불일치·job.zip 거부 조건)뿐. 새 검사를 넣을 때 "Task0 가 거부하는가?" 로 가른다.
 
 ## 알려진 이슈 (수정 대상 아님 — 별도 정리에서만)
 
