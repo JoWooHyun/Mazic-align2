@@ -175,19 +175,42 @@
     [주의] heredoc 역슬래시 함정 2회 재발(협의 문서·메모리 경로에 제어문자) -> Write 스크립트 + 제어문자 검사로 복구
 
 
+  2026-10-15 | 전반 검수(PASS) + 수치 패널 축 = STL 좌표 (PR #142) + 코드 정리 R-4·사고 방지 4차(소) (PR #143)
+  --------------------------------------------------------------------------
+    [완료] #141 머지 확인, 브랜치 삭제. 메인라인 8f876ae. Task0 협의 두 사본 동일(§35 까지, §36 아직)
+    [확인] 10/13 리드가 inbox(20261012_alignment)에 넣은 앱 job.zip(큐브 200층) - Task0 쪽 파서·§11 통과·Pi 10층 드라이런 기록,
+           우리 재검: run.gcode sha 689e3db8 = 헤드리스 기준 바이트 동일 -> "앱 -> 기계 첫 시험" 완료
+    [검수] 메인라인 전반 검수(reviewer, 읽기 전용, 데모 사고 관점) - 데모 전 필수 0 / 권고 2(패널 축 범례 부호·콘솔 소음) / 낮음 3,
+           #139·#140 결합 결함 0, 규칙 위반 0, 10/13 이전 프로젝트는 크래시 없이 열림(자세만 다름, 마이그레이션은 닫힌 식 - 데모 뒤),
+           기준선 tsc 0 / lint 26 / 검증 40종 / build. 정리 후보 (a)~(e) 산출
+    [신규] #142 수치 패널 표시축 = STL·베드 좌표 - axis-display (x,-z,y) 회전 켤레 -> (x,z,y) 반사 + 회전 행렬 켤레(M·R·M),
+           표시 Euler extrinsic XYZ(Rz·Ry·Rx, 오른손). 저장값·산출물 불변(표시·입력 환산만). verify-axis-display 재작성
+           (베드 좌표 일치·물리 회전 의미 앱 경로 실행·복합 왕복·대조군 3종). reviewer PASS(켤레·Euler 역추출 손계산, Babylon 독립 검산)
+           동작 변화: 앞쪽으로 끌면 패널 Y 음수, Z ±90 은 베드 수직축 기준, X 회전 부호 반대로 보임(저장값 그대로)
+    [신규] #143 코드 정리 R-4 - [manifold] 로그 삭제·통계 로그 debug(dental-actions·floodfill 로그 수준만 - 지현규 통보),
+           낡은 주석, 죽은 코드 삭제(runRedesignDetect·renderDetectionOverlay·PlateDimensions·profileToPlate·mask-png.ts·isIdentity·
+           applyInverseTransform·_peekRegisteredActions), NL -> pages/viewer/utils/text.ts, ViewerV2Page 1069 -> 893줄
+           (useStlLoadFailures·useLegacySupportMigration·useEscapeDeselect·BuildVolumeBanner 순수 이동).
+           + 사고 방지 4차(소): 다중 생성 중 삭제 -> 건너뜀 / Ctrl+X confirm / 전부 손상 문구 / Task0 카메라 출력 영역 중심.
+           검증 41종째 verify-cleanup-20261015(대조군 27). reviewer PASS(순수 이동 diff 대조, 단언 약화 없음). CLAUDE.md 구조 표 갱신
+    [보류] dental-support.ts 미사용 4개(지현규 확인 뒤), frameCameraToMesh, 10/13 이전 프로젝트 마이그레이션(데모 뒤)
+    [다음] 풀아치 STL(리드 "STL 내보내기" -> inbox 20261013_model) 재현 -> §32 반영 PR -> Task0 §36(PNG 실측) 대기 ->
+           경로 미리보기·서포트 UX 계획(CHITUBOX 캡처 대기)
+
+
 
 ================================================================================
 
 
-[2] 현재 상태 (2026-10-13 기준)
+[2] 현재 상태 (2026-10-15 기준)
 ================================================================================
 
   ※ 시작점: docs/인수인계_20261013.md / 진행 상태: docs/통합로드맵.md(현행판) / 문서 지도: docs/README.md
 
   ── 커밋 상태 ──
-    - 기준 브랜치 integrate/v2-mainline @ 5b24b56 (#140 머지, 10/13 — #134~#140 전부 머지, 브랜치 삭제 완료)
-    - 열린 PR: 없음 / 의도적 보류 #29(AI 자동 검수 CI)·#101(기둥 연결 2/2)
-    - 품질 기준선: tsc 0 / lint 26(v1 25 + 공용 1, v2 0) / 검증 40종 상시 PASS / build 성공 (merge commit 머지만 — squash 금지)
+    - 기준 브랜치 integrate/v2-mainline @ 8f876ae (#141 머지, 10/13 — #134~#141 전부 머지, 브랜치 삭제 완료)
+    - 열린 PR: #142(패널 축) -> #143(코드 정리 R-4·사고 방지 4차 소) -> #144(문서) 순서로 머지 / 보류 #29·#101
+    - 품질 기준선: tsc 0 / lint 26(v1 25 + 공용 1, v2 0) / 검증 40종(#143 후 41) 상시 PASS / build 성공 (merge commit 머지만 — squash 금지)
     - STL 축: 10/13 부터 표준 Z-up — 그 전에 만든 프로젝트는 모델 자세 90° 다름(데모용은 새 프로젝트)
     - 체제: 2026-09-23~ Opus 5.5 시험(전 역할), 11월 초 외부 데모(드라이런 중심, 단일·2재료)
 
