@@ -5,10 +5,8 @@ import { useCallback, useRef, useState } from "react";
 
 import type { SampleModelDef } from "../../../utils/sample-models";
 
+import { NL } from "../utils/text";
 import type { AddStlFile, AddStlFiles } from "./types";
-
-/** 알림 줄바꿈. */
-const NL = String.fromCharCode(10);
 
 interface UseStlDropImportArgs {
   /** 한 파일 저장 — 예제 모델 경로. */

@@ -116,6 +116,10 @@ export function useDentalWorkflow({
       detectService.cancel();
     };
   }, []);
+  // 최신 모델 목록 (사고 방지 4차(소)) — 여러 모델 차례 생성은 검출을 await 하는 사이 모델이 지워질 수 있어,
+  //   저장 직전에 콜백 클로저(시작 시점 files)가 아니라 이 ref 로 "아직 있는가" 를 본다.
+  const filesRef = useRef(files);
+  filesRef.current = files;
 
   // ----- Dental 브러쉬 색칠 -----
   // 씬이 색칠 변경을 통지 → stlId 별 painted face 목록 갱신. 빈 목록이면 제거.
@@ -383,12 +387,20 @@ export function useDentalWorkflow({
           const outcome = await commitRedesignGeneration({
             isCancelled: () => !aliveRef.current,
             // 표면 스냅 + 3단 폴백 라우팅 + world→stl-local 변환 (S-4b-2c) — 대상은 target.
-            route: () =>
-              sceneHandleRef.current?.routeAndFinalizeRedesignPoints(
+            route: () => {
+              const routed = sceneHandleRef.current?.routeAndFinalizeRedesignPoints(
                 res.points,
                 supportParams,
                 target,
-              ),
+              );
+              // 사고 방지 4차(소) — 라우팅 뒤·저장 앞: 검출을 기다리는 사이 이 모델이 지워졌으면 저장하지 않고 건너뛴다
+              //   (지운 모델에 서포트 레코드가 되살아나지 않게). commitRedesignGeneration 은 route → save 사이에
+              //   await 가 없어 이 확인이 곧 replaceSupportsInProject 직전이다.
+              if (routed?.ok && !filesRef.current.some((f) => f.id === target.stlId)) {
+                return { ok: false, reason: "삭제됨 — 서포트를 저장하지 않았습니다." };
+              }
+              return routed;
+            },
             save: (points) =>
               applyAutoSupportReplace({
                 label: "redesign-supports",
@@ -411,7 +423,7 @@ export function useDentalWorkflow({
             continue;
           }
           const report = outcome.report;
-          console.log("[재설계 라우팅]", report);
+          console.debug("[재설계 라우팅]", report);
           if (outcome.kind === "empty") {
             if (!multi) {
               setRedesignStatus({ ok: true, message: "생성할 서포트 점이 없습니다." });

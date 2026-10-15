@@ -102,7 +102,7 @@ export function task0RasterFrameForProfile(p: PrinterProfileV2): Task0RasterFram
 /**
  * 프로파일 → 출력 가능 영역 (베드 mm — Z3 내보내기 코어의 writer 전 차단, task0-export 머리 주석 1-b).
  * 값은 resolveTask0ProfileFrame 그대로(선택 필드가 비면 TASK0_DEFAULTS) — 워커 메시지로 넘기도록 네 값만.
- * 화면 테두리·배너(task0PrintableAreaForProfile)와 같은 출처라 "화면에서 안이면 내보내기도 안" 이다.
+ * 화면 플레이트(출력 가능 영역)·배너(task0PrintableAreaForProfile)와 같은 출처라 "화면에서 안이면 내보내기도 안" 이다.
  */
 export function task0PrintableFrameForProfile(p: PrinterProfileV2): Task0PrintableFrame {
   const f = resolveTask0ProfileFrame(p);

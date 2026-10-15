@@ -4,6 +4,7 @@
 // 슬라이스 미리보기 중(editLocked)에는 편집 키(Ctrl+X/V/Z/Y)를 잠근다 — 신규 7.
 // 프로젝트 전환·뷰어 이탈 시 undo/redo 이력을 비운다 — 신규 2.
 // 복사·잘라내기는 원본의 Task0 재료 슬롯도 담고, 붙여넣은 새 STL 이 물려받는다(D2 — task0CopySlotInit).
+// 잘라내기(Ctrl+X)도 모델을 지우므로 Delete 와 같은 삭제 확인을 거친다 — 사고 방지 4차(소)(cutModels).
 
 import { useCallback, useEffect } from "react";
 
@@ -13,7 +14,38 @@ import { useUndoStore } from "../../../hooks/useUndoStore";
 import type { STLFileV2 } from "../../../types/stl";
 import { task0CopySlotInit } from "../../../utils/task0/task0-material";
 import { addCopySuffix } from "../utils/file-naming";
+import { confirmDeleteModels } from "../utils/confirm-delete-models";
 import type { AddStlFile, RefreshSupports, RemoveStlFile } from "./types";
+
+/**
+ * 잘라내기 본체 (사고 방지 4차(소)) — 확인 → 클립보드에 담기 → 모델 삭제 → 서포트 갱신 → 선택 해제.
+ *
+ * 잘라내기는 모델을 프로젝트에서 지운다(서포트도 cascade, 되돌리기 이력 없음 — Delete 와 같다). 그래서 Delete·목록 × 버튼과
+ * 같은 확인(confirmDeleteModels)을 먼저 받는다. 취소하면 클립보드·모델·선택 전부 그대로(복사도 하지 않는다).
+ * 훅 밖 평범한 함수라 검증 스크립트(verify-cleanup-20261015)가 직접 부른다.
+ *
+ * @returns 잘라냈으면 true, 대상이 없거나 취소했으면 false.
+ */
+export async function cutModels(
+  toCut: readonly STLFileV2[],
+  removeStlFile: RemoveStlFile,
+  refreshSupports: RefreshSupports,
+  clearSelection: () => void,
+): Promise<boolean> {
+  if (toCut.length === 0) return false;
+  if (!confirmDeleteModels(toCut.map((f) => f.fileName))) return false;
+  useClipboardStore
+    .getState()
+    .set(toCut.map((f) => ({ fileName: f.fileName, blob: f.blob, ...task0CopySlotInit(f) })));
+  for (const f of toCut) {
+    await removeStlFile(f.id);
+  }
+  // STL 삭제는 DB cascade 로 그 STL 의 서포트도 같이 사라지지만
+  // useSupportsV2 state 가 stale 이라 명시적 refresh 필요 (Delete 경로와 동일) — 신규 4.
+  await refreshSupports();
+  clearSelection();
+  return true;
+}
 
 interface UseClipboardActionsArgs {
   projectId: string | undefined;
@@ -71,17 +103,12 @@ export function useClipboardActions({
   const handleCut = useCallback(async () => {
     if (editLocked) return;
     if (selectedIds.size === 0) return;
-    const toCut = files.filter((f) => selectedIds.has(f.id));
-    useClipboardStore
-      .getState()
-      .set(toCut.map((f) => ({ fileName: f.fileName, blob: f.blob, ...task0CopySlotInit(f) })));
-    for (const f of toCut) {
-      await removeStlFile(f.id);
-    }
-    // STL 삭제는 DB cascade 로 그 STL 의 서포트도 같이 사라지지만
-    // useSupportsV2 state 가 stale 이라 명시적 refresh 필요 (Delete 경로와 동일) — 신규 4.
-    await refreshSupports();
-    setSelectedIds(new Set());
+    await cutModels(
+      files.filter((f) => selectedIds.has(f.id)),
+      removeStlFile,
+      refreshSupports,
+      () => setSelectedIds(new Set()),
+    );
   }, [editLocked, files, selectedIds, removeStlFile, refreshSupports, setSelectedIds]);
 
   const handlePaste = useCallback(async () => {

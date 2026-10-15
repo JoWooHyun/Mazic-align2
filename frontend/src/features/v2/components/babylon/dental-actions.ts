@@ -248,9 +248,9 @@ export function runFindDentalMargin(
     }
   }
 
-  // 원본 console.log 문구 이식 (통계 — 디버그용).
+  // 원본 console.log 문구 이식 (통계 — 디버그용, 10/15 부터 console.debug).
   const s = res.result.stats;
-  console.log(
+  console.debug(
     `[마진 찾기] 색칠 ${s.paintedFaceCount}면 · 시드 엣지 ${s.seedEdgeCount} · ` +
       `전역 sharp 엣지 ${s.globalSharpEdgeCount} · 마진 엣지 ${s.marginEdgeCount} (spur-trim + corner-ext 후) · ` +
       `corner extension ${s.cornerExtSteps}스텝 · 작은-컴포넌트 폐기 ${s.droppedTinyComps}엣지 · ` +
@@ -384,12 +384,12 @@ export function runDetectDentalIslands(
     0,
   );
 
-  // 원본 console.log 문구 이식 (통계 — 디버그용).
+  // 원본 console.log 문구 이식 (통계 — 디버그용, 10/15 부터 console.debug).
   const totalIslandCells = result.perLayerIslandCells.reduce(
     (s, c) => s + c.size,
     0,
   );
-  console.log(
+  console.debug(
     `[Island 검출] 전체 face ${tris.length} · island face ${result.islandFaces.size} · ` +
       `island cell ${totalIslandCells} · layers ${result.nSlices} · ` +
       `layerHeight ${result.layerHeight}mm · cellSize ${result.cellSize}mm · ` +

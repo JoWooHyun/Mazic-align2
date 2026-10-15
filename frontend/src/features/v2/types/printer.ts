@@ -112,23 +112,3 @@ export const PROFILE_FIELD_LIMITS = {
   speedMmS: { min: 0.1, max: 50 }, // 리프트·하강 공통 — 0 금지
   lightOffDelaySec: { min: 0, max: 60 },
 } as const;
-
-/**
- * 빌드플레이트 정렬(좌표 매핑)에 쓰는 헬퍼.
- *   plateWidthMm  → Babylon X
- *   plateDepthMm  → Babylon Z
- *   plateHeightMm → Babylon Y (출력 최대 높이)
- */
-export interface PlateDimensions {
-  plateWidthMm: number;
-  plateDepthMm: number;
-  plateHeightMm: number;
-}
-
-export function profileToPlate(p: PrinterProfileV2): PlateDimensions {
-  return {
-    plateWidthMm: p.buildVolumeMm[0],
-    plateDepthMm: p.buildVolumeMm[1],
-    plateHeightMm: p.buildVolumeMm[2],
-  };
-}

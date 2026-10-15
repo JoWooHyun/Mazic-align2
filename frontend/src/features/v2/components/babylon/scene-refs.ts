@@ -31,6 +31,7 @@ import type { PaintPoint } from "../../utils/dental/paint-mask";
 import type { FindMarginResult } from "../../utils/dental/margin-detect";
 import type { SupportPointV2 } from "../../support/types";
 import type { Task0MaterialSlot } from "../../utils/task0/task0-slice";
+import type { PrintableAreaMm } from "../../utils/build-volume";
 import type { EditMode } from "../EditModeControls";
 import type {
   BabylonSceneProps,
@@ -132,6 +133,8 @@ export interface SceneCtx {
   bridgeDiamRef: MutableRefObject<number>;
   plateWRef: MutableRefObject<number>;
   plateDRef: MutableRefObject<number>;
+  /** Task0 출력 가능 영역 (null = 기존 프로파일) — 빈 씬 카메라 fit·플레이트 보기 중심(camera-handle, 사고 방지 4차(소)). */
+  printableAreaRef: MutableRefObject<PrintableAreaMm | null>;
   editModeRef: MutableRefObject<EditMode>;
   /**
    * 슬라이스 미리보기 중 편집 잠금 여부 (= `sliceY != null`).
@@ -251,6 +254,9 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
   plateWRef.current = props.plateWidthMm;
   const plateDRef = useRef<number>(props.plateDepthMm);
   plateDRef.current = props.plateDepthMm;
+  // Task0 출력 가능 영역 미러 (사고 방지 4차(소)) — onPaintedFacesChangeRef 와 같은 패턴. 매 렌더 새 객체여도 읽기 전용.
+  const printableAreaRef = useRef<PrintableAreaMm | null>(props.printableAreaMm ?? null);
+  printableAreaRef.current = props.printableAreaMm ?? null;
   const editModeRef = useRef<EditMode>(props.editMode);
   editModeRef.current = props.editMode;
   // 슬라이스 미리보기 편집 잠금 — boolean 정규화(위 타입 주석 참고).
@@ -360,6 +366,7 @@ export function useSceneRefs(props: BabylonSceneProps): SceneCtx {
     bridgeDiamRef,
     plateWRef,
     plateDRef,
+    printableAreaRef,
     editModeRef,
     sliceLockedRef,
     onAddSupportRef,

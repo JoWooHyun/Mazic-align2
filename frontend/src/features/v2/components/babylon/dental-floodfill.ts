@@ -127,7 +127,7 @@ export function fillMarginFromFace(
   //   parent= 로 attach 해야 worldMatrix = mesh.worldMatrix 로 올바르게 얹힌다.
   overlay.parent = mesh;
   ctx.autoFillOverlayRef.current.push(overlay);
-  console.log(
+  console.debug(
     `[마진 색칠] 시작 face ${startFace} → 자동 색칠 ${filled.size}/${triCount}`,
   );
 }

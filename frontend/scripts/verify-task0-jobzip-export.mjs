@@ -860,10 +860,13 @@ function sectionWiring() {
     /onExportTask0JobZip=\{\(\) => void handleExportTask0JobZip\(\)\}/.test(page) && /batchStage=\{batchExport\.stage\}/.test(page),
     "ViewerV2Page: 패널에 job.zip 핸들러·단계",
   );
+  // 10/15 R-4 — 배너 JSX 는 BuildVolumeBanner 로 옮겨졌다(문구 그대로, 들여쓰기만 컴포넌트 기준).
+  const banner = read("pages", "viewer", "components", "BuildVolumeBanner.tsx");
   assert(
-    page.includes("⚠ 출력영역을 벗어난 모델 {volumeIssues.length}개 — 이대로\n                      출력하면 잘려 나갑니다.") &&
-      /isTask0Profile\(printerProfile\) \? \([\s\S]*?⚠ Task0 출력 가능 영역을 벗어난 항목\(모델·서포트\)[\s\S]*?이대로는 내보낼 수 없습니다\. 영역\s+안으로 옮기세요\./.test(page),
-    "출력영역 배너: Task0 프로파일이면 'Task0 출력 가능 영역 … (모델·서포트) … 이대로는 내보낼 수 없습니다' 제목, 기존 프로파일 문구는 그대로",
+    banner.includes("⚠ 출력영역을 벗어난 모델 {volumeIssues.length}개 — 이대로\n              출력하면 잘려 나갑니다.") &&
+      /isTask0Profile\(printerProfile\) \? \([\s\S]*?⚠ Task0 출력 가능 영역을 벗어난 항목\(모델·서포트\)[\s\S]*?이대로는 내보낼 수 없습니다\. 영역\s+안으로 옮기세요\./.test(banner) &&
+      /<BuildVolumeBanner\s+volumeIssues=\{volumeIssues\}\s+printerProfile=\{printerProfile\}/.test(page),
+    "출력영역 배너(BuildVolumeBanner): Task0 프로파일이면 'Task0 출력 가능 영역 … (모델·서포트) … 이대로는 내보낼 수 없습니다' 제목, 기존 프로파일 문구는 그대로 — 페이지가 그 배너를 그림",
   );
   assert(previewCountWired(hook, page), "미리보기 층 수: 훅 1곳·페이지 2곳이 previewLayerCount(…, printerProfile) — layerCountFor 를 직접 부르지 않음");
   const core = fs.readFileSync(path.join(TASK0_SRC, "task0-export.ts"), "utf8");

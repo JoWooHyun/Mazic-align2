@@ -125,7 +125,6 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     // #7 출력영역 초과 경고 (C-2). 씬 상태를 읽기만 하고 아무도 이 훅에
     //   의존하지 않으므로, 불변식 1(훅 순서)을 흔들지 않도록 맨 끝에 둔다.
     //   Z2: Task0 출력 가능 영역·서포트 신호는 인자만 추가 — 훅 호출 순서는 그대로.
-    //   (데모 수정 1차 ② — 영역 주황 테두리는 삭제, 플레이트 자체를 영역에 그린다(#1.5).)
     useBuildVolumeCheck(
       ctx,
       files,
