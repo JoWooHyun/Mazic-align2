@@ -27,14 +27,20 @@
 //       파일 A·B·C 의 topY(10·0.5·0.5)는 정규화로 안 바뀜.
 //   (3b) 실제 워커 모듈 — slice-batch.worker.ts 를 가짜 self 로 Node 에서 불러 task0-jobzip 메시지 → progress(단계 키, 단계 순서,
 //       단계 끝 done = total) + task0-job-done 1건(마지막), zip = 견본 바이트, zip.buffer 를 transfer. float32 topY 메시지도 같은 바이트.
-//       task0-gcode 메시지의 progress 에는 stage 키가 없음(기존 경로 그대로). 막힘 입력 → error 아닌 task0-job-done(ok false).
-//   (4) 막힘 — ① 채움 실패(나선 벽 층 9) ② 파서 경고(트래블 F9000) ③ zip 검사 위반(코어 변조: 마지막 PNG 1920×1000 → 거부 조건 5)
-//       ④ 빈 층 집합 불일치(코어 변조: 빈 층 1 에 층 0 PNG / 도포 층 0 에 빈 PNG) ⑤ 층 없음
+//       task0-gcode 메시지의 progress 에는 stage 키가 없음(기존 경로 그대로). 막힘 입력(트래블 F9000) → error 아닌
+//       task0-job-done(ok false). 경고만 있는 입력(나선 벽 + 대조군 writer) → task0-job-done(ok, zip transfer, warnings 그대로).
+//   (4) 막음·경고 (2026-10-15 리드 결정 — 기계가 거부하는 조건만 막고 품질 문제는 경고, task0-export 머리 주석 "막음 / 경고"):
+//       ① 채움 실패 → 경고: 나선 벽 — 기본 writer 는 재시도로 층 9 를 살려 zip(경고 0), 대조군 writer(retryStuckLayers false)는
+//       층 9 채움 실패 → 막지 않고 zip + 경고 + failedLayers [9], 그 zip 은 검사기(전부 풀기) 통과
+//       ② 파서 경고(트래블 F9000 — 막음) ③ zip 검사 위반(코어 변조: 마지막 PNG 1920×1000 → 거부 조건 5 — 막음)
+//       ④ 빈 층 집합 불일치(코어 변조: 빈 층 1 에 층 0 PNG / 도포 층 0 에 빈 PNG) → 경고(zip 냄, 문구 그대로 + "파일은 그대로
+//       냈습니다", failedLayers [1]/[0]) ⑤ 층 없음(막음)
 //       ⑥ 출력 가능 영역 밖(검수 FAIL 필수 1) — 투사 X 최소에 걸친 상자(베드 X 6~16)·투사 안 노즐 밖 띠(베드 Y 85.5~88.5)·
 //          검수 재현(베드 Y 82.5~87.5): job.zip·run.gcode 만 둘 다 writer 전에 같은 문구로 막힘(진행 0건), 경계(Y 85 딱·1 µm 안) 통과
 //       ⑦ 표본 풀기(필수 2) — 층 0 PNG 의 흰 픽셀 하나만 지운 변조(CRC·zlib 정상)를 "PNG 를 풀어 보니 … 18768 ≠ 18769" 로 막음
 //       ⑧ estimate 대조 — manifest 만 다른 시간 상수(블레이드 16 s)로 만든 변조를 막음 (화면 요약 = 파일)
-//       ⑨ 'header' 검사도 IHDR 8-bit 회색조 확인 — 색 유형 2·비트 깊이 16 IHDR(CRC 맞춤) PNG 를 추가 검사로 잡음 — 모두 zip null + 이유.
+//       ⑨ 'header' 검사도 IHDR 8-bit 회색조 확인 — 색 유형 2·비트 깊이 16 IHDR(CRC 맞춤) PNG 를 추가 검사로 잡음 — ①④ 밖은 모두
+//       zip null + 이유(막음).
 //   (5) 배선(소스) — 워커 runTask0JobZip 이 코어를 요청 값 그대로 부르고 zip.buffer 를 transfer, 진행 스로틀의 단계 처리, 서비스
 //       exportTask0JobZip(application/zip Blob, task0-job-done), useSliceExport(deps 에 printerProfile·층두께 — 규칙 7, 파일 이름
 //       <프로젝트>_task0_<lh>mm.job.zip, 프로파일 writer·투사 프레임·노광·출력 가능 영역, 앱 generator, 핸들러 순서), Task0 두 핸들러는
@@ -45,15 +51,15 @@
 //   (6) 대조군 — 이 스크립트가 실제로 결함을 잡는지:
 //       a. 층 마스크를 기존 slice-rasterize(플레이트 150×85 를 1920×1080 에 늘림)로 바꾼 코어 → 코어·zip 검사는 통과해 버리고
 //          (2) 의 "PNG = task0-mask 래스터" 비교가 잡는다.
-//       b. 코어에서 빈 층 집합 대조를 빼면 ④ 의 변조 zip 이 파일로 나오고, 'header' 자기 검사도 통과한다(전부 풀기 검사만 잡음)
-//          → 생성 단계 단언이 실제로 필요하다.
+//       b. 코어에서 빈 층 집합 대조를 빼면 ④ 의 변조 zip 이 경고 없이 나오고, 'header' 자기 검사도 통과한다(전부 풀기 검사만 잡음)
+//          → ④ 의 경고를 만드는 것은 생성 단계 대조다.
 //       c. 코어에서 topY 정규화를 빼면 float32 견본이 4층 — 견본 바이트와 다르다.
 //       d. 코어에서 자기 검사 결과를 무시하면 1920×1000 PNG zip 이 파일로 나온다(그 zip 은 검사기 위반 [5]).
 //       e. 'header' 검사의 한계(기록) — PNG 몸통만 망가뜨린 zip 은 'header' 통과, 'decode' 는 잡음 → 그래서 생성 단계 단언 + 표본 풀기.
 //       f. deps 에서 printerProfile 을 빼면 (5) 의 규칙 7 검사가 실패한다.  g. epoch 확인을 빼면 (5) 의 검사가 실패한다.
 //       g2. Task0 핸들러를 P-1 confirm 으로 되돌리면 (5) 의 영역 차단 검사가 실패한다.
-//       h. 코어에서 영역 검사(사전·사후)를 빼면 걸친 상자는 엉뚱한 "얇은 부분 채움 실패" 문구로 막히고, 노즐 밖 띠는
-//          G-code Y 최대 > 85 인 zip 이 나온다(검사기·파서도 통과 — 노즐 범위를 모름).
+//       h. 코어에서 영역 검사(사전·사후)를 빼면 걸친 상자는 엉뚱한 "얇은 부분 채움 실패" 경고만 달고 zip 이 나오고(2026-10-15 부터
+//          채움 실패는 경고), 노즐 밖 띠는 G-code Y 최대 > 85 인 zip 이 나온다(검사기·파서도 통과 — 노즐 범위를 모름).
 //       i. 사전 검사만 빼면 사후 검사(writer 출력 XY)가 띠를 막는다.
 //       j. 표본 풀기를 빼면 ⑦ 의 변조 zip 이 파일로 나온다(마스크와 1px 다름, 전부 풀기 검사기도 통과).
 //       k. estimate 대조를 빼면 ⑧ 의 변조 zip 이 나오고 파일 예상 시간 ≠ 화면 요약.
@@ -583,19 +589,38 @@ async function sectionWorkerModule() {
       aj && !aj.m.result.ok && aj.m.result.zip === null && aj.m.result.issues[0] === ag.m.result.issues[0],
     `영역 밖(베드 Y 85.5~88.5) — 워커 run.gcode·job.zip 두 경로 같은 이유로 막힘: ${ag?.m.result.issues?.[0]?.slice(0, 60)}…`,
   );
-  // 막힘 — error 가 아니라 task0-job-done
-  const sp = FAIL_INPUTS.spiral();
-  const b = await send({ kind: "task0-jobzip", meshes: sp.meshes.map((t) => ({ triangles: t })), topY: sp.topY, layerHeightMm: sp.layerHeightMm, writer: APP.writer });
+  // 막힘 — error 가 아니라 task0-job-done (2026-10-15 부터 나선 벽 채움 실패는 경고라 막힘 입력은 속도 위반 — 파서 경고)
+  const sd = FAIL_INPUTS.speed();
+  const b = await send({ kind: "task0-jobzip", meshes: sd.meshes.map((t) => ({ triangles: t })), topY: sd.topY, layerHeightMm: sd.layerHeightMm, writer: sd.writer });
   const bd = b.find((p) => p.m.type === "task0-job-done");
   assert(
     bd !== undefined && !bd.m.result.ok && bd.m.result.zip === null && !b.some((p) => p.m.type === "error") && bd.transfer === undefined,
-    "막힘 입력(나선 벽) → error 가 아니라 task0-job-done(ok false, zip null, transfer 없음)",
+    "막힘 입력(트래블 150 mm/s — 파서 경고) → error 가 아니라 task0-job-done(ok false, zip null, transfer 없음)",
+  );
+  // 경고만 있는 결과 — 나선 벽 + 대조군 writer(retryStuckLayers false, 층 9 채움 실패) → ok + zip transfer + 경고 그대로
+  const sp = FAIL_INPUTS.spiral();
+  const w = await send({
+    kind: "task0-jobzip",
+    meshes: sp.meshes.map((t) => ({ triangles: t })),
+    topY: sp.topY,
+    layerHeightMm: sp.layerHeightMm,
+    writer: { ...APP.writer, retryStuckLayers: false },
+  });
+  const wd = w.find((p) => p.m.type === "task0-job-done");
+  assert(
+    wd !== undefined && wd.m.result.ok && wd.m.result.zip.length > 0 && Array.isArray(wd.transfer) && wd.transfer[0] === wd.m.result.zip.buffer &&
+      JSON.stringify(wd.m.result.failedLayers) === "[9]" && wd.m.result.warnings.some((s) => s.includes("얇은 부분 채움 실패") && s.includes("층 9")) &&
+      !w.some((p) => p.m.type === "error"),
+    "경고만 있는 입력(나선 벽, 대조군 writer) → task0-job-done(ok, zip transfer, warnings·failedLayers [9] 그대로)",
   );
 }
 
-// ── (4) 막힘 ────────────────────────────────────────────────────────────
+// ── (4) 막음·경고 ───────────────────────────────────────────────────────
 
-/** 같은 평면 면을 가진 겹친 상자 7개를 한 메시로 — 나선 벽 (verify-task0-export 와 같은 입력, 층 9 채움 실패) */
+/**
+ * 같은 평면 면을 가진 겹친 상자 7개를 한 메시로 — 나선 벽 (verify-task0-export 와 같은 입력). 기본 writer 는 변형 재시도로
+ * 층 9 를 살리고(2026-10-15), 대조군 writer { retryStuckLayers: false } 는 층 9 채움 실패
+ */
 function spiralSingleMesh() {
   const box = boxTriangles;
   return [
@@ -625,12 +650,25 @@ const FAIL_INPUTS = {
 };
 
 async function sectionBlocked() {
-  console.log("\n(4) 막힘 — 파일(zip) 없음 + 이유");
+  console.log("\n(4) 막음·경고 — 기계가 거부하는 조건은 막고(zip 없음 + 이유), 품질 문제는 경고(zip 냄 + 알림)");
+  // ① 채움 실패 → 경고 (2026-10-15 리드 결정). 기본 writer 는 재시도로 층 9 를 살린다 — 어느 쪽이든 zip 이 나온다
   const sp = await runTask0JobZipExport({ ...FAIL_INPUTS.spiral(), writer: APP.writer, frame: APP.frame, printable: APP.printable });
+  console.log(`  ① 나선 벽 기본 writer: ${sp.ok ? `zip ${sp.zip.length} B, 경고 ${sp.warnings.length}건, 경고 층 ${JSON.stringify(sp.failedLayers)}` : `막힘 ${JSON.stringify(sp.issues)}`}`);
   assert(
-    !sp.ok && sp.zip === null && sp.job === null && JSON.stringify(sp.failedLayers) === "[9]" &&
-      sp.issues.some((s) => s.includes("얇은 부분 채움 실패") && s.includes("층 9")),
-    `① 채움 실패(나선 벽): zip null, 층 이미지 단계 전 중단(job null), 이유 ${sp.ok ? "" : sp.issues[0].slice(0, 40)}…`,
+    sp.ok && sp.zip.length > 0 && sp.job !== null && (sp.warnings.length === 0) === (sp.failedLayers.length === 0),
+    `① 나선 벽 기본 writer: zip·job 있음(막지 않음), 경고 ${sp.ok ? sp.warnings.length : "?"}건`,
+  );
+  const spc = await runTask0JobZipExport({
+    ...FAIL_INPUTS.spiral(),
+    writer: { ...APP.writer, retryStuckLayers: false },
+    frame: APP.frame,
+    printable: APP.printable,
+  });
+  const spcRep = spc.ok ? await verifyTask0JobZip(spc.zip) : null;
+  assert(
+    spc.ok && spc.zip.length > 0 && spc.job !== null && JSON.stringify(spc.failedLayers) === "[9]" &&
+      spc.warnings.some((s) => s.includes("얇은 부분 채움 실패") && s.includes("층 9")) && spcRep.pass,
+    `① 나선 벽 대조군 writer(retryStuckLayers false — 층 9 채움 실패): 막지 않음, zip·job 있음, 경고 "${spc.ok ? spc.warnings[0]?.slice(0, 40) : "(막힘)"}…", 검사기(전부 풀기) 통과`,
   );
   const spd = await runTask0JobZipExport({ ...FAIL_INPUTS.speed(), frame: APP.frame, printable: APP.printable });
   assert(
@@ -643,19 +681,20 @@ async function sectionBlocked() {
     !c.ok && c.zip === null && c.job !== null && c.issues.some((s) => s.includes("거부 조건 5") && s.includes("1920×1000")),
     `③ zip 검사 위반(코어 변조: 마지막 PNG 1920×1000): zip null, 이유 ${c.ok ? "" : c.issues.find((s) => s.includes("거부 조건 5"))}`,
   );
+  // ④ 빈 층 집합 불일치(도포 영역 ≠ 노광 영역) → 경고 (2026-10-15 — 품질 문제, Task0 거부 조건 아님). zip 은 나온다
   const ew = await loadExportMutant("empty-gets-white", MUT_EMPTY_GETS_WHITE);
   const e1 = await ew.runTask0JobZipExport(sampleInput());
   assert(
-    !e1.ok && e1.zip === null && JSON.stringify(e1.failedLayers) === "[1]" &&
-      e1.issues.some((s) => s.includes("도포 영역 ≠ 노광 영역") && s.includes("G-code 는 빈 층 1개") && s.includes("층 1")),
-    `④ 빈 층 집합 불일치(빈 층 1 에 흰 PNG): zip null, 이유 ${e1.ok ? "" : e1.issues[0]}`,
+    e1.ok && e1.zip.length > 0 && JSON.stringify(e1.failedLayers) === "[1]" &&
+      e1.warnings.some((s) => s.includes("도포 영역 ≠ 노광 영역") && s.includes("G-code 는 빈 층 1개") && s.includes("층 1") && s.includes("파일은 그대로 냈습니다")),
+    `④ 빈 층 집합 불일치(빈 층 1 에 흰 PNG): 막지 않음(zip 있음), 경고 ${e1.ok ? e1.warnings[0] : `(막힘 ${JSON.stringify(e1.issues)})`}`,
   );
   const pb = await loadExportMutant("printed-gets-black", MUT_PRINTED_GETS_BLACK);
   const e2 = await pb.runTask0JobZipExport(sampleInput());
   assert(
-    !e2.ok && e2.zip === null && JSON.stringify(e2.failedLayers) === "[0]" &&
-      e2.issues.some((s) => s.includes("마스크가 전부 검정인 층 1개") && s.includes("층 0")),
-    `④ 빈 층 집합 불일치(도포 층 0 에 검정 PNG): zip null, 이유 ${e2.ok ? "" : e2.issues[0]}`,
+    e2.ok && e2.zip.length > 0 && JSON.stringify(e2.failedLayers) === "[0]" &&
+      e2.warnings.some((s) => s.includes("마스크가 전부 검정인 층 1개") && s.includes("층 0") && s.includes("파일은 그대로 냈습니다")),
+    `④ 빈 층 집합 불일치(도포 층 0 에 검정 PNG): 막지 않음(zip 있음), 경고 ${e2.ok ? e2.warnings[0] : `(막힘 ${JSON.stringify(e2.issues)})`}`,
   );
   const none = await runTask0JobZipExport({ meshes: fixtureGapPlates().meshes(), topY: 0, layerHeightMm: 0.1 });
   const noMesh = await runTask0JobZipExport({ meshes: [], topY: 10, layerHeightMm: 0.1 });
@@ -922,8 +961,8 @@ async function plateStretchImages(meshes, layerCount, lh, bed, opts) {
   const hdr = ns.ok ? await verifyTask0JobZip(ns.zip, { layerPngs: "header" }) : null;
   const full = ns.ok ? await verifyTask0JobZip(ns.zip) : null;
   assert(
-    ns.ok && hdr.pass && !full.pass && full.extraIssues.some((m) => m.includes("빈 층인데 PNG 에 흰 픽셀")),
-    `b. 빈 층 대조를 빼면 변조 zip 이 파일로 나오고 'header' 검사도 통과 — 전부 풀기만 잡음(${full?.extraIssues[0] ?? "?"}) → 생성 단계 단언이 필요`,
+    ns.ok && ns.warnings.length === 0 && hdr.pass && !full.pass && full.extraIssues.some((m) => m.includes("빈 층인데 PNG 에 흰 픽셀")),
+    `b. 빈 층 대조를 빼면 변조 zip 이 경고 없이 나오고 'header' 검사도 통과 — 전부 풀기만 잡음(${full?.extraIssues[0] ?? "?"}) → ④ 의 경고를 만드는 것은 생성 단계 대조`,
   );
   // c. 정규화 제거
   const noNorm = await loadExportMutant("no-normalize", [["  const topY = task0NormalizeTopY(input.topY);", "  const topY = input.topY;"]]);
@@ -980,12 +1019,13 @@ async function plateStretchImages(meshes, layerCount, lh, bed, opts) {
   const backToConfirm = hook.replace("    if (alertIfOutOfTask0Area()) return; // Task0 는 출력 가능 영역 밖이면 막는다 (confirm 아님)\n", "    if (!confirmIfOutOfBounds()) return;\n");
   assert(backToConfirm !== hook && !task0AreaBlockOk(backToConfirm), "g2. Task0 핸들러를 P-1 confirm 으로 되돌리면 (5) 의 영역 차단 검사가 실패한다");
 
-  // h. 영역 검사(사전·사후 모두)를 빼면 — 걸친 상자는 엉뚱한 "채움 실패" 문구, 노즐 밖 띠는 Y > 85 파일이 나온다
+  // h. 영역 검사(사전·사후 모두)를 빼면 — 걸친 상자는 엉뚱한 "채움 실패" 경고만 달고 zip 이 나오고(2026-10-15 부터 채움 실패는
+  //    경고라 막지 않는다 — 투사 밖은 노광되지 않는데 파일이 나간다), 노즐 밖 띠는 Y > 85 파일이 나온다
   const noArea = await loadExportMutant("no-area-check", [[AT_AREA_FN, AT_AREA_FN + "  return [];\n"]]);
   const hx = await noArea.runTask0JobZipExport(areaInput(AREA_CASES.xStraddle));
   assert(
-    !hx.ok && hx.issues.some((s) => s.includes("얇은 부분 채움 실패")) && !hx.issues.some((s) => s.includes("출력 가능 영역")),
-    `h. 영역 검사를 빼면 투사 X 최소에 걸친 상자는 "${hx.ok ? "(통과)" : hx.issues[0].slice(0, 30)}…" 로 막힘 — 원인과 다른 문구`,
+    hx.ok && hx.zip.length > 0 && hx.warnings.some((s) => s.includes("얇은 부분 채움 실패")) && !hx.warnings.some((s) => s.includes("출력 가능 영역")),
+    `h. 영역 검사를 빼면 투사 X 최소에 걸친 상자가 원인과 다른 경고 "${hx.ok ? hx.warnings[0]?.slice(0, 30) : "(막힘)"}…" 만 달고 zip 으로 나온다 — ⑥ 을 막는 것은 영역 검사`,
   );
   const hy = await noArea.runTask0JobZipExport(areaInput(AREA_CASES.yBand));
   let hyYMax = NaN;

@@ -25,10 +25,14 @@
 //       sha256(A 22415b46… / C 3975b066… / B a62e93fa…)이 그대로 나온다 = 바이트 변화는 v0.3.4 리트랙트 규칙뿐.
 //       리트랙트 수: 층마다 E+r = E−r, 파일 E+r = Z1-b2 판 + 1(A 99→100 / C 3→4 / B 199→200).
 //   (3b) 실제 워커 모듈 — slice-batch.worker.ts 를 가짜 self 로 Node 에서 불러 task0-gcode 메시지를 넣으면
-//       progress(스로틀, 마지막 = 전체 층) + task0-done 1건, gcode sha256 = 위 고정값, 막힘은 error 가 아닌 task0-done.
-//   (4) 막힘 경로 — ① 채움 실패: 같은 평면 면을 가진 겹친 상자들을 **한 메시**로 묶은 나선 벽(lh 0.1)에서 층 9 가
-//       thinFill 'failed' → gcode null + 이유에 층 번호·Z·문구 ② 파서 경고: 규격 §8 한계를 넘는 속도(트래블 150 mm/s
-//       → F9000) → Task0 파서 print 모드 "F 클램프" 경고 → gcode null + 이유 ③ 층 없음(topY 0) → 이유.
+//       progress(스로틀, 마지막 = 전체 층) + task0-done 1건, gcode sha256 = 위 고정값, 막힘은 error 가 아닌 task0-done,
+//       경고만 있는 결과(나선 벽 + 대조군 writer)는 task0-done(ok, gcode, warnings·failedLayers 그대로).
+//   (4) 막음·경고 (2026-10-15 리드 결정 — 기계가 거부하는 조건만 막고 품질 문제는 경고, task0-export 머리 주석 "막음 / 경고"):
+//       ① 채움 실패 → 경고: 같은 평면 면을 가진 겹친 상자들을 **한 메시**로 묶은 나선 벽(lh 0.1). 기본 writer 는 단일 재료
+//       변형 재시도(retryStuckLayers)로 층 9 를 살린다(실측 변형 2 — 경고 0, 못 살려도 경고로 ok — 결과를 로그로 남김).
+//       대조군 writer(retryStuckLayers false = 예전 계획)는 층 9 가 thinFill 'failed' → 막지 않고 ok + gcode +
+//       경고에 층 번호·Z·문구, failedLayers [9] ② 파서 경고(막음): 규격 §8 한계를 넘는 속도(트래블 150 mm/s
+//       → F9000) → Task0 파서 print 모드 "F 클램프" 경고 → gcode null + 이유 ③ 층 없음(topY 0) → 이유(막음).
 //   (5) 배선 — 워커 runTask0Gcode 가 코어를 그대로 부름, 서비스 exportTask0Gcode, useSliceExport(deps 에 printerProfile·
 //       층두께 — 규칙 7, octet-stream, `_task0_` 파일 이름, handleExportStl 뒤), confirm 문구(기존 그대로 + Task0),
 //       SliceSidePanel(Task0 일 때만 Task0 버튼 — Z3 부터 job.zip 주·run.gcode 만 보조, 마스크 ZIP 은 Task0 아닌 쪽),
@@ -38,7 +42,8 @@
 //       a. 경계를 대칭(플레이트 ±W/2·±D/2)으로 바꾸면 "베드 X 5~15 모델" 사례를 놓친다(= (2) 의 그 단언이 실패).
 //       b. 서포트를 빼고 검사하면 "서포트만 밖" 사례를 놓친다.
 //       c. 코어에서 파서 검사를 빼면(소스 변조 → 임시 폴더) 속도 위반 입력이 **파일로 나와 버린다**.
-//       d. 코어에서 채움 실패 확인을 빼면 나선 벽이 파일로 나와 버린다.
+//       d. 코어에서 채움 실패 확인을 빼면 나선 벽(대조군 writer, 층 9 실패)이 경고 없이 나온다 — ① 의 경고 단언이 잡는다.
+//       d2. 경고를 막음으로 되돌린 코어(수정 전 정책)는 나선 벽(대조군 writer)을 막는다 — ① 의 "막지 않음" 단언이 잡는다.
 //       e. writer 옵션의 베드 크기를 Mars 3 Pro 플레이트로 바꾸면 sha256 이 달라진다(= (3) 의 바이트 비교가 민감함).
 //       f. deps 검사 함수에 printerProfile 을 뺀 소스를 넣으면 실패한다.
 //
@@ -404,6 +409,10 @@ function sectionSamePath() {
     const hash = r.ok ? sha256(r.gcode) : "(막힘)";
     outputs[fx.name] = r;
     assert(r.ok, `${fx.name}: 통과 (막힘 이유 ${r.ok ? "없음" : JSON.stringify(r.issues)})`);
+    assert(
+      r.ok && r.warnings.length === 0 && r.failedLayers.length === 0,
+      `${fx.name}: 경고 0 · 경고 층 0 (${r.ok ? JSON.stringify(r.warnings) : "막힘"})`,
+    );
     assert(r.ok && r.gcode === direct.gcode, `${fx.name}: 코어 출력 = generateTask0Gcode 직접 호출 (gen-task0-dryrun 이 쓰는 것)`);
     assert(hash === EXPECTED_SHA[fx.name], `${fx.name}: sha256 ${hash.slice(0, 16)}… = 고정값 ${EXPECTED_SHA[fx.name].slice(0, 16)}…`);
     // Z1-c 고정값 근거 — 바이트 변화는 v0.3.4 리트랙트 규칙(첫 도포 앞 E+r)과 머리 메타 두 줄뿐
@@ -509,9 +518,19 @@ async function sectionWorkerModule() {
     done !== undefined && !done.result.ok && done.result.gcode === null && !msgs.some((m) => m.type === "error"),
     "막힘 입력(속도 위반) → error 가 아니라 task0-done(ok false, gcode null) — 서비스가 reject 하지 않고 이유를 넘긴다",
   );
+  // 경고만 있는 결과 — 나선 벽 + 대조군 writer(retryStuckLayers false, 층 9 채움 실패) → ok + 경고 그대로
+  const sw = FAIL_INPUTS.spiral({ retryStuckLayers: false });
+  const wMsgs = await send(sw.meshes, sw.topY, sw.layerHeightMm, { ...writer, ...sw.writer });
+  const wDone = wMsgs.find((m) => m.type === "task0-done");
+  assert(
+    wDone !== undefined && wDone.result.ok && typeof wDone.result.gcode === "string" &&
+      JSON.stringify(wDone.result.failedLayers) === "[9]" && wDone.result.warnings.some((s) => s.includes("얇은 부분 채움 실패")) &&
+      !wMsgs.some((m) => m.type === "error"),
+    "경고만 있는 입력(나선 벽, 대조군 writer) → task0-done(ok, gcode, warnings·failedLayers [9] 그대로)",
+  );
 }
 
-// ── (4) 막힘 경로 ────────────────────────────────────────────────────────
+// ── (4) 막음·경고 ────────────────────────────────────────────────────────
 
 /** 같은 평면 면을 가진 겹친 상자 7개를 한 메시로 — 나선 벽 (Z1-b2 검수 "갇힘" 퇴화 단면) */
 function spiralSingleMesh() {
@@ -532,9 +551,10 @@ function spiralSingleMesh() {
 }
 
 const FAIL_INPUTS = {
-  spiral: () => {
+  /** writer 를 주면 그 옵션으로 (대조군 { retryStuckLayers: false } = 예전 계획 — 층 9 채움 실패) */
+  spiral: (writer) => {
     const meshes = spiralSingleMesh();
-    return { meshes, topY: meshesTopY(meshes), layerHeightMm: 0.1 };
+    return { meshes, topY: meshesTopY(meshes), layerHeightMm: 0.1, ...(writer ? { writer } : {}) };
   },
   speed: () => {
     const meshes = fixtureGapPlates().meshes();
@@ -544,21 +564,38 @@ const FAIL_INPUTS = {
 
 function sectionBlocked(run = runTask0GcodeExport, label = "") {
   const out = {};
-  // ① 채움 실패
-  const sp = run(FAIL_INPUTS.spiral());
+  // ① 채움 실패 (경고) — 대조군 writer(retryStuckLayers false)로 층 9 실패를 재현
+  const sp = run(FAIL_INPUTS.spiral({ retryStuckLayers: false }));
   out.spiral = sp;
-  // ② 파서 경고 (규격 §8 한계 초과 속도)
+  // ② 파서 경고 (규격 §8 한계 초과 속도 — 막음)
   const spd = run(FAIL_INPUTS.speed());
   out.speed = spd;
   if (label) return out;
-  console.log("\n(4) 막힘 경로 — 파일 없음 + 이유");
-  assert(
-    !sp.ok && sp.gcode === null && JSON.stringify(sp.failedLayers) === "[9]" && sp.summary?.thinFillFailedLayers.length === 1,
-    `① 나선 벽(겹친 상자 한 메시, lh 0.1): 막힘, gcode null, 문제 층 ${JSON.stringify(sp.failedLayers)}`,
+  console.log("\n(4) 막음·경고 — 기계가 거부하는 조건만 막고(파일 없음 + 이유), 품질 문제는 경고(파일 냄 + 알림)");
+  // ① 기본 writer — 단일 재료 변형 재시도가 층 9 를 살리면 경고 0, 못 살리면 경고 1건. 어느 쪽이든 막지 않는다
+  const spIn = FAIL_INPUTS.spiral();
+  const spDef = run(spIn);
+  const direct = generateTask0Gcode(spIn.meshes, spIn.topY, spIn.layerHeightMm);
+  const dt = direct.totals;
+  console.log(
+    `  ① 나선 벽 기본 writer: 실패 층 ${JSON.stringify(dt.thinFillFailedLayers)} · 변형 층 ${JSON.stringify(dt.routeVariantLayers)}` +
+      ` (번호 ${JSON.stringify(dt.routeVariantLayers.map((n) => direct.layers[n].routeVariant))}) · 경고 ${spDef.ok ? spDef.warnings.length : "(막힘)"}건`,
   );
   assert(
-    !sp.ok && sp.issues.some((s) => s.includes("층 9") && s.includes("Z 1 mm") && s.includes("얇은 부분 채움 실패")),
-    `① 이유에 층 번호·Z·문구: ${sp.ok ? "" : sp.issues[0]}`,
+    spDef.ok && spDef.gcode === direct.gcode &&
+      JSON.stringify(spDef.failedLayers) === JSON.stringify(dt.thinFillFailedLayers) &&
+      (spDef.warnings.length === 0) === (dt.thinFillFailedLayers.length === 0),
+    `① 나선 벽(겹친 상자 한 메시, lh 0.1) 기본 writer: 막지 않음, gcode = writer 직접 호출, ` +
+      `${dt.thinFillFailedLayers.length === 0 ? `재시도가 층 9 를 살림(변형 층 ${JSON.stringify(dt.routeVariantLayers)}) — 경고 0` : "재시도로도 실패 — 경고 1건"}`,
+  );
+  assert(
+    sp.ok && typeof sp.gcode === "string" && sp.gcode.length > 0 && JSON.stringify(sp.failedLayers) === "[9]" &&
+      sp.summary.thinFillFailedLayers.length === 1,
+    `① 나선 벽 대조군 writer(retryStuckLayers false — 예전 계획): 막지 않음, gcode 있음, 경고 층 ${JSON.stringify(sp.failedLayers)}`,
+  );
+  assert(
+    sp.ok && sp.warnings.length === 1 && sp.warnings.some((s) => s.includes("층 9") && s.includes("Z 1 mm") && s.includes("얇은 부분 채움 실패")),
+    `① 경고에 층 번호·Z·문구: ${sp.ok ? sp.warnings[0] : "(막힘)"}`,
   );
   assert(
     !spd.ok && spd.gcode === null && spd.failedLayers.length === 0 && spd.issues.some((s) => s.includes("Task0 파서 print(lh=0.1)") && s.includes("F 클램프")),
@@ -749,10 +786,25 @@ async function sectionControls(area) {
   );
   const c = sectionBlocked(noParser.runTask0GcodeExport, "no-parser");
   assert(c.speed.ok && typeof c.speed.gcode === "string" && c.speed.gcode.length > 0, "c. 파서 검사를 빼면 속도 위반 입력이 파일로 나와 버린다");
-  // d. 채움 실패 확인 제거
+  // d. 채움 실패 확인 제거 — 경고가 사라진다 (경고를 만드는 것이 이 확인)
   const noFill = await loadMutant("no-fill-check", "if (failed.length > 0) {", "if (failed.length < 0) {");
   const d = sectionBlocked(noFill.runTask0GcodeExport, "no-fill-check");
-  assert(d.spiral.ok && typeof d.spiral.gcode === "string", "d. 채움 실패 확인을 빼면 나선 벽(층 9 채움 실패)이 파일로 나와 버린다");
+  assert(
+    d.spiral.ok && typeof d.spiral.gcode === "string" && d.spiral.warnings.length === 0,
+    "d. 채움 실패 확인을 빼면 나선 벽(대조군 writer, 층 9 채움 실패)이 경고 없이 나온다 — ① 의 경고 단언이 잡는다",
+  );
+  // d2. 경고를 막음으로 되돌린 코어 (수정 전 정책) — ① 의 "막지 않음" 단언이 잡는다
+  const blockWarn = await loadMutant(
+    "warn-blocks",
+    "  return { out: { ok: true, gcode: result.gcode, summary, parser, warnings, failedLayers }, gen: result };",
+    "  if (warnings.length > 0) return { out: { ok: false, gcode: null, issues: warnings, failedLayers, summary, parser }, gen: result };\n" +
+      "  return { out: { ok: true, gcode: result.gcode, summary, parser, warnings, failedLayers }, gen: result };",
+  );
+  const d2 = sectionBlocked(blockWarn.runTask0GcodeExport, "warn-blocks");
+  assert(
+    !d2.spiral.ok && d2.spiral.gcode === null && d2.spiral.issues.some((s) => s.includes("얇은 부분 채움 실패")),
+    "d2. 경고를 막음으로 되돌린 코어(수정 전 정책)는 나선 벽(대조군 writer)을 막는다 — ① 의 \"막지 않음\" 단언이 실패",
+  );
   // e. 바이트 비교 민감도 — 베드 크기만 Mars 3 Pro 플레이트로
   const m = fixtureCube10().meshes();
   const mars = runTask0GcodeExport({ meshes: m, topY: meshesTopY(m), layerHeightMm: 0.1, writer: { bedWidthMm: 143.43, bedDepthMm: 89.6 } });

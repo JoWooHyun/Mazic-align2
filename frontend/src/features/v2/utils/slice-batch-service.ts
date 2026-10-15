@@ -37,7 +37,8 @@ export type BatchProgress = (
 ) => void;
 
 /**
- * Task0 job.zip 내보내기 결과 (Z3) — 통과면 zip 을 Blob(application/zip)으로, 막혔으면 워커 결과(이유) 그대로.
+ * Task0 job.zip 내보내기 결과 (Z3) — 통과면 zip 을 Blob(application/zip)으로(경고·경고 층도 그대로 옮긴다),
+ * 막혔으면 워커 결과(이유) 그대로.
  */
 export type Task0JobZipOutcome =
   | {
@@ -46,6 +47,10 @@ export type Task0JobZipOutcome =
       summary: Task0ExportSummary;
       job: Task0JobZipSummary;
       parser: Task0ExportParserCheck[];
+      /** 막지 않은 알림 (워커 결과 그대로 — 얇은 부분 채움 실패·도포 ≠ 노광 등, 파일은 냈다) */
+      warnings: string[];
+      /** 경고가 난 층 (0-based, 오름차순) */
+      failedLayers: number[];
     }
   | Extract<Task0JobZipExportResult, { ok: false }>;
 
@@ -117,7 +122,7 @@ class SliceBatchService {
 
   /**
    * Task0 G-code(run.gcode) 내보내기 (Z2). 워커에서 writer → 채움 실패 층 확인 → Task0 파서 검사를 돌린다.
-   * 결과는 통과(gcode + 요약) 또는 막힘(gcode null + 이유) — 막힘은 reject 가 아니라 정상 resolve 다.
+   * 결과는 통과(gcode + 요약 + 막지 않은 경고) 또는 막힘(gcode null + 이유) — 막힘은 reject 가 아니라 정상 resolve 다.
    * 진행률(층 단위)·취소는 다른 경로와 같은 인프라(onProgress / cancel).
    */
   exportTask0Gcode(
@@ -148,6 +153,8 @@ class SliceBatchService {
       summary: r.summary,
       job: r.job,
       parser: r.parser,
+      warnings: r.warnings,
+      failedLayers: r.failedLayers,
     };
   }
 
