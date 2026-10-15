@@ -389,8 +389,8 @@ const SliceSidePanel: React.FC<Props> = ({
 };
 
 /**
- * 마지막 Task0 내보내기 결과 (Z2·Z3). 성공 = 파일 이름 + 층·길이·예상 시간 요약(job.zip 이면 층 이미지 수·zip 크기),
- * 막힘 = 이유(층 번호·문구).
+ * 마지막 Task0 내보내기 결과 (Z2·Z3). 성공 = 파일 이름 + 막지 않은 경고 목록(있을 때만) + 층·길이·예상 시간 요약
+ * (job.zip 이면 층 이미지 수·zip 크기), 막힘 = 이유(층 번호·문구).
  * 예상 시간 = 규격서 §11·§13 estimate (도포 + 트래블 + 파킹 + 블레이드 + 층 오버헤드 + 노광, 가속 무시).
  */
 function Task0ReportView({ report }: { report: Task0ExportReport }) {
@@ -418,6 +418,17 @@ function Task0ReportView({ report }: { report: Task0ExportReport }) {
   return (
     <div className="text-xs text-gray-700 bg-white border border-gray-200 rounded px-3 py-2">
       <div className="font-medium text-green-700">내보냄 · {report.fileName}</div>
+      {/* 막지 않은 경고 (얇은 부분 채움 실패 등 — 품질 문제, 파일은 냈다). 0건이면 그리지 않는다 */}
+      {report.warnings.length > 0 && (
+        <div className="text-amber-700 mt-1">
+          <div className="font-medium">경고 {report.warnings.length}건 — 파일은 냈습니다</div>
+          <ul className="list-disc pl-4 mt-1 space-y-0.5">
+            {report.warnings.map((w, i) => (
+              <li key={`${i}:${w}`}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 mt-1">
         <span className="text-gray-500">층</span>
         <span className="font-mono text-right">

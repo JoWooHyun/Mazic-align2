@@ -14,11 +14,11 @@ export type ViewPreset =
  * 카메라를 주어진 프리셋으로 이동.
  *
  * 각도는 내부 Babylon Y-up 좌표계 기준이다. 괄호 안은 **표시 규약(Z-up, B-13)**
- * 으로 본 같은 방향 — `types/axis-display.ts` 의 `(x, −z, y)` 매핑을 적용한 것.
+ * 으로 본 같은 방향 — `types/axis-display.ts` 의 `(x, z, y)` 매핑(= STL·베드 축)을 적용한 것.
  *   - Top:    위에서 아래 보기 (alpha=-π/2, beta≈0) — 내부 +Y = 표시 +Z
  *   - Bottom: 아래에서 위 보기 (alpha=-π/2, beta≈π)
- *   - Front:  내부 -Z 쪽에서 보기 (표시 +Y 쪽)
- *   - Back:   내부 +Z 쪽        (표시 -Y 쪽)
+ *   - Front:  내부 -Z 쪽에서 보기 (표시 -Y 쪽 — +Y = 안쪽을 본다)
+ *   - Back:   내부 +Z 쪽        (표시 +Y 쪽)
  *   - Left:   내부 -X 쪽에서 +X (표시도 -X)
  *   - Right:  내부 +X 쪽        (표시도 +X)
  *   - Iso:    기본 등각

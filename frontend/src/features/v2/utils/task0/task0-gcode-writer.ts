@@ -58,8 +58,17 @@
  *   - 실패하면 task0-thin-fill 이 실패 성분의 중심선·점 도포를 만들고(통과할 때까지 반복), task0-fill-route 가
  *     띠 분해(띠 번호 비감소·띠마다 방향 번갈아·띠 안 X 순서)와 교차 검사 통과 트래블(L자·A* 우회)로 순서를 정한다.
  *     리트랙트·E·숫자 표기·층 머리는 위와 같은 함수로 낸다(1 mm 미만 트래블 생략도 경로 길이 기준 그대로).
- *   - 그래도 커버리지 실패이거나 경로 없는 항목이 있으면 그 층을 thinFill 'failed' 로 남긴다 — 파일을 쓰는 쪽
- *     (gen-task0-dryrun, Z2 내보내기)이 totals.thinFillFailedLayers 를 보고 막는다.
+ *   - 그래도 커버리지 실패이거나 경로 없는 항목이 있으면 **단일 재료도 그 층만** 2재료와 같은 변형을 차례로 시도한다
+ *     (options.retryStuckLayers — 기본 켬, 2026-10-15 리드 결정 "기본 서포트 + 기본 설정이면 파일이 나와야 한다"). 후보 순서:
+ *       ① 기본과 같은 계획 + 막힌 항목이 생기면 그 앞 항목 방향 뒤집어 다시(task0-fill-route retryOnStuck) — routeVariant 1
+ *       ② 앞 패스 변형 FIRST_PASS_VARIANTS[1..3](경로 계획 — 행도 양쪽 끝 허용, 1 눈금 미만 행 구간 뺌) — 2~4
+ *       ③ FLIP_PROBE 계획의 emittedSeqs 끝에서 1~FLIP_BACK_MAX 개를 하나씩 뒤집기 — 5~8
+ *     처음 통과한 후보를 쓴다(LATER_PASS_VARIANTS 는 패스가 하나라 돌지 않는다). 기본 계획이 통과하는 층은 재시도를 아예
+ *     하지 않으므로 **통과 층은 예전 계획 그대로**다(실패 층이 없는 파일 = 바이트 그대로. 재시도한 층이 있는 파일은 그 뒤 층의
+ *     도포 줄 E 끝자리가 줄마다 1 눈금 안에서 달라질 수 있다 — 위 "E" 의 잔차 이월이 파일 전체 누적이라. 좌표·줄 구성은 그대로).
+ *     실측(기본 서포트 기둥 ⌀0.8·팁 ⌀0.4·발 ⌀1.5): 발 층·화살촉 층의 "경로 없음"이 재시도로 통과(verify-task0-support-retry).
+ *   - 재시도로도 안 되면 그 층을 thinFill 'failed' 로 남긴다 — 드라이런 견본(gen-task0-dryrun)은 totals.thinFillFailedLayers 를
+ *     보고 쓰지 않고, 앱 내보내기(task0-export)는 **경고로 알리고 파일을 낸다**(그 층 노광 영역 일부에 레진이 안 깔릴 수 있음).
  *   - 채움이 있는 파일만 START 앞 메타에 채움 통계 줄을 더한다(없는 파일은 메타도 그대로).
  *
  * 2재료 (D1a — 규격서 v0.3.4 §5·§6, 계획 `docs/계획_하이브리드슬라이서설정_20260928.md` §5-3, 이번 조각은 라이브러리만):
@@ -74,7 +83,7 @@
  *     얇은 부분 채움을 **그 재료 영역에 대해** 한다. 행 위상(띠 원점)은 그 재료 단면 Pm 의 최소 Y.
  *     층 안 두 번째 패스는 채움이 없어도 task0-fill-route 로 낸다 — 앞 패스가 칠한 선분(paintedBefore)까지 교차 검사·
  *     엄격 판정(c4b 정의)·A* 우회(전환 트래블 포함). 두 번째 패스의 행·점은 띠 방향 쪽 끝이 막히면 반대 끝으로 들어간다
- *     (서펜타인 방향 고정을 2재료 패스에서만 푼다 — 단일 재료는 그대로).
+ *     (서펜타인 방향 고정을 2재료 패스에서만 푼다 — 단일 재료는 기본 계획이 막혀 변형 재시도를 쓴 층에서만).
  *   - 층 계획은 실제로 내기 전에 끝까지 세운다(패스마다 계획 → 도포 선분·끝 위치를 그대로 따라 그려 다음 패스 계획). 기본 계획이
  *     실패(경로 없는 항목, 또는 채움 뒤 커버리지 실패)면 그 층만 변형을 차례로 시도해 처음 성공한 조합을 쓴다(routeVariant):
  *       앞 패스를 경로 계획으로 다시(행도 양쪽 끝 허용) 세우되 마지막 항목 방향 뒤집기·첫 띠 방향 −X, 뒤 패스 첫 띠 방향 −X,
@@ -85,7 +94,8 @@
  *     경로 계획으로 내는 2재료 패스(앞 패스가 칠했거나 변형 계획)는 E 가 1 눈금도 안 되는 행 구간(판정에 원래 안 세는 구간)을 내지
  *     않고, 얇은 부분 채움도 그 구간을 칠한 것으로 치지 않는다 — 채움 점과 몇 µm 사이로 겹쳐 노즐이 갇히던 끝점을 없앤다.
  *     어떤 조합도 안 되면 기본 계획 그대로 thinFill 'failed'(unreachable 로 셈)로 남긴다 — 쓰는 쪽이 totals.thinFillFailedLayers
- *     로 막는다(A 가 B 를 완전히 둘러싼 층 등). **교차를 성공으로 내지 않는다**(모든 트래블은 c4 + c4b 엄격 판정 통과).
+ *     를 본다(A 가 B 를 완전히 둘러싼 층 등 — 앱 내보내기는 경고로 알리고 낸다). **교차를 성공으로 내지 않는다**(모든 트래블은
+ *     c4 + c4b 엄격 판정 통과). 단일 재료도 같은 변형을 쓴다(retryStuckLayers — 위 "얇은 부분 채움", 후보 순서·번호는 다르다).
  *   - 얇은 부분 채움의 점 도포는 다른 재료(뺄 단면) 픽셀 안으로 끝이 들어가지 않게 줄인다(task0-thin-fill — B 우선).
  *   - flipOrderWhenStuck(기본 끔): 변형으로도 막힌 층만 B → A 로 다시 계획(규격 §6 【미정】 "갇힌 층은 B → A" — 측정용).
  *   - 툴 상태: 리트랙트 여부를 **툴마다** 둔다. 모든 툴 리트랙트로 시작(§10), 층 블록 끝에 모든 툴 리트랙트, 툴별 E 순변화
@@ -133,6 +143,12 @@ export interface Task0WriterOptions {
    * (2재료면 층 안 두 번째 툴 패스의 트래블·전환 트래블에도 같이 적용)
    */
   thinFillDetour?: boolean;
+  /**
+   * 단일 재료에서 기본 계획이 경로 없음·채움 실패인 층만 2재료와 같은 변형 재시도 (기본 true — 머리 주석 "얇은 부분 채움").
+   * false 는 대조군 전용 — 예전 동작(기본 계획만). 통과하는 층은 어느 쪽이든 기본 계획 그대로다. 2재료에는 영향 없음
+   * (2재료는 지금처럼 항상 재시도).
+   */
+  retryStuckLayers?: boolean;
   /**
    * 층 진행 콜백 (Z2 — 앱 워커 진행률). 층 하나를 다 쓸 때마다 (끝낸 층 수, 전체 층 수) 로 부른다.
    * 출력 바이트·통계에는 영향이 없다(읽기만 하는 알림).
@@ -216,7 +232,10 @@ export interface Task0LayerStats {
   unretracts: number;
   /** 이 층 도포 줄 E 의 출력값 합 (mm) */
   extrusionMm: number;
-  /** 얇은 부분 채움 — none: 행만으로 커버리지 통과, filled: 채움으로 통과, failed: 채움 후에도 실패(파일 쓰면 안 됨) */
+  /**
+   * 얇은 부분 채움 — none: 행만으로 커버리지 통과, filled: 채움으로 통과, failed: 변형 재시도까지 해도 실패
+   * (드라이런 견본은 쓰지 않고, 앱 내보내기는 경고로 알리고 낸다)
+   */
   thinFill: 'none' | 'filled' | 'failed';
   /** 띠로 자른 중심선 채움 조각 수 */
   fillPieces: number;
@@ -237,7 +256,10 @@ export interface Task0LayerStats {
   toolChanges: number;
   /** 툴별 통계 — 단일 재료 [T0], 2재료 [T0, T1] */
   byTool: Task0ToolStats[];
-  /** (2재료) 쓴 계획 변형 번호 — 0 = 기본 계획, 1 이상 = 기본이 막혀 바꾼 계획 (머리 주석 "층 계획") */
+  /**
+   * 쓴 계획 변형 번호 — 0 = 기본 계획, 1 이상 = 기본이 막혀 바꾼 계획. 2재료는 머리 주석 "2재료" 의 층 계획 번호,
+   * 단일 재료(retryStuckLayers)는 1~8 (머리 주석 "얇은 부분 채움" 후보 순서)
+   */
   routeVariant: number;
   /** (2재료) flipOrderWhenStuck 로 이 층만 B → A 로 냈는지 */
   orderFlipped: boolean;
@@ -275,7 +297,10 @@ export interface Task0GcodeTotals {
   extrusionExactMm: number;
   /** 채움이 들어간 층 번호 (thinFill 'filled') */
   thinFillLayers: number[];
-  /** 채움 후에도 커버리지 실패이거나 경로 없는 항목이 남은 층 — 비어 있어야 파일을 쓴다 */
+  /**
+   * 채움(과 변형 재시도) 후에도 커버리지 실패이거나 경로 없는 항목이 남은 층 — 드라이런 견본(gen-task0-dryrun)은 비어 있어야
+   * 쓰고, 앱 내보내기(task0-export)는 경고로 알리고 파일을 낸다
+   */
   thinFillFailedLayers: number[];
   fillPieces: number;
   fillDots: number;
@@ -288,7 +313,7 @@ export interface Task0GcodeTotals {
   toolChanges: number;
   /** 툴별 합계 — 단일 재료 [T0], 2재료 [T0, T1] */
   byTool: Task0ToolStats[];
-  /** (2재료) 기본 계획이 막혀 변형 계획을 쓴 층 */
+  /** 기본 계획이 막혀 변형 계획을 쓴 층 (2재료, 단일 재료 retryStuckLayers) */
   routeVariantLayers: number[];
   /** (2재료) 순서를 B → A 로 뒤집은 층 (flipOrderWhenStuck) */
   orderFlippedLayers: number[];
@@ -600,6 +625,7 @@ interface LayerPass {
  * 통과 못 하면 채움을 만들고(task0-thin-fill) 순서·트래블을 정한 뒤(task0-fill-route), 낼 도포 선분 그대로 다시 검사한다.
  * paintedBefore 가 있으면(2재료 두 번째 패스) 채움이 없어도 task0-fill-route 로 — 전환 트래블·패스 안 트래블이 앞 툴이
  * 칠한 곳을 피하게(교차 검사·우회). 경로 없는 항목이 있으면 'failed'.
+ * retryOnStuck = 막힌 항목이 생기면 앞 항목 방향을 뒤집어 다시 계획(2재료 패스, 단일 재료는 변형 재시도 후보에서만).
  */
 function planPass(
   pass: LayerPass,
@@ -610,13 +636,14 @@ function planPass(
   thinFillOn: boolean,
   detour: boolean,
   variant: PassVariant | null = null,
-  dualPass = false,
+  retryOnStuck = false,
 ): PassPlan | null {
   const { polys, section, rows } = pass;
   if (polys.length === 0) return null; // 이 재료 단면이 없는 층 (행도 없다)
   const exclude = pass.exclude.length > 0 ? pass.exclude : undefined;
   const overflow = pass.overflow ?? undefined;
-  // 앞 패스가 칠한 것이 있거나 변형 계획이면 행만이어도 경로 계획 (2재료 전용 — 단일 재료는 둘 다 없음)
+  // 앞 패스가 칠한 것이 있거나 변형 계획이면 행만이어도 경로 계획 (2재료, 그리고 단일 재료의 변형 재시도 — 단일 재료 기본
+  //   계획은 둘 다 없음)
   const mustRoute = paintedBefore.length > 0 || variant !== null;
   let fills: Task0ThinFillResult | null = null;
   if (thinFillOn) {
@@ -650,9 +677,9 @@ function planPass(
   }
   const d = TASK0_DEFAULTS;
   const m = DETOUR_REGION_MARGIN_MM;
-  // 2재료 경로 계획(mustRoute)에서는 E 가 1 눈금도 안 되는 아주 짧은 행 구간을 뺀다 — 판정에 원래 안 세는 구간이라 커버리지는
+  // 2재료·변형 경로 계획(mustRoute)에서는 E 가 1 눈금도 안 되는 아주 짧은 행 구간을 뺀다 — 판정에 원래 안 세는 구간이라 커버리지는
   //   그대로이고(위 countedSegments), 채움 점 도포와 몇 µm 사이로 겹쳐 노즐이 갇히는 끝점(엄격 판정으로 못 떠남)을 없앤다.
-  //   단일 재료(mustRoute 아님)는 예전 그대로 낸다.
+  //   단일 재료 기본 계획(mustRoute 아님)은 예전 그대로 낸다.
   const routeRows = mustRoute
     ? rows
         .map((row) => ({ ...row, spans: row.spans.filter(([a, b]) => ((b - a) / UM_PER_MM) * eRatePerMm * E_TICKS_PER_MM >= 1) }))
@@ -673,13 +700,13 @@ function planPass(
     startUm,
     detour,
     paintedBefore,
-    // 2재료 패스(앞 패스가 칠했거나 변형 계획)만 — 행·점도 막히면 반대 끝으로, 변형이면 첫 띠 방향·마지막 항목 방향
+    // 2재료 패스(앞 패스가 칠했거나 변형 계획)·단일 재료 변형만 — 행·점도 막히면 반대 끝으로, 변형이면 첫 띠 방향·마지막 항목 방향
     rowsEitherWay: mustRoute ? true : undefined,
     firstBandDir: variant?.firstBandDir,
     reverseLastItem: variant?.reverseLastItem,
     flipItems: variant?.flipItems,
-    // 2재료 패스만 — 막힌 항목이 생기면 앞 항목 방향을 뒤집어 다시 (통과하는 계획은 그대로)
-    retryOnStuck: dualPass ? true : undefined,
+    // 2재료 패스·단일 재료 재시도 후보만 — 막힌 항목이 생기면 앞 항목 방향을 뒤집어 다시 (통과하는 계획은 그대로)
+    retryOnStuck: retryOnStuck ? true : undefined,
   });
   if (fills === null) return { status: route.unreachable === 0 ? 'none' : 'failed', route };
   const final = checkTask0LayerCoverage(polys, countedSegments(route.painted, eRatePerMm), {
@@ -697,7 +724,7 @@ function worseFill(a: PassPlan['status'], b: PassPlan['status']): PassPlan['stat
   return a === 'filled' || b === 'filled' ? 'filled' : 'none';
 }
 
-/** 경로 계획 변형 (2재료 — 기본 계획이 막힌 층에서만) */
+/** 경로 계획 변형 (기본 계획이 막힌 층에서만 — 2재료, 단일 재료 retryStuckLayers) */
 interface PassVariant {
   firstBandDir: 1 | -1;
   reverseLastItem: boolean;
@@ -716,7 +743,7 @@ const FIRST_PASS_VARIANTS: readonly (PassVariant | null)[] = [
 const FLIP_BACK_MAX = 4;
 /** 끝 항목 뒤집기의 바탕 변형 (경로 계획, 첫 띠 +X, 마지막 항목 그대로) — 항목 번호도 이 모드의 계획에서 잡는다 */
 const FLIP_PROBE: PassVariant = { firstBandDir: 1, reverseLastItem: false };
-/** 뒤 패스 변형 — null = 기본(첫 띠 +X) */
+/** 뒤 패스 변형 — null = 기본(첫 띠 +X). 2재료 전용(단일 재료는 패스가 하나라 돌지 않는다) */
 const LATER_PASS_VARIANTS: readonly (PassVariant | null)[] = [null, { firstBandDir: -1, reverseLastItem: false }];
 
 /**
@@ -762,6 +789,7 @@ interface LayerPlan {
 
 /**
  * 순서대로 패스를 계획 — 처음 도포하는 패스는 first 변형, 그 뒤 패스는 later 변형(앞 패스가 칠한 선분·끝 위치를 받아).
+ * retryOnStuck 은 패스마다 planPass 로 그대로 (2재료는 늘 true, 단일 재료는 기본 계획 false·재시도 후보 true).
  */
 function planLayer(
   passes: LayerPass[],
@@ -772,7 +800,7 @@ function planLayer(
   eRatePerMm: number,
   thinFillOn: boolean,
   detour: boolean,
-  dualPass: boolean,
+  retryOnStuck: boolean,
 ): LayerPlan {
   const plans: (PassPlan | null)[] = [];
   const painted: Task0DepositSegment[] = [];
@@ -780,7 +808,7 @@ function planLayer(
   let unreachable = 0;
   let failed = false;
   for (const pass of passes) {
-    const plan = planPass(pass, pos, painted.slice(), w, eRatePerMm, thinFillOn, detour, painted.length === 0 ? first : later, dualPass);
+    const plan = planPass(pass, pos, painted.slice(), w, eRatePerMm, thinFillOn, detour, painted.length === 0 ? first : later, retryOnStuck);
     plans.push(plan);
     if (plan !== null) {
       unreachable += plan.route?.unreachable ?? 0;
@@ -1024,20 +1052,50 @@ export function generateTask0Gcode(
       posY = y;
     };
 
-    // 1-b) 층 계획 — 패스마다 얇은 부분 채움·경로(단일 재료는 패스 하나, 기본 계획만 = 예전 그대로).
-    //      2재료에서 기본 계획에 경로 없는 항목이 있으면 변형을 차례로 시도 (머리 주석 "층 계획")
+    // 1-b) 층 계획 — 패스마다 얇은 부분 채움·경로(단일 재료는 패스 하나 — 기본 계획은 예전 그대로).
+    //      기본 계획에 경로 없는 항목이 있거나 채움이 실패하면 그 층만 변형을 차례로 시도:
+    //      2재료는 머리 주석 "2재료" 의 층 계획, 단일 재료는 retryStuckLayers(기본 켬)일 때 머리 주석 "얇은 부분 채움" 의 후보 순서
     const park: [number, number] = [parkXUm, parkYUm];
-    const planOf = (seq: LayerPass[], first: PassVariant | null, later: PassVariant | null): LayerPlan =>
-      planLayer(seq, park, first, later, w, eRatePerMm, thinFillOn, detourOn, dual !== null);
-    let chosen = planOf(passes, null, null);
+    const planOf = (seq: LayerPass[], first: PassVariant | null, later: PassVariant | null, retryOnStuck: boolean): LayerPlan =>
+      planLayer(seq, park, first, later, w, eRatePerMm, thinFillOn, detourOn, retryOnStuck);
+    // 기본 계획 — 단일 재료는 retryOnStuck 없이(통과 층 바이트 불변), 2재료는 지금처럼 켠다
+    let chosen = planOf(passes, null, null, dual !== null);
     const ok = (pl: LayerPlan): boolean => pl.unreachable === 0 && !pl.failed;
+    if (dual === null && !ok(chosen) && options.retryStuckLayers !== false) {
+      // 단일 재료 변형 재시도 — ① 기본 + 막힌 항목 앞 뒤집기(1) ② 앞 패스 변형 3종(2~4) ③ 끝 항목 뒤집기(5~8).
+      //   처음 통과하는 후보를 쓰고, 다 안 되면 기본 계획 그대로(thinFill 'failed' — 쓰는 쪽이 경고로 낸다)
+      const single = ((): { plan: LayerPlan; index: number } | null => {
+        let index = 0;
+        for (const first of FIRST_PASS_VARIANTS) {
+          index++;
+          const cand = planOf(passes, first, null, true);
+          if (ok(cand)) return { plan: cand, index };
+        }
+        // 끝 항목 뒤집기 — 항목 번호는 2재료와 같이 FLIP_PROBE 모드로 세운 계획 자신의 emittedSeqs 에서 (탐침은 후보 아님)
+        const route = planOf(passes, FLIP_PROBE, null, true).plans[0]?.route ?? null;
+        if (route !== null) {
+          const emitted = route.emittedSeqs;
+          for (let k = 1; k <= FLIP_BACK_MAX; k++) {
+            index++;
+            if (k > emitted.length) continue;
+            const cand = planOf(passes, { ...FLIP_PROBE, flipItems: [emitted[emitted.length - k]] }, null, true);
+            if (ok(cand)) return { plan: cand, index };
+          }
+        }
+        return null;
+      })();
+      if (single !== null) {
+        chosen = single.plan;
+        stat.routeVariant = single.index;
+      }
+    }
     if (dual !== null && !ok(chosen)) {
       const search = (seq: LayerPass[]): { plan: LayerPlan; index: number } | null => {
         let index = 0;
         for (const first of FIRST_PASS_VARIANTS) {
           for (const later of LATER_PASS_VARIANTS) {
             if (index++ === 0) continue; // 기본 (위에서 이미)
-            const cand = planOf(seq, first, later);
+            const cand = planOf(seq, first, later, true);
             if (ok(cand)) return { plan: cand, index: index - 1 };
           }
         }
@@ -1045,7 +1103,7 @@ export function generateTask0Gcode(
         //   있게 (앞 패스 끝이 칠한 줄 사이 좁은 틈에 갇힌 경우). 항목 번호는 뒤집기와 **같은 변형 모드**(경로 계획, 1 눈금 미만
         //   행 구간 뺌)로 세운 앞 패스 자신의 emittedSeqs 에서 잡는다 — 기본 계획(B안 행이면 경로 계획이 아예 없고, 있어도 행 구간
         //   구성이 달라 번호가 어긋난다)이나 다른 패스의 번호를 쓰지 않는다. 이 탐침 계획 자체는 후보로 쓰지 않는다.
-        const probe = planOf(seq, FLIP_PROBE, null);
+        const probe = planOf(seq, FLIP_PROBE, null, true);
         let route: Task0RouteResult | null = null;
         for (let i = 0; i < seq.length; i++) {
           const pl = probe.plans[i];
@@ -1058,7 +1116,7 @@ export function generateTask0Gcode(
           for (let k = 1; k <= FLIP_BACK_MAX && k <= emitted.length; k++) {
             for (const later of LATER_PASS_VARIANTS) {
               index++;
-              const cand = planOf(seq, { ...FLIP_PROBE, flipItems: [emitted[emitted.length - k]] }, later);
+              const cand = planOf(seq, { ...FLIP_PROBE, flipItems: [emitted[emitted.length - k]] }, later, true);
               if (ok(cand)) return { plan: cand, index: index - 1 };
             }
           }
@@ -1071,7 +1129,7 @@ export function generateTask0Gcode(
         stat.routeVariant = found.index;
       } else if (dual.flipOrderWhenStuck) {
         const flippedSeq = [...passes].reverse();
-        const base = planOf(flippedSeq, null, null);
+        const base = planOf(flippedSeq, null, null, true);
         const alt = ok(base) ? { plan: base, index: 0 } : search(flippedSeq);
         if (alt !== null) {
           chosen = alt.plan;

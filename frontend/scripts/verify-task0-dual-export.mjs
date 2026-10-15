@@ -28,10 +28,12 @@
 //       (OffscreenCanvas·js-clipper) → (6) 에서 소스로: getSliceGeometry 의 삼각형·순서 그대로, 워커 마스크·marlin 경로는 triangles 만 읽음.
 //   (3) 슬롯 결정 — task0MeshSlots: 서포트는 붙은 STL 이 B 여도 A, STL materialSlot 없음 → B, 'A' → A, 모르는 값·목록에 없는 STL → B.
 //       코어로: 왼쪽 상자(A 지정) + 오른쪽 상자(지정 없음) + 오른쪽에 붙은 서포트 기둥 → T0 도포는 왼쪽 상자·기둥 자리만, T1 은 오른쪽 상자만.
-//   (4) 막힘 — ① 갇힌 B(닫힌 고리 A + 안의 B, verify-task0-dual fixtureClosedRing): run.gcode·job.zip 둘 다 파일 없음, 이유
-//       "재료 B(T1)가 재료 A(T0)에 둘러싸여 … 협의 §31-4", 문제 층 = 전 층 ② 출력 가능 영역 밖(2재료 입력을 베드 X 밖으로) → writer 전에
-//       같은 영역 문구 ③ 슬롯 수 ≠ 메시 수 → 이유 ④ 2재료 자기 검사 — writer 대조군 옵션으로 만든 위반 출력:
-//       겹침 차집합 끔(subtractOverlap false) → "B 우선 위반", 우회 끔(thinFillDetour false, U 자 A 안의 B) → "트래블이 칠한 레진을 가로지르거나".
+//   (4) 막음·경고 (2026-10-15 리드 결정 — 기계가 거부하는 조건만 막고 품질 문제는 경고, task0-export 머리 주석 "막음 / 경고"):
+//       ① 갇힌 B(닫힌 고리 A + 안의 B, verify-task0-dual fixtureClosedRing) → 경고: run.gcode·job.zip 둘 다 파일 있음, 경고
+//       "재료 B(T1)가 재료 A(T0)에 둘러싸여 … 협의 §31-4"("얇은 부분 채움 실패" 문구 없음), 경고 층 = 전 층 ② 출력 가능 영역 밖(2재료
+//       입력을 베드 X 밖으로) → writer 전에 같은 영역 문구(막음) ③ 슬롯 수 ≠ 메시 수 → 이유(막음) ④ 2재료 자기 검사 → 경고 —
+//       writer 대조군 옵션으로 만든 위반 출력: 겹침 차집합 끔(subtractOverlap false) → "B 우선 위반", 우회 끔(thinFillDetour false,
+//       U 자 A 안의 B) → "트래블이 칠한 레진을 가로지르거나" — 둘 다 파일은 나오고 경고에 같은 문구, 기본 옵션이면 경고 0.
 //   (5) 데이터 — 가짜 IndexedDB(이 스크립트 안, 스토어·인덱스·커서만)에 data/*.repo.ts 를 그대로 돌림: DB 버전 4·스토어 3개·인덱스 그대로,
 //       새 프로젝트·STL 레코드에는 새 필드 없음(기본값 single·B), updateProject/updateStlFile 로 저장 → 다시 읽어 그 값, transform 과 함께
 //       보존, 옛 레코드(putProject/putStlFile 필드 없음) → 기본값, 저장한 슬롯으로 task0ExportMaterialSlots, .mzalign 내보내기 → 가져오기('new')
@@ -41,9 +43,10 @@
 //       무효화 deps 에 재료 모드)·useTask0Material(repo 경유·3D 색은 슬라이스 화면 2재료일 때만)·패널·목록·페이지·컴포넌트에 IndexedDB 직접 접근 없음.
 //   (7) 대조군 — a. 서포트 슬롯을 B 로 바꾼 task0-material → (1) 의 파일 D 바이트·(3) 의 "서포트 = A" 가 실패
 //       b. job.zip 의 toolChangeCount 를 0 으로 고정한 task0-jobzip(+ 그것을 쓰는 코어) → 파일 D job.zip 이 막히고(자기 검사 — 툴 전환 수
-//          불일치) 견본 경로 zip 은 검사기가 잡는다 c. 코어에서 2재료 자기 검사를 빼면 (4)④ 의 B 우선 위반·교차 트래블 출력이 파일로 나온다
-//       d. 트래블 검사만 빼면 교차 출력이 나오고 B 우선 위반은 여전히 막힌다(두 검사가 각각 필요) e. 갇힌 B 판정을 빼면 이유가 엉뚱한
-//          "두 재료가 맞물린 단면" 으로 바뀐다(D2 — 판정이 writer 통계 기반, 그 전에는 "얇은 부분 채움 실패" 였다) f. deps 에서 재료 모드·files 를 빼거나 무효화 deps 에서 재료 모드를 빼면 (6) 이 실패한다
+//          불일치) 견본 경로 zip 은 검사기가 잡는다 c. 코어에서 2재료 자기 검사를 빼면 (4)④ 의 B 우선 위반·교차 트래블 출력이 경고 없이
+//          나온다(경고를 만드는 것이 이 검사) d. 트래블 검사만 빼면 교차 출력은 트래블 경고 없이 나오고 B 우선 위반 경고는 그대로(두 검사가
+//          각각 필요) e. 갇힌 B 판정을 빼면 경고가 엉뚱한 "두 재료가 맞물린 단면" 으로 바뀐다(D2 — 판정이 writer 통계 기반, 그 전에는
+//          "얇은 부분 채움 실패" 였다) f. deps 에서 재료 모드·files 를 빼거나 무효화 deps 에서 재료 모드를 빼면 (6) 이 실패한다
 //       g. 슬롯 입력을 무시하는 코어(D1b 이전 동작) → 단일 재료 파일이 나와 (1) 의 파일 D 바이트·manifest 2재료가 실패.
 //       (수정 전 트리 전체로 돌리면 task0-material.ts 가 없어 import 단계에서 exit 1 — 구현 확인 때 실측.)
 //   (8) 성능 참고 — TASK0_PERF=1 일 때만(판정 없음): 2재료 job.zip — 파일 D 형상, 구 + 기둥 서포트(verify-task0-dual sphereSeedModel) 단계별 시간.
@@ -491,20 +494,22 @@ function ringInput() {
 }
 
 async function sectionBlocked() {
-  console.log("\n(4) 막힘 — 파일 없음 + 구체 이유");
+  console.log("\n(4) 막음·경고 — 기계가 거부하는 조건(영역·슬롯)은 막고, 품질 문제(갇힌 B·B 우선·트래블 스침)는 경고 + 파일");
+  // ① 갇힌 B → 경고 (2026-10-15 리드 결정 — 막지 않는다). 파일은 나오고 경고에 구체 이유
   const ri = ringInput();
   const rg = runTask0GcodeExport(ri);
   const rj = await runTask0JobZipExport(ri);
   const allLayers = JSON.stringify([...Array(10).keys()]);
   for (const [what, r, file] of [["run.gcode", rg, rg.gcode], ["job.zip", rj, rj.zip]]) {
+    const warns = r.ok ? r.warnings : [];
     assert(
-      !r.ok && file === null && JSON.stringify(r.failedLayers) === allLayers &&
-        r.issues.some((s) => s.startsWith("재료 B(T1)가 재료 A(T0)에 둘러싸여 T1 로 들어갈 길이 없는 층 10개") && s.includes("층 0 (Z 0.1 mm)") && s.includes("협의 §31-4")) &&
-        !r.issues.some((s) => s.includes("얇은 부분 채움 실패")),
-      `① 갇힌 B(닫힌 고리) ${what}: 파일 없음, 문제 층 전 층, 이유 "${r.ok ? "(통과)" : r.issues[0].slice(0, 46)}…"`,
+      r.ok && file !== null && file.length > 0 && JSON.stringify(r.failedLayers) === allLayers &&
+        warns.some((s) => s.startsWith("재료 B(T1)가 재료 A(T0)에 둘러싸여 T1 로 들어갈 길이 없는 층 10개") && s.includes("층 0 (Z 0.1 mm)") && s.includes("협의 §31-4")) &&
+        !warns.some((s) => s.includes("얇은 부분 채움 실패")),
+      `① 갇힌 B(닫힌 고리) ${what}: 막지 않음(파일 있음), 경고 층 전 층, 경고 ${warns.length}건 "${warns[0]?.slice(0, 46) ?? (r.ok ? "(없음)" : "(막힘)")}…"`,
     );
   }
-  assert(!rg.ok && rg.summary?.dual?.toolChanges === 0 && rg.summary.dual.depositMmByTool[1] === 0, "① 요약은 남김 — 툴 전환 0, T1 도포 0 (막힌 이유를 화면에 보이는 데 씀)");
+  assert(rg.ok && rg.summary.dual?.toolChanges === 0 && rg.summary.dual.depositMmByTool[1] === 0, "① 요약 — 툴 전환 0, T1 도포 0 (경고 이유를 화면에 보이는 데 씀)");
   // ② 출력 가능 영역 밖 — 파일 D 형상을 world X +72 (베드 X 147~157)
   const { items, slots } = (() => {
     const d = appItemsD();
@@ -527,22 +532,27 @@ async function sectionBlocked() {
   assert(!sm.ok && sm.summary === null && sm.issues[0].startsWith("재료 슬롯 수 2 ≠ 메시 수 5"), `③ 슬롯 수 ≠ 메시 수: ${sm.ok ? "(통과)" : sm.issues[0].slice(0, 30)}…`);
   const bad = runTask0GcodeExport(coreInput(items, ["A", "B", "C", "A", "A"]));
   assert(!bad.ok && bad.issues[0].includes("재료 슬롯은 A 또는 B"), "③ 슬롯 값이 A/B 가 아님: 막힘");
-  // ④ 2재료 자기 검사 — writer 대조군 옵션으로 만든 위반 출력
+  // ④ 2재료 자기 검사 → 경고 — writer 대조군 옵션으로 만든 위반 출력. 파일은 나오고 경고에 같은 문구
   const ov = runTask0GcodeExport(overlapInput({ subtractOverlap: false }));
   const ovj = await runTask0JobZipExport(overlapInput({ subtractOverlap: false }));
   assert(
-    !ov.ok && ov.gcode === null && ov.issues.some((s) => s.startsWith("B 우선 위반 3개 층")) && !ovj.ok && ovj.zip === null,
-    `④ 겹침 차집합 끔(subtractOverlap false): run.gcode·job.zip 막힘 — "${ov.ok ? "" : ov.issues[0].slice(0, 44)}…"`,
+    ov.ok && typeof ov.gcode === "string" && ov.warnings.some((s) => s.startsWith("B 우선 위반 3개 층")) &&
+      ovj.ok && ovj.zip.length > 0 && ovj.warnings.some((s) => s.startsWith("B 우선 위반 3개 층")),
+    `④ 겹침 차집합 끔(subtractOverlap false): run.gcode·job.zip 막지 않음 + 경고 — "${ov.ok ? ov.warnings.find((s) => s.startsWith("B 우선"))?.slice(0, 44) : "(막힘)"}…"`,
   );
   const okOv = runTask0GcodeExport(overlapInput());
-  assert(okOv.ok, "④ 같은 배치를 기본 옵션(B 우선 차집합)으로 내면 통과");
+  assert(okOv.ok && okOv.warnings.length === 0, "④ 같은 배치를 기본 옵션(B 우선 차집합)으로 내면 경고 0");
   const un = runTask0GcodeExport(uRingInput({ thinFillDetour: false }));
   assert(
-    !un.ok && un.gcode === null && un.issues.some((s) => s.startsWith("트래블이 칠한 레진을 가로지르거나 스치는 곳")) && JSON.stringify(un.failedLayers) === "[0,1,2]",
-    `④ 우회 끔(thinFillDetour false, U 자 A 안의 B): 막힘, 문제 층 ${JSON.stringify(un.failedLayers)} — "${un.ok ? "" : un.issues[0].slice(0, 30)}…"`,
+    un.ok && typeof un.gcode === "string" && un.warnings.some((s) => s.startsWith("트래블이 칠한 레진을 가로지르거나 스치는 곳")) &&
+      JSON.stringify(un.failedLayers) === "[0,1,2]",
+    `④ 우회 끔(thinFillDetour false, U 자 A 안의 B): 막지 않음 + 경고, 경고 층 ${JSON.stringify(un.failedLayers)} — "${un.ok ? un.warnings[0]?.slice(0, 30) : "(막힘)"}…"`,
   );
   const uo = runTask0GcodeExport(uRingInput({}));
-  assert(uo.ok && uo.summary.dual.toolChanges === 5, `④ 같은 배치를 기본 옵션(우회 켬)으로 내면 통과 (툴 전환 ${uo.ok ? uo.summary.dual.toolChanges : "?"})`);
+  assert(
+    uo.ok && uo.warnings.length === 0 && uo.summary.dual.toolChanges === 5,
+    `④ 같은 배치를 기본 옵션(우회 켬)으로 내면 경고 0 (툴 전환 ${uo.ok ? uo.summary.dual.toolChanges : "?"})`,
+  );
 }
 
 // ── (5) 데이터 — repo 왕복 (가짜 IndexedDB) · 노광 큰 값 ───────────────────
@@ -1050,29 +1060,30 @@ async function sectionControls(ref) {
     built.manifest.toolChangeCount === 0 && built.manifest.estimate.toolChangeSec === 0 && !repTc0.pass,
     `b. 같은 변조의 견본 경로 zip(toolChangeCount 0, toolChangeSec 0)은 검사기가 잡는다 (${repTc0.extraIssues.find((m) => m.includes("toolChangeCount")) ?? "?"})`,
   );
-  // c. 2재료 자기 검사 제거
+  // c. 2재료 자기 검사 제거 — 경고가 사라진다 (2026-10-15 부터 자기 검사는 품질 경고를 만든다)
   const noSelf = await loadMutantSet("no-dual-self", { "task0-export.ts": [[AT_DUAL_SELF, "  if (false) {"]] }, "task0-export.ts");
   const cOv = noSelf.runTask0GcodeExport(overlapInput({ subtractOverlap: false }));
   const cOvZ = await noSelf.runTask0JobZipExport(overlapInput({ subtractOverlap: false }));
   const cUn = noSelf.runTask0GcodeExport(uRingInput({ thinFillDetour: false }));
   assert(
-    cOv.ok && typeof cOv.gcode === "string" && cOvZ.ok && cOvZ.zip.length > 0 && cUn.ok && typeof cUn.gcode === "string",
-    "c. 2재료 자기 검사를 빼면 B 우선 위반 출력(run.gcode·job.zip)과 교차 트래블 출력이 파일로 나온다 — (4)④ 를 막는 것은 이 검사",
+    cOv.ok && cOv.warnings.length === 0 && cOvZ.ok && cOvZ.warnings.length === 0 && cUn.ok && cUn.warnings.length === 0,
+    "c. 2재료 자기 검사를 빼면 B 우선 위반 출력(run.gcode·job.zip)과 교차 트래블 출력이 경고 없이 나온다 — (4)④ 의 경고를 만드는 것은 이 검사",
   );
   // d. 트래블 검사만 제거
   const noTravel = await loadMutantSet("no-travel", { "task0-export.ts": [[AT_TRAVEL, "  const travel: { layer: number; count: number }[] = [];"]] }, "task0-export.ts");
   const dUn = noTravel.runTask0GcodeExport(uRingInput({ thinFillDetour: false }));
   const dOv = noTravel.runTask0GcodeExport(overlapInput({ subtractOverlap: false }));
   assert(
-    dUn.ok && !dOv.ok && dOv.issues.some((s) => s.startsWith("B 우선 위반")),
-    "d. 트래블 검사만 빼면 교차 출력은 나오고 B 우선 위반은 여전히 막힘 — 커버리지 검사만으로는 교차를 못 잡는다",
+    dUn.ok && !dUn.warnings.some((s) => s.startsWith("트래블이 칠한 레진")) && dOv.ok && dOv.warnings.some((s) => s.startsWith("B 우선 위반")),
+    "d. 트래블 검사만 빼면 교차 출력은 트래블 경고 없이 나오고 B 우선 위반 경고는 그대로 — 커버리지 검사만으로는 교차를 못 잡는다",
   );
   // e. 갇힌 B 판정 제거 (D2 — 판정이 writer 통계 unreachableByTool 기반이 된 뒤: 빼면 "맞물림" 문구로 떨어진다)
   const noTrap = await loadMutantSet("no-trapped", { "task0-export.ts": [[AT_TRAPPED, "    else if (abOrder && stuckT1 > 0 && false) {"]] }, "task0-export.ts");
   const eR = noTrap.runTask0GcodeExport(ringInput());
+  const eW = eR.ok ? eR.warnings : [];
   assert(
-    !eR.ok && !eR.issues.some((s) => s.includes("둘러싸여")) && eR.issues.some((s) => s.startsWith("두 재료가 맞물린 단면에서")),
-    `e. 갇힌 B 판정을 빼면 이유가 엉뚱한 "${eR.ok ? "(통과)" : eR.issues[0].slice(0, 20)}…" 로 바뀐다 — (4)① 의 구체 이유 단언이 잡는다`,
+    eR.ok && !eW.some((s) => s.includes("둘러싸여")) && eW.some((s) => s.startsWith("두 재료가 맞물린 단면에서")),
+    `e. 갇힌 B 판정을 빼면 경고가 엉뚱한 "${eW[0]?.slice(0, 20) ?? (eR.ok ? "(없음)" : "(막힘)")}…" 로 바뀐다 — (4)① 의 구체 이유 단언이 잡는다`,
   );
   // g. 수정 전 코어처럼 슬롯 입력을 무시하면 (앱이 materialSlots 를 보내도 단일 재료) — (1) 의 파일 D 바이트·manifest 2재료가 실패
   const noSlots = await loadMutantSet("ignore-slots", { "task0-export.ts": [[AT_DUAL_SLOTS, "  const dualSlots = dualSlotsOf({ ...input, materialSlots: undefined });"]] }, "task0-export.ts");

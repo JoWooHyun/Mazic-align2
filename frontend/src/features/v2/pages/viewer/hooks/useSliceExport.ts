@@ -394,6 +394,7 @@ export function useSliceExport({
   // run.gcode(Z2 와 같은 검사) + 층 마스크 PNG(투사 프레임) + manifest·exposure·preview 를 워커에서 만들고 자기 검사까지
   // 한다(utils/task0/task0-export.ts runTask0JobZipExport). 마스크 ZIP 과 같은 mesh 집합(STL + 서포트)·같은 topY 를 넘겨
   // writer 와 층 마스크가 같은 단면에서 나온다(계획서 §4 Z3). 막히면 파일 없이 이유만(reject 아님).
+  // 품질 경고(얇은 부분 채움 실패 등 — task0-export 머리 주석 "막음 / 경고")만 있으면 파일을 내고 알림 1회 + 보고 패널 목록.
   // 진행률은 단계와 함께(G-code 생성 → 층 이미지 → 묶기·검사), 취소·busy 는 다른 내보내기와 같은 인프라.
   // ⚠️ handleExportStl 뒤·handleExportTask0Gcode 앞에 둔다 — verify-task0-export 가 handleExportTask0Gcode ~ return 구간의
   //   deps 를, verify-gcode-export-params 가 handleExportGcode ~ handleExportStl 구간을 잘라 검사한다.
@@ -453,7 +454,15 @@ export function useSliceExport({
           fileName,
           summary: result.summary,
           job: result.job,
+          warnings: result.warnings,
         });
+      }
+      // 막지 않은 경고(얇은 부분 채움 실패 등 — 품질 문제)는 내려받은 뒤 한 번 알린다. 없으면 알림 없음
+      if (result.warnings.length > 0) {
+        window.alert(
+          `Task0 job.zip 을 내보냈습니다(${fileName}).${NL}${NL}경고 — 파일은 그대로 냈습니다:${NL}` +
+            result.warnings.map((s) => `· ${s}`).join(NL),
+        );
       }
     } catch (e) {
       // 사용자 취소(CancelError)는 정상 흐름 — 조용히 넘긴다.
@@ -482,7 +491,7 @@ export function useSliceExport({
   // ----- Task0 G-code(run.gcode) 내보내기 (Z2) — Task0 프로파일의 보조 내보내기(run.gcode 만) -----
   // 마스크 ZIP 과 같은 mesh 집합(STL + 서포트)·같은 topY 를 워커로 넘긴다(Z3 job.zip 의 마스크와
   // 도포 경로가 같은 단면에서 나오도록). 워커가 writer → 채움 실패 층 → Task0 파서 검사까지 하고,
-  // 막히면 파일 없이 이유만 돌아온다(reject 아님). 진행률·취소·busy 는 다른 내보내기와 같은 인프라.
+  // 막히면 파일 없이 이유만 돌아온다(reject 아님 — 품질 경고만 있으면 파일을 내고 알린다). 진행률·취소·busy 는 다른 내보내기와 같은 인프라.
   // ⚠️ 이 핸들러는 handleExportStl 뒤에 둔다 — verify-gcode-export-params 가 handleExportGcode 본문을
   //   "handleExportGcode ~ handleExportStl" 구간으로 잘라 deps 를 검사한다.
   const handleExportTask0Gcode = useCallback(async () => {
@@ -533,7 +542,14 @@ export function useSliceExport({
       const fileName = `${safe}_task0_${lh}mm.gcode`;
       downloadBlob(blob, fileName);
       if (sameInputs) {
-        setTask0Report({ ok: true, kind: "gcode", fileName, summary: result.summary });
+        setTask0Report({ ok: true, kind: "gcode", fileName, summary: result.summary, warnings: result.warnings });
+      }
+      // 막지 않은 경고(얇은 부분 채움 실패 등 — 품질 문제)는 내려받은 뒤 한 번 알린다. 없으면 알림 없음
+      if (result.warnings.length > 0) {
+        window.alert(
+          `Task0 G-code 를 내보냈습니다(${fileName}).${NL}${NL}경고 — 파일은 그대로 냈습니다:${NL}` +
+            result.warnings.map((s) => `· ${s}`).join(NL),
+        );
       }
     } catch (e) {
       // 사용자 취소(CancelError)는 정상 흐름 — 조용히 넘긴다.

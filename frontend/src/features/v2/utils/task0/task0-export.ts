@@ -3,7 +3,8 @@
  *
  * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.4 @ 커밋 a4ebc6c (§3·§5·§11·§12·§13 — 파서 v0.2.1 03c0519),
  *   협의 §26-1·§30.
- * 설계: `docs/계획_Z1_task0출력_20261002.md` §4·§4-2 (Z2 인계 — 워커 필수, 채움 실패면 막고 안내 / Z3 인계 — 마스크는 투사
+ * 설계: `docs/계획_Z1_task0출력_20261002.md` §4·§4-2 (Z2 인계 — 워커 필수, 채움 실패면 막고 안내 → 2026-10-15 부터 경고로 바꿈,
+ *   아래 "막음 / 경고" / Z3 인계 — 마스크는 투사
  *   프레임, writer 와 같은 meshes·topY, 층당 PNG 약 20 ms 라 워커·진행 표시, float32 topY 층 수 함정).
  *
  * 앱 경로: workers/slice-batch.worker.ts runTask0Gcode·runTask0JobZip → 이 파일 runTask0GcodeExport·runTask0JobZipExport →
@@ -21,22 +22,40 @@
  *      "채움 실패" 로 막던 경우), 노즐 범위(Y 85) 밖 이동은 Task0(Klipper)가 거부한다(투사 안·노즐 밖 띠는 파일이 나와 버리던 경우).
  *      writer 출력 뒤 G-code XY 범위(totals.xyBounds)도 같은 영역으로 한 번 더 본다(writer 검증 c7 과 같은 역할).
  *   2. generateTask0Gcode(meshes, topY, lh, writer 옵션 + 층 진행 콜백) — 진행 콜백은 출력에 영향 없음.
- *   3. writer 의 채움 실패 층(totals.thinFillFailedLayers)이 있으면 막음 — 층 번호·Z·이유.
+ *      (단일 재료도 기본 계획이 막힌 층은 writer 가 변형 재시도 — task0-gcode-writer retryStuckLayers, 기본 켬)
+ *   3. writer 의 채움 실패 층(totals.thinFillFailedLayers)이 있으면 **경고** — 층 번호·Z·쉬운 말 이유. 파일은 낸다.
  *   4. 같은 텍스트를 Task0 파서 이식판으로 세 모드 파싱 — print(layerHeightMm 지정) → dryrun(E 유지) →
  *      dryrun(E 제거). 경고·오류가 하나라도 있거나 층 수가 writer 와 다르면 막음("내보낼 파일은 경고 0 인 것만").
  *      실출력(job.zip) 기준은 print 모드이고, 11월 데모는 Task0 드라이런 탭에서 돌기 때문에 dryrun 두 모드도
  *      함께 본다(writer 검증 c1 과 같은 세 모드).
- *   5. 통과하면 gcode + 요약(층 수·빈 층·채움 층·길이·예상 시간 — task0-jobzip buildTask0Estimate 재사용).
+ *   5. 막은 이유가 없으면 gcode + 요약(층 수·빈 층·채움 층·길이·예상 시간 — task0-jobzip buildTask0Estimate 재사용)
+ *      + warnings(막지 않은 알림)·failedLayers(경고 층).
  *   막을 때는 gcode 를 돌려주지 않는다(null) — 화면에 보일 이유 문장(한국어)만 돌려준다.
  *
- * job.zip 순서 (runTask0JobZipExport) — 0~5 를 그대로 거친다(막히면 그 이유 그대로, 파일 없음):
+ * 막음 / 경고 (2026-10-15 리드 결정 — "3D 프린터를 모르는 유저가 아무 모델 + 기본 서포트 + 기본 설정으로 내보내면 파일이
+ *   나오고 Task0 가 돌아야 한다. 다른 슬라이서처럼 품질 문제는 경고만, 막는 것은 기계가 거부하는 조건뿐"):
+ *   | 막음 (ok false, 파일 없음 — issues)                  | 경고 (ok true, 파일 냄 — warnings)                           |
+ *   |------------------------------------------------------|--------------------------------------------------------------|
+ *   | 1   층 없음                                          | 3   얇은 부분 채움 실패 (단일 재료)                          |
+ *   | 1-b 출력 가능 영역 밖 (메시, writer 전)              | 3   2재료 갇힌 B·맞물림·얇은 부분 채움 실패                  |
+ *   | 1-c 2재료 슬롯 수·값                                 | 4-b 2재료 커버리지 실패·B 우선 위반·트래블 스침              |
+ *   | 1-b 사후 G-code XY 좌표가 영역 밖 (노즐 범위)        | 7   도포 영역 ≠ 노광 영역 (빈 층 집합 불일치)                |
+ *   | 4   Task0 파서 경고·오류·층 수 불일치                |                                                              |
+ *   | 4-b 2재료 G-code 층 수 ≠ 기대·프리앰블 도포           |                                                              |
+ *   | 7   층 PNG 수 ≠ 층 수 (거부 조건 3)                  |                                                              |
+ *   | 9   zip 자기 검사 — 거부 조건·추가 검사·PNG 풀기·estimate 불일치 |                                                    |
+ *   경고만 있으면 ok true 에 warnings 를 실어 파일을 낸다(앱은 내려받은 뒤 알림 1회 + 보고 패널 목록). 막은 결과의 issues 에는
+ *   경고를 넣지 않는다(failedLayers 는 그때까지의 경고 층).
+ *
+ * job.zip 순서 (runTask0JobZipExport) — 0~5 를 그대로 거친다(막히면 그 이유 그대로, 파일 없음 / 경고는 이어받는다):
  *   6. 층마다 같은 meshes·lh·bed 로 task0LayerPolygonsBed → rasterizeTask0Mask(프로파일 투사 프레임, 'full') → 8-bit 회색조 PNG
  *      (task0-jobzip buildTask0LayerImages — 견본 경로 buildTask0JobZip 과 같은 함수).
- *   7. 생성 단계 단언 — PNG 수 = 층 수, **마스크 빈 층 집합(흰 픽셀 0) = G-code 빈 층 집합(XY 이동 없음)**
- *      ("도포 영역 = 노광 영역" 규격 §3 — 노광하는데 레진이 없거나, 도포했는데 노광이 없는 층). 다르면 막음.
+ *   7. 생성 단계 단언 — PNG 수 = 층 수(다르면 막음), **마스크 빈 층 집합(흰 픽셀 0) = G-code 빈 층 집합(XY 이동 없음)**
+ *      ("도포 영역 = 노광 영역" 규격 §3 — 노광하는데 레진이 없거나, 도포했는데 노광이 없는 층). 다르면 경고(파일은 낸다).
  *   8. manifest(노광 = 프로파일, 빠진 값은 types/printer.ts DEFAULT_* — 규칙 6)·exposure·preview·zip 조립
  *      (buildTask0JobFiles·assembleTask0JobZip — 견본 경로와 같은 함수).
  *   9. 자기 검사 verifyTask0JobZip(layerPngs 'header') — 거부 조건 1~7·추가 검사 위반이 하나라도 있으면 막음.
+ *      통과하면 zip + 경고(run.gcode 단계 경고 다음에 7 의 경고 순)·경고 층.
  *      검사 비용: 층 PNG 를 전부 풀면 층당 약 16 ms 가 더 든다 → 내용(빈 층 = 0, 도포 층 > 0)은 7 에서 PNG 의 원본인 마스크로
  *      단언하고, zip 검사는 구조·머리(해상도·IHDR 8-bit 회색조·번호·개수·Z·manifest·exposure·run.gcode 파서·CRC) 위주로, 인코더 왕복은
  *      표본 두 장(첫 도포 층·첫 빈 층)만 풀어 흰 픽셀 수를 맞춰 본다. manifest estimate = 요약 estimate(화면 = 파일)도 본다.
@@ -48,12 +67,13 @@
  *   있을 때만. 없으면 위 단일 재료 경로를 한 글자도 바꾸지 않는다(파일 A·B·C·견본 바이트 그대로).
  *   1-c. 슬롯 수 = 메시 수, 값은 A/B — 아니면 막음(writer 의 RangeError 대신 이유 문장).
  *   2.  writer 옵션에 dualMaterial { …writer.dualMaterial, slots } (D1a — 층 안 T0 → T1 2패스, 툴별 리트랙트, B 우선 겹침).
- *   3.  writer 'failed' 층은 원인을 갈라 적는다 — 재료 B 가 칠한 A 에 갇힘(층 순서 B → A 는 규격 §6 【미정】 — Task0 답 대기,
+ *   3.  writer 'failed' 층은 원인을 갈라 경고로 적는다 — 재료 B 가 칠한 A 에 갇힘(층 순서 B → A 는 규격 §6 【미정】 — Task0 답 대기,
  *       협의 §31-4) / 칠한 레진을 가로질러야 하는 항목 / 얇은 부분 채움 실패 (dualFailedLayerIssues).
  *       (D2) 판정은 writer 층 통계의 툴 패스별 경로 없는 항목 수(Task0LayerStats.unreachableByTool)로 — 예전 휴리스틱("T1 도포 0")은
  *       B 가 일부만 갇힌 층(갇히지 않은 B 는 칠함)을 "맞물림" 으로 잘못 읽었다.
- *   4-b. 자기 검사(앞 단계가 통과했을 때만): task0-coverage checkTask0DualGcodeCoverage(재료별 (a)(b)(c)(d) — A 영역 = PA − PB,
- *       넘침은 합집합, B 우선) + 트래블 엄격 판정(T 줄을 넘는 전환 트래블 포함 — task0-fill-route task0TravelContactOk, verify c4b 정의).
+ *   4-b. 자기 검사(앞 단계에 막은 이유가 없을 때만 — 경고는 세지 않음): task0-coverage checkTask0DualGcodeCoverage(재료별
+ *       (a)(b)(c)(d) — A 영역 = PA − PB, 넘침은 합집합, B 우선) + 트래블 엄격 판정(T 줄을 넘는 전환 트래블 포함 — task0-fill-route
+ *       task0TravelContactOk, verify c4b 정의). 층 수·프리앰블은 막음, 커버리지·B 우선·트래블 스침은 경고.
  *   5.  요약에 dual(툴 전환 수·툴별 도포 길이·슬롯별 메시 수·막지 않는 알림), estimate 툴 전환 시간 = 툴 전환 수 × 0.5 s(규격 §13).
  *   7.  빈 층 대조는 그대로 — G-code 빈 층(두 툴 모두 XY 이동 없음)과 합집합 마스크(모든 메시 — 층 PNG 는 PA ∪ PB 한 장)를 맞댄다.
  *   8.  manifest materials 2개(A = T0 TASK0_DEFAULT_MATERIAL_NAME, B = T1 TASK0_DEFAULT_MATERIAL_NAME_B — D2 부터 입력 materialName·
@@ -157,7 +177,7 @@ export interface Task0ExportSummary {
   emptyLayerCount: number;
   /** 얇은 부분 채움이 들어간 층 수 */
   thinFillLayerCount: number;
-  /** 채움 후에도 커버리지 실패인 층 (0-based) — 비어 있어야 파일을 낸다 */
+  /** 채움(과 변형 재시도) 후에도 커버리지 실패인 층 (0-based) — 경고로 알리고 파일은 낸다 */
   thinFillFailedLayers: number[];
   depositMm: number;
   travelMm: number;
@@ -186,14 +206,24 @@ export type Task0ExportResult =
       gcode: string;
       summary: Task0ExportSummary;
       parser: Task0ExportParserCheck[];
+      /**
+       * 막지 않는 알림 (한국어 — 머리 주석 "막음 / 경고"): 얇은 부분 채움 실패, 2재료 갇힌 B·맞물림·커버리지·B 우선·트래블 스침.
+       * 파일은 그대로 냈다. 없으면 빈 배열
+       */
+      warnings: string[];
+      /** 경고가 난 층 (0-based, 오름차순) — 없으면 빈 배열 */
+      failedLayers: number[];
     }
   | {
       ok: false;
       /** 막았으므로 항상 null — 파일을 돌려주지 않는다 */
       gcode: null;
-      /** 화면에 보일 이유 (한국어, 층 번호는 0-based — 슬라이스 미리보기 층 번호와 같음) */
+      /** 화면에 보일 이유 (한국어, 층 번호는 0-based — 슬라이스 미리보기 층 번호와 같음) — 막은 이유만(경고는 넣지 않는다) */
       issues: string[];
-      /** 문제가 난 층 (0-based, 오름차순 — 채움 실패 층, 2재료면 자기 검사(커버리지·B 우선·트래블)에 걸린 층도) */
+      /**
+       * 문제가 난 층 (0-based, 오름차순 — ok 결과의 failedLayers 와 같은 셈: 채움 실패 층, 2재료면 자기 검사(커버리지·B 우선·
+       * 트래블)에 걸린 층도). 막은 이유(층 없음·영역·좌표 범위·파서)는 층 단위가 아니다
+       */
       failedLayers: number[];
       /** writer 를 돌렸으면 요약, 돌리지 않았으면(층 없음·출력 가능 영역 밖) null */
       summary: Task0ExportSummary | null;
@@ -245,13 +275,18 @@ export type Task0JobZipExportResult =
       summary: Task0ExportSummary;
       job: Task0JobZipSummary;
       parser: Task0ExportParserCheck[];
+      /** 막지 않는 알림 (한국어) — run.gcode 단계 경고 다음에 job.zip 단계 경고(도포 영역 ≠ 노광 영역) 순. 없으면 빈 배열 */
+      warnings: string[];
+      /** 경고가 난 층 (0-based, 오름차순) — 없으면 빈 배열 */
+      failedLayers: number[];
     }
   | {
       ok: false;
       /** 막았으므로 항상 null */
       zip: null;
+      /** 막은 이유만 (경고는 넣지 않는다) */
       issues: string[];
-      /** 문제가 난 층 (0-based, 오름차순 — 채움 실패 층·빈 층 불일치 층) */
+      /** 문제가 난 층 (0-based, 오름차순 — 그때까지 경고가 난 층: 채움 실패 층·2재료 자기 검사 층·빈 층 불일치 층) */
       failedLayers: number[];
       summary: Task0ExportSummary | null;
       /** 층 이미지까지 만들었으면 요약, 그 전에 막혔으면 null */
@@ -261,11 +296,11 @@ export type Task0JobZipExportResult =
 
 /**
  * 화면에 남기는 마지막 내보내기 결과 (앱 — useSliceExport 상태, 슬라이스 패널 표시).
- *   ok: 내려받은 파일 이름 + 요약(job.zip 이면 zip 요약도) / 막힘: 이유 문장들(층 번호·문구).
+ *   ok: 내려받은 파일 이름 + 요약(job.zip 이면 zip 요약도) + 막지 않은 경고 / 막힘: 이유 문장들(층 번호·문구).
  */
 export type Task0ExportReport =
-  | { ok: true; kind: 'gcode'; fileName: string; summary: Task0ExportSummary }
-  | { ok: true; kind: 'jobzip'; fileName: string; summary: Task0ExportSummary; job: Task0JobZipSummary }
+  | { ok: true; kind: 'gcode'; fileName: string; summary: Task0ExportSummary; warnings: string[] }
+  | { ok: true; kind: 'jobzip'; fileName: string; summary: Task0ExportSummary; job: Task0JobZipSummary; warnings: string[] }
   | { ok: false; kind: 'gcode' | 'jobzip'; issues: string[] };
 
 /** 결과를 메인에 보일 때 줄이는 개수 — 층 번호 목록·파서 경고 */
@@ -405,8 +440,20 @@ function listLayersZ(layers: readonly number[], lh: number): string {
 }
 
 /**
- * writer 가 'failed' 로 남긴 층의 이유 (2재료) — writer 층 통계(툴 패스별 경로 없는 항목 수 unreachableByTool — D2)와 그 층의
- * 재료별 단면 유무로 가른다:
+ * 얇은 부분 채움 실패 경고 (단일 재료, 2재료 ③ 공통 — 막지 않는다). 쉬운 말을 앞에, 규격 근거는 뒤에.
+ */
+function thinFillFailedWarning(layers: readonly number[], lh: number): string {
+  return (
+    `얇은 부분 채움 실패 ${layers.length}개 층: ${listLayersZ(layers, lh)} — ` +
+    '그 층의 노광 영역 일부에 레진이 안 깔릴 수 있습니다(서포트 발·팁처럼 노즐 폭보다 가는 단면). 파일은 그대로 냈습니다. ' +
+    '노즐이 칠한 비드 사이에 갇혀 도포 경로가 노광 영역을 다 덮지 못한 층입니다(규격 §3 커버리지) — ' +
+    '품질이 중요하면 모델 배치·방향이나 층 두께를 바꿔 보세요.'
+  );
+}
+
+/**
+ * writer 가 'failed' 로 남긴 층의 이유 (2재료 — 경고 문장, 막지 않는다) — writer 층 통계(툴 패스별 경로 없는 항목 수
+ * unreachableByTool — D2)와 그 층의 재료별 단면 유무로 가른다:
  *   ① 두 재료가 다 있고 T1(재료 B) 패스에 경로 없는 항목이 있다 = 재료 B 가 칠한 A 에 둘러싸여 T1 로 들어갈 길이 없다
  *      (층 안 순서 A → B — 그 층만 B → A 로 내는 것은 규격 §6 【미정】, Task0 답 대기 — 협의 §31-4). B 가 일부만 갇혀
  *      나머지 B 는 칠한 층도 여기(D1b 의 "T1 도포 0" 휴리스틱은 이것을 ② 로 읽었다).
@@ -463,13 +510,7 @@ function dualFailedLayerIssues(
         `${listLayersZ(blocked, lh)} — 재료 배정(A/B)이나 모델 배치를 바꿔 보세요(규격 §7 교차 금지).`,
     );
   }
-  if (thin.length > 0) {
-    out.push(
-      `얇은 부분 채움 실패 ${thin.length}개 층: ${listLayersZ(thin, lh)} — ` +
-        '노즐이 방금 칠한 비드 사이에 갇히는 단면이라 도포 경로가 노광 영역을 다 덮지 못합니다(규격 §3 커버리지). ' +
-        '모델 배치·방향이나 층 두께를 바꿔 보세요.',
-    );
-  }
+  if (thin.length > 0) out.push(thinFillFailedWarning(thin, lh));
   return out;
 }
 
@@ -552,7 +593,8 @@ function travelContactViolations(gcode: string, parkUm: Task0UmPoint): { layer: 
 
 /**
  * 2재료 자기 검사 (D1b — 머리 주석 4-b): 재료별 커버리지·B 우선(checkTask0DualGcodeCoverage) + 트래블 엄격 판정.
- * writer 가 지키는 불변식을 산출물 텍스트로 다시 본다 — 하나라도 어긋나면 파일을 내지 않는다.
+ * writer 가 지키는 불변식을 산출물 텍스트로 다시 본다. 층 수 불일치·프리앰블 도포(파일 구조가 틀림)는 막음(issues),
+ * 커버리지·B 우선·트래블 스침(품질 문제)은 경고(warnings — 파일은 낸다, 2026-10-15 리드 결정). failedLayers 는 경고 층.
  */
 function dualSelfCheck(
   input: Task0ExportInput,
@@ -560,7 +602,7 @@ function dualSelfCheck(
   topY: number,
   lh: number,
   gen: Task0GcodeResult,
-): { issues: string[]; failedLayers: number[]; coverage: Task0DualCoverageReport } {
+): { issues: string[]; warnings: string[]; failedLayers: number[]; coverage: Task0DualCoverageReport } {
   const p = gen.params;
   const cov = checkTask0DualGcodeCoverage(input.meshes, slots, topY, lh, gen.gcode, {
     depositWidthMm: p.depositWidthMm,
@@ -569,7 +611,8 @@ function dualSelfCheck(
     parkXMm: p.parkXMm,
     parkYMm: p.parkYMm,
   });
-  const issues: string[] = [];
+  const issues: string[] = []; // 막음 — 파일 구조가 틀림
+  const warnings: string[] = []; // 경고 — 품질 문제(파일은 낸다)
   const failedLayers = new Set<number>();
   if (cov.gcodeLayerCount !== cov.expectedLayerCount) {
     issues.push(`2재료 검사 — G-code 층 ${cov.gcodeLayerCount} ≠ 기대 층 ${cov.expectedLayerCount}`);
@@ -588,14 +631,14 @@ function dualSelfCheck(
       return `층 ${l.index} (${what})`;
     });
     const more = covFailed.length > TASK0_EXPORT_MAX_LISTED ? ` 외 ${covFailed.length - TASK0_EXPORT_MAX_LISTED}개 층` : '';
-    issues.push(
+    warnings.push(
       `2재료 커버리지 실패 ${covFailed.length}개 층: ${listed.join(', ')}${more} — 재료별 도포 경로가 그 재료의 노광 영역을 ` +
         '다 덮지 못하거나 넘칩니다(규격 §3, 겹친 곳은 B 영역).',
     );
     for (const l of covFailed) failedLayers.add(l.index);
   }
   if (cov.overlapLayers.length > 0) {
-    issues.push(
+    warnings.push(
       `B 우선 위반 ${cov.overlapLayers.length}개 층: 층 ${cov.overlapLayers.slice(0, TASK0_EXPORT_MAX_LISTED).join(', ')}` +
         `${cov.overlapLayers.length > TASK0_EXPORT_MAX_LISTED ? ' 외' : ''} — 재료 A(T0) 도포가 재료 B 단면 안쪽으로 최대 ` +
         `${trimNum(cov.overlapMaxDepthMm, 3)} mm 들어갑니다(겹친 곳은 B 만 칠한다 — 계획 §5-3).`,
@@ -605,7 +648,7 @@ function dualSelfCheck(
   const travel = travelContactViolations(gen.gcode, [toUm(p.parkXMm), toUm(p.parkYMm)]);
   if (travel.length > 0) {
     const total = travel.reduce((s, v) => s + v.count, 0);
-    issues.push(
+    warnings.push(
       `트래블이 칠한 레진을 가로지르거나 스치는 곳 ${total}건 — 층 ${travel
         .slice(0, TASK0_EXPORT_MAX_LISTED)
         .map((v) => v.layer)
@@ -613,7 +656,7 @@ function dualSelfCheck(
     );
     for (const v of travel) failedLayers.add(v.layer);
   }
-  return { issues, failedLayers: [...failedLayers].sort((a, b) => a - b), coverage: cov };
+  return { issues, warnings, failedLayers: [...failedLayers].sort((a, b) => a - b), coverage: cov };
 }
 
 /** G-code 단계 결과 — 공개 결과 + (job.zip 이 이어 쓰는) writer 결과 */
@@ -707,23 +750,16 @@ function exportGcodeStage(
     dual: dualSlots === null ? null : dualSummaryOf(result, dualSlots, mat.warnings),
   };
 
-  const issues: string[] = [];
-  // (3) 채움 실패 — 노즐이 이미 칠한 비드에 갇히는 퇴화 단면 등 (계획서 §4-2). 2재료는 원인을 갈라 적는다(갇힌 B 등)
+  const issues: string[] = []; // 막음 — 기계가 거부하는 조건 (머리 주석 "막음 / 경고")
+  const warnings: string[] = []; // 경고 — 품질 문제, 파일은 낸다
+  // (3) 채움 실패 — 노즐이 이미 칠한 비드에 갇히는 퇴화 단면 등 (계획서 §4-2) → 경고(2026-10-15 리드 결정 — 막지 않는다).
+  //     2재료는 원인을 갈라 적는다(갇힌 B 등)
   const failed = t.thinFillFailedLayers;
   if (failed.length > 0) {
     if (dualSlots !== null) {
-      issues.push(...dualFailedLayerIssues(result, failed, input.meshes, dualSlots, lh, input.writer));
+      warnings.push(...dualFailedLayerIssues(result, failed, input.meshes, dualSlots, lh, input.writer));
     } else {
-      const zDecimals = 6;
-      const listed = failed
-        .slice(0, TASK0_EXPORT_MAX_LISTED)
-        .map((n) => `층 ${n} (Z ${trimNum(task0LayerZ(n, lh), zDecimals)} mm)`);
-      const more = failed.length > TASK0_EXPORT_MAX_LISTED ? ` 외 ${failed.length - TASK0_EXPORT_MAX_LISTED}개 층` : '';
-      issues.push(
-        `얇은 부분 채움 실패 ${failed.length}개 층: ${listed.join(', ')}${more} — ` +
-          '노즐이 방금 칠한 비드 사이에 갇히는 단면이라 도포 경로가 노광 영역을 다 덮지 못합니다(규격 §3 커버리지). ' +
-          '모델 배치·방향이나 층 두께를 바꿔 보세요.',
-      );
+      warnings.push(thinFillFailedWarning(failed, lh));
     }
   }
 
@@ -751,19 +787,21 @@ function exportGcodeStage(
     }
   }
 
-  // (4-b) 2재료 자기 검사 — 재료별 커버리지·B 우선·트래블 엄격 판정 (앞 단계가 이미 막았으면 건너뜀 — 검사 비용)
+  // (4-b) 2재료 자기 검사 — 재료별 커버리지·B 우선·트래블 엄격 판정 (앞 단계가 이미 막았으면 건너뜀 — 검사 비용.
+  //       경고는 조건에 세지 않는다). 층 수·프리앰블은 막음, 커버리지·B 우선·트래블 스침은 경고
   const failedAll = new Set<number>(failed);
   if (dualSlots !== null && issues.length === 0) {
     const self = dualSelfCheck(input, dualSlots, topY, lh, result);
     issues.push(...self.issues);
+    warnings.push(...self.warnings);
     for (const n of self.failedLayers) failedAll.add(n);
   }
 
+  const failedLayers = [...failedAll].sort((a, b) => a - b);
   if (issues.length > 0) {
-    const failedLayers = [...failedAll].sort((a, b) => a - b);
     return { out: { ok: false, gcode: null, issues, failedLayers, summary, parser }, gen: result };
   }
-  return { out: { ok: true, gcode: result.gcode, summary, parser }, gen: result };
+  return { out: { ok: true, gcode: result.gcode, summary, parser, warnings, failedLayers }, gen: result };
 }
 
 /**
@@ -809,6 +847,9 @@ export async function runTask0JobZipExport(
     };
   }
   const { summary, parser } = g.out;
+  // 경고(막지 않음) — run.gcode 단계 것을 이어받고 7) 의 도포 ≠ 노광을 더한다
+  const warnings = [...g.out.warnings];
+  const warnLayers = new Set<number>(g.out.failedLayers);
   const gen = g.gen;
   const lh = input.layerHeightMm;
   const layerCount = gen.totals.layerCount;
@@ -836,9 +877,10 @@ export async function runTask0JobZipExport(
     generator: input.generator ?? TASK0_JOB_GENERATOR,
     stageMs: { gcode: t1 - t0, png: t2 - t1, verify: 0 },
   };
-  const blocked = (issues: string[], failedLayers: number[] = []): Task0JobZipExportResult => {
+  const sortedWarnLayers = (): number[] => [...warnLayers].sort((a, b) => a - b);
+  const blocked = (issues: string[]): Task0JobZipExportResult => {
     job.stageMs.verify = performance.now() - t2;
-    return { ok: false, zip: null, issues, failedLayers, summary, job, parser };
+    return { ok: false, zip: null, issues, failedLayers: sortedWarnLayers(), summary, job, parser };
   };
 
   // 7) 생성 단계 단언 — PNG 수, 빈 층 집합 (도포 = 노광, 규격 §3)
@@ -851,22 +893,21 @@ export async function runTask0JobZipExport(
     if (!maskBlank && gcodeEmpty.has(n)) exposedWithoutResin.push(n);
     if (maskBlank && !gcodeEmpty.has(n)) resinWithoutExposure.push(n);
   }
+  //    빈 층 집합이 다르면 경고(2026-10-15 리드 결정 — 품질 문제, Task0 가 거부하는 조건이 아니다). 파일은 낸다
   if (exposedWithoutResin.length > 0 || resinWithoutExposure.length > 0) {
-    const issues: string[] = [];
     if (exposedWithoutResin.length > 0) {
-      issues.push(
+      warnings.push(
         `도포 영역 ≠ 노광 영역 (규격 §3): 마스크에 흰 픽셀이 있는데 G-code 는 빈 층 ${exposedWithoutResin.length}개 — ` +
-          `층 ${listLayers(exposedWithoutResin)} (노광할 곳에 레진이 없음).`,
+          `층 ${listLayers(exposedWithoutResin)} (노광할 곳에 레진이 없음). 파일은 그대로 냈습니다.`,
       );
     }
     if (resinWithoutExposure.length > 0) {
-      issues.push(
+      warnings.push(
         `도포 영역 ≠ 노광 영역 (규격 §3): G-code 는 도포하는데 마스크가 전부 검정인 층 ${resinWithoutExposure.length}개 — ` +
-          `층 ${listLayers(resinWithoutExposure)} (투사 영역 밖이거나 픽셀보다 작은 단면 — 칠한 레진이 굳지 않음).`,
+          `층 ${listLayers(resinWithoutExposure)} (투사 영역 밖이거나 픽셀보다 작은 단면 — 칠한 레진이 굳지 않음). 파일은 그대로 냈습니다.`,
       );
     }
-    const failedLayers = [...exposedWithoutResin, ...resinWithoutExposure].sort((a, b) => a - b);
-    return blocked(issues, failedLayers);
+    for (const n of [...exposedWithoutResin, ...resinWithoutExposure]) warnLayers.add(n);
   }
 
   // 8) manifest·exposure·preview·zip 조립 (견본 경로와 같은 함수)
@@ -932,5 +973,5 @@ export async function runTask0JobZipExport(
 
   onProgress?.('verify', 1, 1);
   job.stageMs.verify = performance.now() - t2;
-  return { ok: true, zip, summary, job, parser };
+  return { ok: true, zip, summary, job, parser, warnings, failedLayers: sortedWarnLayers() };
 }
