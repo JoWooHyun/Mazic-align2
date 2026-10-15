@@ -8,13 +8,10 @@ import type { FdmSettings } from "../../utils/gcode/types";
 import type { FindMarginStats } from "../../utils/dental/margin-detect";
 import type { SupportParams, SupportPointV2 } from "../../support/types";
 import type { RouteReport } from "../../support/route-plan";
-import type { RedesignDetectStats } from "./redesign-detect-actions";
 import type { RedesignTarget } from "./redesign-target";
 import type { EditMode } from "../EditModeControls";
 import type { ViewPreset } from "../../utils/camera-views";
 import type { STLFileV2 } from "../../types/stl";
-import type { LayerGraphParams } from "../../support/detect/types";
-import type { PlacePointsParams } from "../../support/detect/place-points";
 import type { BuildVolumeIssue } from "./hooks/useBuildVolumeCheck";
 import type { PrintableAreaMm, WorldAabbMm } from "../../utils/build-volume";
 
@@ -68,7 +65,7 @@ export interface BabylonSceneProps {
   /**
    * Task0 출력 가능 영역 (world X/Z mm, 비대칭 — Z2). Task0 프로파일일 때만 준다
    *   (utils/task0/task0-profile.ts task0PrintableAreaForProfile). 주면 ① 플레이트(평면·격자·외곽선·앞쪽 탭)를
-   *   이 사각형에 그리고(데모 수정 1차 ② — 종전 주황 테두리는 삭제, 그리는 위치만 바뀌고 world 원점은 그대로)
+   *   이 사각형에 그리고(데모 수정 1차 ② — 그리는 위치만 바뀌고 world 원점은 그대로)
    *   ② 출력영역 검사를 대칭 플레이트 대신 이 영역으로, 모델과 서포트를 함께 한다.
    *   null/미지정이면 기존 동작 그대로.
    */
@@ -434,39 +431,6 @@ export interface BabylonSceneHandle {
     projectId: string,
     params: SupportParams,
   ) => SupportPointV2[] | null;
-  /**
-   * 서포트 재설계(S-4) 1~2단계 실행 (설계 8장). 기존 dental island 경로와
-   * 독립된 별도 경로다 — 활성 STL 을 층 그래프로 검출(1단계)해 아일랜드/오버행을
-   * 색으로 표시하고, 검출 영역에서 직접 서포트 점을 생성(2단계, 크기별 3분기)해
-   * 점만(기둥 없이) 구로 표시한다. 생성된 점 목록을 반환한다(저장은 호출 측 몫 —
-   * 이 PR 은 검증용이라 호출 측에서 저장하지 않을 수도 있다). liftMm 는 진단서
-   * "리프트로 뜬 모델 바닥 전체 아일랜드 오검출" 방지(수용 C)를 위해 검출각과
-   * 함께 넘긴다.
-   */
-  runRedesignDetect: (
-    projectId: string,
-    opts: {
-      layerHeightMm: number;
-      liftMm: number;
-      /**
-       * 오버행 **검출각** (deg). 미지정 시 `DEFAULT_LAYER_GRAPH_PARAMS` 기본값.
-       *
-       * ★ C-3(검출각 단일화): 이 값은 뷰어의 빨간 오버행 하이라이트가 쓰는 값과
-       *   **반드시 같아야 한다**. 다르면 "화면에 빨갛게 보이는 면"과 "실제로 점이
-       *   찍히는 면"이 어긋나 사용자가 도구를 신뢰할 수 없다.
-       *   근거: `docs/판정_CHITUBOX분석_20260821.md` C-3
-       *   (`docs/view94.md` 14장 · `docs/supp94_v2.md` 16장이 공통으로 지목한 원칙).
-       */
-      overhangAngleDeg?: number;
-      /**
-       * 검출·점생성 파라미터 덮어쓰기 (P-2). 사용자가 패널에서 조절한 값.
-       *   미지정 항목은 기본값. 종전에는 9개가 전부 모듈 상수라 UI 로 못 바꿨다.
-       */
-      detect?: Partial<LayerGraphParams> & Partial<PlacePointsParams>;
-    },
-  ) =>
-    | { ok: true; points: SupportPointV2[]; stats: RedesignDetectStats }
-    | { ok: false; reason: string };
   /**
    * 서포트 검출(S-2 워커 경로)에 넘길 입력을 만든다 — world 삼각형 + 활성 STL id.
    *   ⚠️ triangles 는 transferable 로 워커에 넘어가므로 호출 뒤 재사용 금지.

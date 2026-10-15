@@ -77,7 +77,7 @@ export function buildSupportGenHandle(ctx: SceneCtx): SupportGenHandle {
           ? ctx.marginRef.current
           : null;
       if (!margin) {
-        console.log(
+        console.debug(
           `[검출 영역 자동 서포트] island face ${island.islandFaces.size}면 → ` +
             `생성 ${pts.length}개 (마진 없음 — 가드 미적용)`,
         );
@@ -182,7 +182,7 @@ export function buildSupportGenHandle(ctx: SceneCtx): SupportGenHandle {
           base: [cX, baseY, cZ],
         });
       }
-      console.log(
+      console.debug(
         `[검출 영역 자동 서포트] island face ${island.islandFaces.size}면 → ` +
           `후보 ${pts.length}개 · 마진 가드 이동 ${moved} · 배제 ${excluded} → ` +
           `생성 ${guarded.length}개 (marginPoints ${margin.points.length}개 · ` +

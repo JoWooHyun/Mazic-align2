@@ -1,11 +1,11 @@
-// 서포트 재설계(S-4) 검출·점생성 실행 + 시각화 액션 (신규, ctx 기반).
-//   설계 8장 1~2단계의 "눈으로 볼 수 있게" 판정용 경로. 기존 dental island
-//   경로(dental-actions.ts, 셀 래스터+마진)와 독립이다. 마진/dental 코드를
+// 서포트 재설계(S-4) 검출 입력 준비 + 점 시각화 + 라우팅 확정 액션 (신규, ctx 기반).
+//   기존 dental island 경로(dental-actions.ts, 셀 래스터+마진)와 독립이다. 마진/dental 코드를
 //   import 하지 않는다 (리드 결정 1).
 //
-//   흐름: 활성 STL → extractWorldTriangles → detectLayerGraph(1단계) →
-//         placeSupportPoints(2단계) → 오버레이(아일랜드 마젠타/오버행 주황) +
-//         서포트 점 구(파랑) 렌더. 점 목록을 반환(저장은 호출 측 몫)한다.
+//   흐름: 활성(또는 지정) STL → extractWorldTriangles(prepareRedesignDetectInput) → 워커 검출·점생성
+//         (S-2 detectService) → 서포트 점 구(파랑) 렌더(renderRedesignPoints) → 표면 스냅·라우팅·
+//         stl-local 확정(routeAndFinalizePoints). 저장은 호출 측 몫이다.
+//   (메인스레드 동기 검출 경로와 층 오버레이는 워커 경로가 대체해 10/15 정리에서 삭제.)
 
 import {
   Color3,
@@ -19,15 +19,6 @@ import {
 } from "@babylonjs/core";
 import { extractWorldTriangles } from "../../utils/slice-section";
 import { worldToStlLocal } from "../../utils/coord-space";
-import {
-  detectLayerGraph,
-  placeSupportPoints,
-  DEFAULT_LAYER_GRAPH_PARAMS,
-  DEFAULT_PLACE_POINTS_PARAMS,
-  type LayerGraphResult,
-} from "../../support";
-import type { LayerGraphParams } from "../../support/detect/types";
-import type { PlacePointsParams } from "../../support/detect/place-points";
 import type { SupportParams, SupportPointV2 } from "../../support/types";
 import { makeTriangleBeamProbe } from "../../support/collision-probe";
 import {
@@ -38,15 +29,6 @@ import {
 import type { SceneCtx } from "./scene-refs";
 import { getActiveStl } from "./scene-actions";
 import { resolveRedesignTarget, type RedesignTarget } from "./redesign-target";
-
-/** 재설계 검출·점생성 요약 통계 (패널 표시용). */
-export interface RedesignDetectStats {
-  islandCount: number;
-  overhangCount: number;
-  pointCount: number;
-  nLayers: number;
-  layerHeight: number;
-}
 
 /**
  * 재설계 오버레이(아일랜드/오버행 색 + 서포트 점 구)를 모두 정리한다.
@@ -129,8 +111,8 @@ export function prepareRedesignDetectInput(
 
 /**
  * 워커가 돌려준 검출 결과를 **시각화만** 한다 (S-2).
- *   동기 경로의 renderDetectionOverlay + renderSupportPointSpheres 와 같은 일을
- *   하되, 층 폴리곤(LayerGraphResult)은 워커에서 안 넘어오므로 **점만** 그린다.
+ *   층 폴리곤(LayerGraphResult)은 워커에서 안 넘어오므로 **점만** 그린다(옛 동기 경로의
+ *   아일랜드·오버행 층 오버레이는 10/15 정리에서 삭제).
  *   점이 곧 검출 결과의 요약이라 실사용상 충분하고, 층 폴리곤까지 직렬화하면
  *   전송량이 커진다(대형 모델에서 수만 개 폴리곤).
  */
@@ -140,139 +122,6 @@ export function renderRedesignPoints(
 ): void {
   disposeRedesignVisualization(ctx);
   renderSupportPointSpheres(ctx, points);
-}
-
-export function runRedesignDetect(
-  ctx: SceneCtx,
-  projectId: string,
-  opts: {
-    layerHeightMm: number;
-    liftMm: number;
-    overhangAngleDeg?: number;
-    /**
-     * 검출·점생성 파라미터 덮어쓰기 (P-2). 미지정 항목은 기본값을 쓴다.
-     *   사용자가 패널에서 조절한 값이 여기로 들어온다. 종전에는 이 9개가
-     *   전부 모듈 상수라 UI 로 못 바꿨다(리드 결정 3 위반).
-     */
-    detect?: Partial<LayerGraphParams> & Partial<PlacePointsParams>;
-  },
-):
-  | { ok: true; points: SupportPointV2[]; stats: RedesignDetectStats }
-  | { ok: false; reason: string } {
-  const scene = ctx.sceneRef.current;
-  if (!scene) return { ok: false, reason: "씬이 준비되지 않았습니다." };
-  const active = getActiveStl(ctx);
-  if (!active) return { ok: false, reason: "대상 STL이 없습니다." };
-  const { mesh } = active;
-
-  mesh.computeWorldMatrix(true);
-  const triangles = extractWorldTriangles(mesh);
-  if (triangles.length === 0) {
-    return { ok: false, reason: "분석할 삼각형이 없습니다." };
-  }
-
-  // ── 1단계: 층 그래프 검출 ─────────────────────────────────────────────
-  //   overhangAngleDeg: ★ C-3(검출각 단일화) — 호출 측(useDentalWorkflow)이 뷰어
-  //   하이라이트와 **같은 값**을 넘긴다. 미지정이면 종전 기본값이라 하위 호환.
-  const detect = detectLayerGraph(triangles, active.id, {
-    ...DEFAULT_LAYER_GRAPH_PARAMS,
-    ...(opts.detect ?? {}), // P-2: 사용자 조절 값
-    layerHeightMm: opts.layerHeightMm, // ★ B-31: 층높이는 호출 측(슬라이스 패널) 값만 — detect 덮어쓰기 대상 아님
-    liftMm: opts.liftMm, // plateGap-lift 연동 (수용 C).
-    ...(opts.overhangAngleDeg != null
-      ? { overhangAngleDeg: opts.overhangAngleDeg }
-      : {}),
-  });
-
-  // ── 2단계: 점 생성 ────────────────────────────────────────────────────
-  const points = placeSupportPoints(detect, projectId, {
-    ...DEFAULT_PLACE_POINTS_PARAMS,
-    ...(opts.detect ?? {}), // P-2: 사용자 조절 값
-  });
-
-  // ── 시각화 (기존 오버레이 정리 후 새로 그림) ─────────────────────────
-  disposeRedesignVisualization(ctx);
-  renderDetectionOverlay(ctx, detect);
-  renderSupportPointSpheres(ctx, points);
-
-  const stats: RedesignDetectStats = {
-    islandCount: detect.islands.length,
-    overhangCount: detect.overhangs.length,
-    pointCount: points.length,
-    nLayers: detect.nLayers,
-    layerHeight: detect.layerHeight,
-  };
-  console.log(
-    `[재설계 검출·점생성] 아일랜드 ${stats.islandCount} · 오버행 ${stats.overhangCount} · ` +
-      `점 ${stats.pointCount} · 층 ${stats.nLayers} · 층높이 ${stats.layerHeight}mm · ` +
-      `islandFloorY ${detect.islandFloorY.toFixed(2)}mm`,
-  );
-
-  return { ok: true, points, stats };
-}
-
-/**
- * 아일랜드(마젠타)·오버행(주황) 영역을 world 좌표 선/점 마커로 표시한다.
- *   기존 v2_islandFaces 오버레이 패턴 참고. 여기서는 층 폴리곤을 얇은 선으로
- *   깔고, 각 아일랜드 무게중심에 작은 마젠타 디스크를 얹어 눈에 띄게 한다.
- *   world 좌표라 STL parent 없이 그대로 놓는다(1차 판정용 — 재변형 시 재실행).
- */
-function renderDetectionOverlay(ctx: SceneCtx, detect: LayerGraphResult): void {
-  const scene = ctx.sceneRef.current;
-  if (!scene) return;
-
-  const islandMat = new StandardMaterial("v2_redesignIslandMat", scene);
-  islandMat.emissiveColor = new Color3(1.0, 0.2, 0.85); // 마젠타.
-  islandMat.disableLighting = true;
-  const overhangMat = new StandardMaterial("v2_redesignOverhangMat", scene);
-  overhangMat.emissiveColor = new Color3(1.0, 0.6, 0.1); // 주황.
-  overhangMat.disableLighting = true;
-
-  // 아일랜드 외곽선(마젠타).
-  for (const island of detect.islands) {
-    const pathPts = island.polygon.map((p) => new Vector3(p[0], island.y, p[1]));
-    if (pathPts.length >= 2) {
-      pathPts.push(pathPts[0].clone()); // 닫기.
-      const line = MeshBuilder.CreateLines(
-        "v2_redesignIslandLine",
-        { points: pathPts },
-        scene,
-      );
-      line.color = new Color3(1.0, 0.2, 0.85);
-      line.isPickable = false;
-      line.renderingGroupId = 0;
-      ctx.redesignMarkersRef.current.push(line);
-    }
-    // 무게중심 디스크(눈에 띄게).
-    const disc = MeshBuilder.CreateDisc(
-      "v2_redesignIslandDisc",
-      { radius: 0.4, tessellation: 12 },
-      scene,
-    );
-    disc.rotation.x = Math.PI / 2; // XZ 평면에 눕힘.
-    disc.position.set(island.centroid[0], island.y, island.centroid[1]);
-    disc.material = islandMat;
-    disc.isPickable = false;
-    disc.renderingGroupId = 0;
-    ctx.redesignMarkersRef.current.push(disc);
-  }
-
-  // 오버행 점(주황 작은 디스크).
-  for (const overhang of detect.overhangs) {
-    for (const [x, z] of overhang.points) {
-      const disc = MeshBuilder.CreateDisc(
-        "v2_redesignOverhangDisc",
-        { radius: 0.25, tessellation: 8 },
-        scene,
-      );
-      disc.rotation.x = Math.PI / 2;
-      disc.position.set(x, overhang.y, z);
-      disc.material = overhangMat;
-      disc.isPickable = false;
-      disc.renderingGroupId = 0;
-      ctx.redesignMarkersRef.current.push(disc);
-    }
-  }
 }
 
 /**

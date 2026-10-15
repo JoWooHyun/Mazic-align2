@@ -32,9 +32,7 @@ import {
 } from "../../../utils/task0/task0-material";
 import { profileExposure } from "../utils/profile-exposure";
 import { previewLayerCount } from "../utils/layer-count";
-
-/** 확인 다이얼로그 줄바꿈. */
-const NL = String.fromCharCode(10);
+import { NL } from "../utils/text";
 
 interface UseSliceExportArgs {
   files: STLFileV2[];
@@ -211,7 +209,7 @@ export function useSliceExport({
       if (e instanceof Error && e.name === "CancelError") return;
       const msg = e instanceof Error ? e.message : String(e);
       // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-      window.alert(`마스크 ZIP 내보내기에 실패했습니다.\n${msg}`);
+      window.alert(`마스크 ZIP 내보내기에 실패했습니다.${NL}${msg}`);
     } finally {
       setBatchExport({ busy: false, done: 0, total: 0 });
     }
@@ -278,7 +276,7 @@ export function useSliceExport({
       if (e instanceof Error && e.name === "CancelError") return;
       const msg = e instanceof Error ? e.message : String(e);
       // TODO: 추후 토스트로 교체 (현재 코드베이스에 토스트 인프라 없음 — 단순함 우선).
-      window.alert(`G-code 내보내기에 실패했습니다.\n${msg}`);
+      window.alert(`G-code 내보내기에 실패했습니다.${NL}${msg}`);
     } finally {
       setBatchExport({ busy: false, done: 0, total: 0 });
     }

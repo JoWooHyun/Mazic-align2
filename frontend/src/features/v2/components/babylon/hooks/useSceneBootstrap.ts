@@ -289,7 +289,7 @@ export function useSceneBootstrap(
   }, []);
 
   // 1.5) plate 크기(또는 Task0 출력 가능 영역) 변경 시 furniture 재생성 + 카메라 reset.
-  //   데모 수정 1차 ②: 영역이 있으면 플레이트·격자·외곽선·앞쪽 탭을 그 사각형에 그린다(주황 테두리는 삭제).
+  //   데모 수정 1차 ②: 영역이 있으면 플레이트·격자·외곽선·앞쪽 탭을 그 사각형에 그린다.
   //   그리는 위치만 바뀐다 — world 원점·모델 좌표·world↔베드 변환은 그대로.
   useEffect(() => {
     const scene = ctx.sceneRef.current;

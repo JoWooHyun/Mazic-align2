@@ -129,16 +129,11 @@ export function useFileMeshSync(
           // 동일 공간에서 boolean → STL transform 변경 무관 cache hit.
           const mod = ctx.manifoldModuleRef.current;
           if (mod) {
-            const t0 = performance.now();
             const man = babylonMeshToManifold(mesh, mod, null);
             if (man) {
               // 같은 id 의 옛 manifold 가 남아 있으면 덮어쓰기 전에 해제(C3 — 재로드 방어).
               releaseStlManifold(ctx.stlManifoldMapRef.current, f.id);
               ctx.stlManifoldMapRef.current.set(f.id, man);
-              const status = man.status();
-              console.log(
-                `[manifold] STL ${f.fileName} → status=${status} (${(performance.now() - t0).toFixed(0)} ms, numTri=${man.numTri()})`,
-              );
             }
           }
           return mesh;

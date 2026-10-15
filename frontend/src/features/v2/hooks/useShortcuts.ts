@@ -182,10 +182,3 @@ export function useShortcutHandler(
     return () => setHandler(action, undefined);
   }, [action, handler, setHandler]);
 }
-
-/**
- * 테스트·디버그용. 현재 등록된 액션 목록.
- */
-export function _peekRegisteredActions(): ShortcutAction[] {
-  return Object.keys(useShortcutsStore.getState().handlers) as ShortcutAction[];
-}
