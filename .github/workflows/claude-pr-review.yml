@@ -1,0 +1,48 @@
+# MazicAlign PR 자동 검수 (Phase 3-5)
+# PR이 열리거나 갱신될 때 Claude가 자동으로 리뷰 코멘트를 남긴다.
+# 필요 설정: 저장소 Settings → Secrets → ANTHROPIC_API_KEY (README의 안내 참고)
+name: Claude PR 자동 검수
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  claude-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            이 PR을 MazicAlign 프로젝트 기준으로 검수하고, 결과를 한국어 PR 코멘트로 남겨라.
+
+            ## 필수 검수 관점 (CLAUDE.md 수정 규칙 기준)
+            1. **마진 잠금**: `utils/dental/margin-detect.ts`의 MARGIN_LOCK 상수·로직이 변경됐으면
+               → 지현규 컨펌 근거가 PR 본문에 없는 한 Critical로 지적
+            2. **painted 계약**: margin 입력에 autoFill이 혼입되는 변경 여부
+            3. **산출물 보존**: 슬라이스 마스크/CTB/G-code 바이트가 변하는 수정인데
+               PR 본문에 before/after 명시가 없으면 지적
+            4. **기본값 단일 소스**: 노광/리프트 폴백 리터럴을 새로 복붙했는지 (types/printer.ts DEFAULT_* 사용해야 함)
+            5. **repo/handle 패턴**: IndexedDB 직접 접근, 컴포넌트의 mesh 직접 접근 여부
+            6. **useCallback deps**: printerProfile 등 반응형 값의 stale closure (반복 사고 유형)
+            7. 새 tsc 에러·lint 경고 도입 여부 (기존 알려진 이슈는 무시 — CLAUDE.md 참고)
+            8. 일반 버그: 경계값, null, dispose 누락(메모리), Worker 메시지 정합
+
+            ## 출력 형식
+            - 발견사항: 심각도(Critical/Major/Minor) + 파일:라인 + 구체적 지적, 라인별 코멘트로
+            - 마지막에 **"조우현 확인 포인트"** 섹션: 비개발자인 리드가 실행해서 판단할 수 있는
+              체크리스트 (무엇을 눌러보고 무엇이 보이면 OK인지) 2~4개
+            - 문제 없으면 "AI 검수 통과 + 확인 포인트"만 간결하게
+          claude_args: |
+            --max-turns 12
+            --model claude-sonnet-4-5-20250929
