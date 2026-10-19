@@ -99,7 +99,8 @@ interface TransformPanelProps {
  * + 크기 (mm) 표시·입력과 "출력 영역에 맞춤" (데모 빈칸 #1 — 계산은 utils/model-size.ts).
  *
  * 내부 좌표계는 Babylon (Y 가 "위") 이지만 **표시는 프린터 관례대로 Z-up**
- * 으로 환산한다 (B-13). 즉 패널의 Z 가 높이다. 매핑·근거는
+ * 으로 환산한다 (B-13). 즉 패널의 Z 가 높이다. 패널 숫자 = STL·베드 좌표, 회전은 오른손
+ * 규칙(2026-10-15 — 다른 슬라이서와 같음). 매핑·근거는
  * `types/axis-display.ts` 참고. 내부 저장값(TransformV2)의 의미는 그대로다.
  *
  * ⚠️ 두 환산이 **겹쳐 있다**. 순서를 지켜야 한다:
@@ -291,7 +292,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
    * ROTATION 한 축의 **표시값** 입력 (B-13). `axis` 는 표시 축 인덱스.
    *
    * 현재 내부 회전을 표시 Euler 로 옮겨 해당 성분만 갈아끼운 뒤 내부로 되돌린다.
-   * 성분 교환이 아니라 quaternion 켤레를 경유한다 — `types/axis-display.ts` 참고.
+   * 성분 교환이 아니라 회전 행렬의 반사 켤레를 경유한다 — `types/axis-display.ts` 참고.
    */
   function applyRotationField(axis: 0 | 1 | 2, value: number) {
     if (Number.isNaN(value)) return;
