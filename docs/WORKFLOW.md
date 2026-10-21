@@ -160,7 +160,7 @@ PR 의 "조우현 확인 포인트"는 이 목록에서 해당 항목을 골라 
   리드가 머지를 AI 에 **위임**하면(10/7 — 위임 범위는 그때 지정한 PR 만): `gh pr merge N --merge --delete-branch --match-head-commit <검사한 head>` 로
   검사한 커밋만 넣고, PR 마다 mergeable 재계산을 기다리며, 끝나면 메인라인에서 tsc·lint·검증 전부·build 를 다시 돌린다.
 - **쌓인 PR 과 문서 PR 이 같은 줄을 고치면 충돌** → 기능 PR 은 다른 열린 PR 이 고치는 문서 줄(로드맵 체크·CLAUDE.md 검증 개수)을 건드리지 않고, 머지 뒤 한 번에 정리한다.
-- **worktree 정리**: `frontend/node_modules` 정션을 먼저 `cmd /c rmdir <정션>`(PowerShell)으로 지운 뒤 `git worktree remove`. 셸 작업 디렉터리가 worktree 안이면 지우기가 막힌다.
+- **worktree 정리**: `frontend/node_modules` 정션을 먼저 `cmd /c rmdir <정션>`(PowerShell)으로 지운 뒤 `git worktree remove`. **건너뛰면 정션을 따라 메인 트리의 node_modules 가 통째로 비워진다**(10/21 실제 — tsc·검증 17종이 모듈 없음 오탐, `npm ci` 로 복구). 제거 뒤에는 `ls frontend/node_modules | wc -l` 로 메인 트리를 확인할 것. 셸 작업 디렉터리가 worktree 안이면 지우기가 막힌다.
 - **Task0 파서 이식을 고치면** `verify-task0-parser` 가 SKIP 이 아니라 "불일치 0건"인지 확인(Python·Task0 리포 있는 PC). worktree 에서는 Task0 리포 기본 경로를 못 찾아 SKIP —
   `TASK0_DIR=C:/Users/JoWooHyun/Documents/Task0` 를 주고 돌린다.
 - `verify-task0-dual-preview` 는 줄바꿈에 민감 — `git archive` 로 뽑은 CRLF 사본에서는 거짓 FAIL(일반 체크아웃은 `.gitattributes` eol=lf 라 괜찮음).
