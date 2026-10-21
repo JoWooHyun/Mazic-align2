@@ -31,6 +31,7 @@
 //   (5) 실패 이유 — writer unreachableByTool 합 = unreachable(단일·2재료 픽스처 전 층), A 고리 안 B → "갇힌 B"(T1 패스 경로 없음),
 //       A 고리 안 B + 고리 밖 B(B 일부는 칠함 — D1b 휴리스틱 "T1 도포 0" 이면 "맞물림" 으로 읽던 배치) → "갇힌 B", B 고리 안 A + 순서 'BA'
 //       (T0 패스 경로 없음) → 다른 문구("맞물린" — T0/T1 패스별 항목 수), 단일 A·B·C·파일 D G-code 바이트 불변.
+//       (2026-10-15 부터 이 이유들은 막음이 아니라 경고 — ok + warnings, 파일은 냄. task0-export 머리 주석 "막음 / 경고")
 //   (6) 배선 — BabylonScene 훅 호출 순서·dispose 순서(§5 불변식), 부트스트랩 슬롯 fill 머티리얼, STL 표시 색을 정하는 지점이 전부
 //       applyModelDisplayColor(setModelDiffuseMode 직접 호출은 stl-loader·material-display 밖에 없음), useTask0Material 은 슬롯 표가 바뀔 때만.
 //   (7) 대조군 — a. 겹침을 A 우선으로 바꾼 slice-material-mask → (1) 실패  b. 재료 색 상태를 무시(항상 setModelDiffuseMode)하는
@@ -805,24 +806,32 @@ function baRingInput() {
   };
 }
 
-/** (5) 이유 판정 — core = task0-export 모듈(대조군 e 는 변조본). 반환: [{ ok, msg }] */
+/**
+ * (5) 이유 판정 — core = task0-export 모듈(대조군 e 는 변조본). 반환: [{ ok, msg }].
+ * 2026-10-15 부터 writer 실패 층 이유는 막음이 아니라 경고(ok true + warnings, 파일은 냄 — task0-export 머리 주석 "막음 / 경고").
+ */
 function reasonChecks(core) {
   const out = [];
   const trappedHead = "재료 B(T1)가 재료 A(T0)에 둘러싸여 T1 로 들어갈 길이 없는 층 10개";
+  const warnsOf = (res) => (res.ok ? res.warnings : []);
+  const shown = (res, n) => (res.ok ? (res.warnings[0] ?? "(경고 없음)").slice(0, n) : "(막힘)");
   const r = core.runTask0GcodeExport(ringInput());
+  const rw = warnsOf(r);
   out.push({
-    ok: !r.ok && r.issues.some((s) => s.startsWith(trappedHead) && s.includes("T1 패스에서 길이 없는 도포 항목") && s.includes("협의 §31-4")) && !r.issues.some((s) => s.includes("맞물린")),
-    msg: `A 고리 안 B → 갇힌 B "${r.ok ? "(통과)" : r.issues[0].slice(0, 44)}…"`,
+    ok: r.ok && rw.some((s) => s.startsWith(trappedHead) && s.includes("T1 패스에서 길이 없는 도포 항목") && s.includes("협의 §31-4")) && !rw.some((s) => s.includes("맞물린")),
+    msg: `A 고리 안 B → 갇힌 B 경고(파일은 냄) "${shown(r, 44)}…"`,
   });
   const rp = core.runTask0GcodeExport(ringPlusInput());
+  const rpw = warnsOf(rp);
   out.push({
-    ok: !rp.ok && rp.issues.some((s) => s.startsWith(trappedHead)) && !rp.issues.some((s) => s.includes("맞물린")) && (rp.summary?.dual?.depositMmByTool[1] ?? 0) > 0,
-    msg: `A 고리 안 B + 고리 밖 B(T1 도포 ${rp.summary?.dual?.depositMmByTool[1].toFixed(1)} mm — 일부 B 는 칠함) → 갇힌 B "${rp.ok ? "(통과)" : rp.issues[0].slice(0, 30)}…"`,
+    ok: rp.ok && rpw.some((s) => s.startsWith(trappedHead)) && !rpw.some((s) => s.includes("맞물린")) && (rp.summary?.dual?.depositMmByTool[1] ?? 0) > 0,
+    msg: `A 고리 안 B + 고리 밖 B(T1 도포 ${rp.summary?.dual?.depositMmByTool[1].toFixed(1)} mm — 일부 B 는 칠함) → 갇힌 B 경고 "${shown(rp, 30)}…"`,
   });
   const ba = core.runTask0GcodeExport(baRingInput());
+  const baw = warnsOf(ba);
   out.push({
-    ok: !ba.ok && ba.issues.some((s) => s.startsWith("두 재료가 맞물린 단면에서") && /\(T0 패스 [1-9]\d*개 · T1 패스 0개\)/.test(s)) && !ba.issues.some((s) => s.includes("둘러싸여")),
-    msg: `B 고리 안 A + 순서 'BA'(T0 패스 경로 없음) → 다른 문구 "${ba.ok ? "(통과)" : ba.issues[0].slice(0, 60)}…"`,
+    ok: ba.ok && baw.some((s) => s.startsWith("두 재료가 맞물린 단면에서") && /\(T0 패스 [1-9]\d*개 · T1 패스 0개\)/.test(s)) && !baw.some((s) => s.includes("둘러싸여")),
+    msg: `B 고리 안 A + 순서 'BA'(T0 패스 경로 없음) → 다른 문구 경고 "${shown(ba, 60)}…"`,
   });
   return out;
 }
