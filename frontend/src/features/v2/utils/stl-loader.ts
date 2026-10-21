@@ -97,21 +97,12 @@ export async function loadStlIntoScene(
   const mesh = meshes.length === 1 ? meshes[0] : mergeStlSolids(meshes);
   mesh.name = meshName;
 
-  // 0) Babylon STL 로더가 face normal 을 (0,0,0) 영벡터로 import
+  // 1) Babylon STL 로더가 face normal 을 (0,0,0) 영벡터로 import
   //    하는 STL (cylinder.STL 등) 에 대비해 vertex normal 을
   //    강제 재계산. 이미 정상 normal 이 있어도 멱등.
-  //    로더는 normal 도 정점과 같은 (x, z, y) 로 넣으므로 축은 이미 맞다. 종전에는 아래 1) 의
-  //    회전 베이크 뒤에 한 번 더 재계산했는데(1.7) 회전이 없어져 이 한 번이면 된다.
+  //    로더는 normal 도 정점과 같은 (x, z, y) 로 넣으므로 축은 이미 맞다(머리 주석 1 — 추가 회전 없음).
+  //    역사: 종전 X −90° 추가 베이크(①-b, 10/13)·가로 긴 모델 자동 세우기(①, 10/12)를 삭제해 재계산은 이 한 번이다.
   mesh.createNormals(true);
-
-  // 1) 데모 수정 1차 ①-b — STL 축 Z-up(리드 10/13): Babylon 로더가 이미 Z→Y 로 바꾸므로 추가 회전 없음.
-  //    종전(X −90° 추가 베이크)은 STL Y 가 위가 돼 치과 STL(exocad·3Shape — 표준 Z-up)이 90° 눕혀 읽혔다
-  //    (verify-demo-fix1 (b) — STL 60 × 20 × 10 박스가 높이 10 으로 놓인다).
-  //    ⚠️ 저장된 프로젝트·이미 불러 둔 모델은 다시 불러오면 자세가 90° 달라진다(저장된 transform 은 그대로라).
-  //
-  // 데모 수정 1차 ① — 가로 > 높이×1.5 모델을 세우던 자동 회전 제거(리드 10/12).
-  //   치과 풀아치가 전부 걸려 세워졌고(726층·얇은 고리 단면·옆면 서포트), STL 표준은
-  //   Z-up 이라 보정 근거가 없다. 방향이 틀린 파일은 '바닥면 붙이기'로 고친다.
 
   // 2) 빌드플레이트에 정렬 (XZ center, Y base=liftMm).
   alignMeshToPlate(mesh, liftMm);

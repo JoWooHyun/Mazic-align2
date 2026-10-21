@@ -171,23 +171,3 @@ function compactPositions(props: Float32Array, numProp: number): number[] {
   }
   return out;
 }
-
-/**
- * Babylon world matrix 의 inverse 를 적용해 clipped mesh 좌표를 mesh local 로
- * 되돌림 (mesh.parent 사용 시).
- */
-export function applyInverseTransform(mesh: Mesh, world: Matrix): void {
-  const inv = Matrix.Invert(world);
-  const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
-  if (!positions) return;
-  const out = new Float32Array(positions.length);
-  const tmp = new Vector3();
-  for (let i = 0; i < positions.length / 3; i++) {
-    tmp.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-    const local = Vector3.TransformCoordinates(tmp, inv);
-    out[i * 3] = local.x;
-    out[i * 3 + 1] = local.y;
-    out[i * 3 + 2] = local.z;
-  }
-  mesh.setVerticesData(VertexBuffer.PositionKind, Array.from(out));
-}

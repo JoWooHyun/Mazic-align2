@@ -26,10 +26,8 @@ import {
 } from "../../../utils/task0/task0-material";
 import { isTask0Profile } from "../../../utils/task0/task0-profile";
 import type { Task0MaterialSlot } from "../../../utils/task0/task0-slice";
+import { NL } from "../utils/text";
 import type { UpdateMaterialSlot, UpdateProject } from "./types";
-
-/** 확인 다이얼로그 줄바꿈. */
-const NL = String.fromCharCode(10);
 
 interface UseTask0MaterialArgs {
   project: ProjectV2 | null | undefined;

@@ -5,7 +5,8 @@
 //     플레이트 아래로만 파고든 모델은 확인 후 내보내고(바닥이 잘린 채 출력), 가로·세로 영역 밖·높이 초과(서포트 묶음 포함)는 지금처럼 막는다.
 //     src/features/v2/utils/build-volume.ts                     isTask0HardViolation (순수 판정 — 화면 관문·배너·이 스크립트가 공유)
 //     src/features/v2/pages/viewer/hooks/useSliceExport.ts      alertIfOutOfTask0Area (하드 → alert 로 막음 / 파묻힘만 → confirm)
-//     src/features/v2/pages/ViewerV2Page.tsx                    Task0 출력영역 배너 문구 두 갈래 (task0HardIssue)
+//     src/features/v2/pages/viewer/components/BuildVolumeBanner.tsx  Task0 출력영역 배너 문구 두 갈래 (task0HardIssue)
+//       (10/15 R-4 에서 ViewerV2Page 의 배너 JSX 를 이 컴포넌트로 옮겼다 — 페이지는 handleDropToPlate 만 넘긴다)
 //   코어(utils/task0/task0-export.ts)는 무변경 — 영역 검사는 XY 만(meshesBedBox·areaExcess), 층 단면은 (N+0.5)·lh 부터라
 //   Y < 0 부분은 자연히 잘린다. 이 스크립트의 (b) 가 그 사실을 실제 job.zip 으로 확인한다.
 //
@@ -409,8 +410,8 @@ function sourceFails(hook, page) {
       hook.includes("`이대로 내보내면 벗어난 부분이 잘려 나갑니다.${NL}${NL}`"),
   );
 
-  // 페이지
-  check("페이지 import isTask0HardViolation", /import \{ isTask0HardViolation \} from "\.\.\/utils\/build-volume";/.test(page));
+  // 페이지 배너 (10/15 R-4 — page 인자 = BuildVolumeBanner.tsx 소스)
+  check("배너 import isTask0HardViolation", /import \{ isTask0HardViolation \} from "\.\.\/\.\.\/\.\.\/utils\/build-volume";/.test(page));
   check(
     "task0HardIssue = volumeIssues.some(… isTask0HardViolation(it.violation)) (훅 아님)",
     /\n {2}const task0HardIssue = volumeIssues\.some\(\(it\) =>\s*isTask0HardViolation\(it\.violation\),?\s*\);/.test(page),
@@ -422,16 +423,21 @@ function sourceFails(hook, page) {
     ),
   );
   check(
-    "'플레이트 위로 올리기' 버튼 그대로 (sinkDepthMm > 0 → handleDropToPlate)",
-    /\{volumeIssues\.some\(\(it\) => it\.sinkDepthMm > 0\) && \(\s*<button\s+onClick=\{handleDropToPlate\}/.test(page),
+    "'플레이트 위로 올리기' 버튼 그대로 (sinkDepthMm > 0 → onDropToPlate = 페이지 handleDropToPlate)",
+    /\{volumeIssues\.some\(\(it\) => it\.sinkDepthMm > 0\) && \(\s*<button\s+onClick=\{onDropToPlate\}/.test(page),
   );
   return fails;
 }
 
-function sectionSource(hook, page) {
+function sectionSource(hook, page, viewerPage) {
   console.log("\n(d) 소스 형태 — 훅 관문·두 Task0 핸들러·P-1 무변경 / 페이지 배너 두 갈래");
   const f = sourceFails(hook, page);
   assert(f.length === 0, `소스 형태 단언 전부 (어긋남 ${f.length}건${f.length ? ": " + f.join(" / ") : ""})`);
+  // 10/15 R-4 — 배너가 컴포넌트로 옮겨졌으니 페이지가 실제로 그것을 그리고 같은 값·핸들러를 넘기는지 본다.
+  assert(
+    /\{!sliceMode && \(\s*<BuildVolumeBanner\s+volumeIssues=\{volumeIssues\}\s+printerProfile=\{printerProfile\}\s+onDropToPlate=\{handleDropToPlate\}\s*\/>\s*\)\}/.test(viewerPage),
+    "ViewerV2Page: 편집 화면에서 <BuildVolumeBanner volumeIssues printerProfile onDropToPlate={handleDropToPlate} /> (미리보기 모드는 숨김)",
+  );
 }
 
 // ── (e) 대조군 ───────────────────────────────────────────────────────────
@@ -518,11 +524,13 @@ function sectionMutants(hook, page) {
 async function main() {
   console.log("Task0 플레이트 아래 파고든 모델 — 확인 후 허용 (Z3-b)");
   const hook = read("pages", "viewer", "hooks", "useSliceExport.ts");
-  const page = read("pages", "ViewerV2Page.tsx");
+  // 10/15 R-4 — 배너 문구·갈래·버튼은 BuildVolumeBanner 로 옮겨졌다. 소스 형태 단언(d)·대조군 M5 는 그 파일을 본다.
+  const page = read("pages", "viewer", "components", "BuildVolumeBanner.tsx");
+  const viewerPage = read("pages", "ViewerV2Page.tsx");
   sectionPure();
   sectionGate(hook);
   await sectionCore();
-  sectionSource(hook, page);
+  sectionSource(hook, page, viewerPage);
   sectionMutants(hook, page);
   console.log(failed ? `\n${failed}건 FAIL` : "\n전부 통과");
   process.exit(failed ? 1 : 0);

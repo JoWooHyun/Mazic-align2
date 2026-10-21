@@ -24,14 +24,6 @@ export const IDENTITY_TRANSFORM: TransformV2 = {
   sx: 1, sy: 1, sz: 1,
 };
 
-export function isIdentity(t: TransformV2): boolean {
-  return (
-    t.tx === 0 && t.ty === 0 && t.tz === 0 &&
-    t.rx === 0 && t.ry === 0 && t.rz === 0 &&
-    t.sx === 1 && t.sy === 1 && t.sz === 1
-  );
-}
-
 export function transformsEqual(a: TransformV2, b: TransformV2): boolean {
   return (
     a.tx === b.tx && a.ty === b.ty && a.tz === b.tz &&

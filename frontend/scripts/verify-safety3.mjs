@@ -65,7 +65,9 @@ function between(s, a, b) {
 /** 주석 제거 — 주석에 든 함수 이름이 검사를 속이지 않게 (verify-support-follow 와 같은 식). */
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 
-// ── 변조판(대조군) 생성 — 순수 모듈(외부 import 없음)만 임시 폴더로 복사 ──────────
+// ── 변조판(대조군) 생성 — 순수 모듈만 임시 폴더로 복사 ──────────
+//   10/15 R-4: confirm-delete-models 가 ./text(NL 상수)를 import 하게 돼, 복사본의 상대 import 는 원본 폴더의
+//   절대 URL 로 바꾼다(verify-task0-dual-export loadMutantSet 과 같은 방식 — 변조 대상 파일만 복사본).
 const TMP_ROOT = mkdtempSync(join(tmpdir(), "verify-safety3-"));
 process.on("exit", () => rmSync(TMP_ROOT, { recursive: true, force: true }));
 let mutantSeq = 0;
@@ -76,6 +78,7 @@ async function loadMutant(rel, mutations) {
     if (!text.includes(from)) return null;
     text = text.replace(from, to);
   }
+  text = text.replace(/from "(\.{1,2}\/[^"]+)"/g, (m, spec) => `from "${pathToFileURL(join(V2, dirname(rel), `${spec}.ts`)).href}"`);
   const out = join(TMP_ROOT, `m${mutantSeq++}`, rel.split("/").pop());
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, text);
@@ -399,6 +402,8 @@ const WIRE = {
   list: "components/StlFileList.tsx",
   slice: "pages/viewer/hooks/useSliceExport.ts",
   page: "pages/ViewerV2Page.tsx",
+  // 10/15 R-4 — 손상 STL 상태 블록이 ViewerV2Page 에서 이 훅으로 옮겨졌다(⑤ 단언은 그대로, 위치만).
+  loadFail: "pages/viewer/hooks/useStlLoadFailures.ts",
   fileMesh: "components/babylon/hooks/useFileMeshSync.ts",
   refs: "components/babylon/scene-refs.ts",
   types: "components/babylon/babylon-scene-types.ts",
@@ -515,14 +520,18 @@ function wiringChecks(raw) {
     t.page.includes("onStlLoadError={handleStlLoadError}") && t.page.includes("loadFailed={loadFailed}"),
     "⑤ ViewerV2Page: BabylonScene onStlLoadError · StlFileList loadFailed 배선",
   );
-  const handler = between(t.page, "const handleStlLoadError = useCallback(", "useEffect(");
+  check(
+    t.page.includes("const { loadFailed, handleStlLoadError } = useStlLoadFailures(files);"),
+    "⑤ ViewerV2Page: 손상 STL 상태 = useStlLoadFailures(files) (10/15 R-4 분리)",
+  );
+  const handler = between(t.loadFail, "const handleStlLoadError = useCallback(", "useEffect(");
   const iDedupe = handler.indexOf("if (loadFailAlertedRef.current.has(stlId)) return;");
   check(
     iDedupe > 0 && handler.indexOf("window.alert(") > iDedupe,
     "⑤ 로드 실패 알림은 파일당 한 번(files 가 바뀔 때마다의 재시도·재실패에 다시 알리지 않음)",
   );
   check(
-    /for \(const id of prev\.keys\(\)\) \{\s*if \(ids\.has\(id\)\) continue;/.test(t.page) && t.page.includes("return next ?? prev;"),
+    /for \(const id of prev\.keys\(\)\) \{\s*if \(ids\.has\(id\)\) continue;/.test(t.loadFail) && t.loadFail.includes("return next ?? prev;"),
     "⑤ 삭제된 파일은 손상 표시에서 빠짐(변화 없으면 같은 Map — 리렌더 없음)",
   );
   check(
@@ -581,13 +590,14 @@ function wiringChecks(raw) {
   );
   const hookDecls = [
     "const [meshLoadTick, setMeshLoadTick] = useState(0);",
-    "const [loadFailed, setLoadFailed] = useState",
-    "const handleStlLoadError = useCallback(",
+    // 10/15 R-4 — loadFailed 상태·handleStlLoadError 는 useStlLoadFailures 안으로(그 훅 호출이 early return 위).
+    "useStlLoadFailures(files);",
     "const transformPanelSelected = useMemo(",
     "const handlePick = useCallback(",
   ];
   check(
-    early > 0 && hookDecls.every((s) => head.includes(s)) && !/\buse[A-Z]\w*\s*\(/.test(tail),
+    early > 0 && hookDecls.every((s) => head.includes(s)) && !/\buse[A-Z]\w*\s*\(/.test(tail) &&
+      t.loadFail.includes("const [loadFailed, setLoadFailed] = useState") && t.loadFail.includes("const handleStlLoadError = useCallback("),
     "⑦ ViewerV2Page: 새 훅 전부 early return(!projectId) 위 — 아래에는 훅 호출 없음(rules-of-hooks)",
   );
 
@@ -634,7 +644,8 @@ wireControl("④ useDentalWorkflow 에 로컬 runWithBusy 재정의", "dental",
 wireControl("⑤ 로드 실패를 부모에 알리지 않음(종전 console.error 만)", "fileMesh", "ctx.onStlLoadErrorRef.current?.(", "void (");
 wireControl("⑤ 취소된 로드도 알림", "fileMesh", "if (!cancelled) {\n            ctx.onStlLoadErrorRef", "{\n            ctx.onStlLoadErrorRef");
 wireControl("⑤ scene-refs 미러 줄 누락(옛 콜백 고착)", "refs", "  onStlLoadErrorRef.current = props.onStlLoadError;\n", "");
-wireControl("⑤ 알림 중복 방지 제거(재시도마다 alert)", "page", "      if (loadFailAlertedRef.current.has(stlId)) return;\n", "");
+wireControl("⑤ 알림 중복 방지 제거(재시도마다 alert)", "loadFail", "      if (loadFailAlertedRef.current.has(stlId)) return;\n", "");
+wireControl("⑤ 페이지가 손상 STL 훅을 안 부름(10/15 R-4 분리 배선)", "page", "useStlLoadFailures(files);", "{ loadFailed: new Map(), handleStlLoadError: () => {} };");
 wireControl("⑤ 목록에 손상 표시 없음", "page", "loadFailed={loadFailed}", "");
 wireControl("⑥ refresh 를 저장 루프 안으로(파일마다 갱신 — 종전)", "stlHook",
   "        (n, b) => repo.createStlFile(projectId, n, b),\n        items,\n      );\n      await refresh();\n",

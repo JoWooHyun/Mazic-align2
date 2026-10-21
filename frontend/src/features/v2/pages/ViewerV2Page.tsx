@@ -21,11 +21,7 @@ import StlFileList from "../components/StlFileList";
 import { useCurrentProfile } from "../hooks/usePrinterProfileStore";
 import { IDENTITY_TRANSFORM } from "../types/transform";
 import { SAMPLE_MODELS } from "../utils/sample-models";
-import {
-  isTask0Profile,
-  task0PrintableAreaForProfile,
-} from "../utils/task0/task0-profile";
-import { isTask0HardViolation } from "../utils/build-volume";
+import { task0PrintableAreaForProfile } from "../utils/task0/task0-profile";
 
 import { useClipboardActions } from "./viewer/hooks/useClipboardActions";
 import { useViewerShortcuts } from "./viewer/hooks/useViewerShortcuts";
@@ -36,6 +32,13 @@ import { useSliceExport } from "./viewer/hooks/useSliceExport";
 import { useTask0Material } from "./viewer/hooks/useTask0Material";
 import { previewLayerCount } from "./viewer/utils/layer-count";
 import { useStlDropImport } from "./viewer/hooks/useStlDropImport";
+import {
+  isEveryModelLoadFailed,
+  useStlLoadFailures,
+} from "./viewer/hooks/useStlLoadFailures";
+import { useLegacySupportMigration } from "./viewer/hooks/useLegacySupportMigration";
+import { useEscapeDeselect } from "./viewer/hooks/useEscapeDeselect";
+import { NL } from "./viewer/utils/text";
 import ViewerHeader from "./viewer/components/ViewerHeader";
 import SliceModeHeader from "./viewer/components/SliceModeHeader";
 import SliceLayerRail from "./viewer/components/SliceLayerRail";
@@ -43,9 +46,7 @@ import SliceSectionPane from "./viewer/components/SliceSectionPane";
 import ViewportOverlays from "./viewer/components/ViewportOverlays";
 import ViewportInfoPanels from "./viewer/components/ViewportInfoPanels";
 import ViewerSidePanel from "./viewer/components/ViewerSidePanel";
-
-/** 알림 줄바꿈 (useSliceExport 와 같은 관례). */
-const NL = String.fromCharCode(10);
+import BuildVolumeBanner from "./viewer/components/BuildVolumeBanner";
 
 /**
  * v2 프로젝트 작업 화면.
@@ -359,141 +360,29 @@ const ViewerV2Page: React.FC = () => {
     }
   }, [files, setMarginStatus, setIslandStatus]);
 
-  // 잘못된 마이그레이션 reverse (stl-local → world).
-  // 0c83dd2 의 timing 문제로 stl-local 좌표가 STL transform 적용 전
-  // 기준으로 저장 → 새로고침 시 saved transform 이 한 번 더 곱해져
-  // 위치 어긋남. 사용자가 현재 보고 있는 위치 (= 잘못된 위치) 를
-  // 그대로 world 좌표로 받아 적고 coordSpace='world' 로 되돌림.
-  // 이후 race 옛 동작으로 복귀 (transform 시 patch chain). 새 supports
-  // 에 timing-safe stl-local 도입은 별도 commit.
-  // 대상은 **kind 없는 옛 데이터 점만** — 재설계 점(kind='island'|'slope')은
-  // S-4b-1 의 timing-safe stl-local 이 정본이라 되돌리면 안 된다. 되돌리면
-  // 1.5s 뒤 supports 가 바뀌어 서포트가 재생성·점프한다(B-2).
-  useEffect(() => {
-    if (filesLoading) return;
-    if (supports.length === 0) return;
-    const toRevert = supports.filter(
-      (s) => s.coordSpace === "stl-local" && s.kind == null,
-    );
-    if (toRevert.length === 0) return;
-    const handle = sceneHandleRef.current;
-    if (!handle) return;
-    // STL transform 이 BabylonScene 의 비동기 STL 로드 후 적용되는
-    // 시점까지 충분히 대기 (1.5s — Promise.all 안의 applyTransform 보장).
-    const t = setTimeout(() => {
-      void (async () => {
-        for (const s of toRevert) {
-          const newContact = handle.stlLocalToWorld(s.stlId, s.contact);
-          if (!newContact) continue;
-          const newBase = handle.stlLocalToWorld(s.stlId, s.base) ?? s.base;
-          let newCps = s.curveControlPoints;
-          if (newCps) {
-            newCps = newCps.map(
-              (cp) => handle.stlLocalToWorld(s.stlId, cp) ?? cp,
-            ) as typeof newCps;
-          }
-          await patchSupport(s.id, {
-            contact: newContact,
-            base: newBase,
-            ...(newCps ? { curveControlPoints: newCps } : {}),
-            coordSpace: "world",
-          });
-        }
-      })();
-    }, 1500);
-    return () => clearTimeout(t);
-  }, [filesLoading, supports, patchSupport]);
+  // 잘못된 옛 마이그레이션 되돌리기 (stl-local → world, kind 없는 옛 데이터 점만 — B-2).
+  useLegacySupportMigration({
+    filesLoading,
+    supports,
+    patchSupport,
+    sceneHandleRef,
+  });
 
-  // Esc 단계적 해제 (P3, 프루사 정합).
-  //   우선순위: Bridge pending 취소 → 서포트/변곡점 선택 해제 → STL 선택 해제.
-  //   한 번의 Esc 로는 가장 위 단계 하나만 해제하고 종료(early return)해,
-  //   여러 상태가 동시에 있을 때 한 방에 전부 날아가지 않도록 한다.
-  //   INPUT/TEXTAREA 등 텍스트 입력 중에는 브라우저 기본 동작(입력 취소 등) 유지.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // 다이얼로그가 열려 있으면 Esc는 다이얼로그가 처리 — 뷰어 선택 해제와 동시 발동 방지 (P5)
-      if (profileDialogOpen) return;
-      const t = e.target;
-      if (
-        t instanceof HTMLElement &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
-      ) {
-        return;
-      }
-      // 1) Bridge pending (첫 점 찍은 상태) 취소.
-      if (pendingBridge) {
-        setPendingBridge(null);
-        return;
-      }
-      // 2) 서포트/변곡점 선택 해제.
-      if (selectedCp) {
-        setSelectedCp(null);
-        return;
-      }
-      if (selectedSupportId) {
-        setSelectedSupportId(null);
-        return;
-      }
-      // 3) STL 선택 해제.
-      if (selectedIds.size > 0) {
-        setSelectedIds(new Set());
-        return;
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [
-    pendingBridge,
-    selectedCp,
-    selectedSupportId,
-    selectedIds,
+  // Esc 단계적 해제 (P3) — Bridge pending → 서포트/변곡점 선택 → STL 선택 순으로 한 단계씩.
+  useEscapeDeselect({
     profileDialogOpen,
+    pendingBridge,
     setPendingBridge,
+    selectedCp,
     setSelectedCp,
+    selectedSupportId,
     setSelectedSupportId,
-  ]);
+    selectedIds,
+    setSelectedIds,
+  });
 
-  // ----- 손상 STL (사고 방지 3차 ⑤ C5) -----
-  //   씬이 메시로 못 올린 STL — id → 사유. 목록에 "⚠ 손상" 으로 보이고, 파일을 지우면 아래 effect 가 뺀다.
-  //   종전엔 console.error 만 남아 사용자는 모델이 왜 안 보이는지 몰랐다.
-  const [loadFailed, setLoadFailed] = useState<ReadonlyMap<string, string>>(
-    () => new Map(),
-  );
-  // 이미 알린 파일 — files 가 바뀔 때마다 씬이 못 올린 파일을 다시 시도·재실패하므로(useFileMeshSync) 알림은 파일당 한 번.
-  const loadFailAlertedRef = useRef<Set<string>>(new Set());
-  const handleStlLoadError = useCallback(
-    (stlId: string, fileName: string, message: string) => {
-      setLoadFailed((prev) =>
-        prev.get(stlId) === message ? prev : new Map(prev).set(stlId, message),
-      );
-      if (loadFailAlertedRef.current.has(stlId)) return;
-      loadFailAlertedRef.current.add(stlId);
-      window.alert(
-        `"${fileName}" 을(를) 불러오지 못했습니다 — 손상된 STL 일 수 있습니다.${NL}${message}${NL}${NL}` +
-          `왼쪽 목록에서 삭제해 주세요. 이 모델은 슬라이스·내보내기에 포함되지 않습니다.`,
-      );
-    },
-    [],
-  );
-  // files 에서 사라진(삭제된) id 는 표시·알림 기록에서 뺀다. 바뀐 것이 없으면 같은 Map 을 돌려 리렌더를 막는다.
-  useEffect(() => {
-    const ids = new Set(files.map((f) => f.id));
-    for (const id of loadFailAlertedRef.current) {
-      if (!ids.has(id)) loadFailAlertedRef.current.delete(id);
-    }
-    setLoadFailed((prev) => {
-      let next: Map<string, string> | null = null;
-      for (const id of prev.keys()) {
-        if (ids.has(id)) continue;
-        if (!next) next = new Map(prev);
-        next.delete(id);
-      }
-      return next ?? prev;
-    });
-  }, [files]);
+  // ----- 손상 STL (사고 방지 3차 ⑤ C5) — 씬이 메시로 못 올린 STL id → 사유, 알림은 파일당 한 번 -----
+  const { loadFailed, handleStlLoadError } = useStlLoadFailures(files);
 
   // ----- Transform 패널 선택 (단일 선택만 표시) -----
   //   사고 방지 3차 ⑦ — 매 렌더 새 객체라 TransformPanel 의 `[selected]` effect 가 렌더마다 돌아 드래그 중 입력값이
@@ -570,8 +459,11 @@ const ViewerV2Page: React.FC = () => {
     // 사고 방지 3차 ③ — 모델은 있는데 씬 높이가 0 이면 아직 로드 중(또는 전부 플레이트 아래)이라 슬라이스할 층이 없다.
     //   종전엔 그대로 들어가 "총 1 layer" 로 굳었다. 모델 0개(빈 프로젝트)는 종전 그대로 들어간다.
     if ((filesLoading || files.length > 0) && top <= 0) {
+      // 사고 방지 4차(소) — 모델이 전부 손상(메시로 못 올림)이면 기다려도 층이 안 생긴다: 지우라고 안내한다.
       window.alert(
-        `모델을 아직 불러오는 중이거나 모델이 전부 플레이트 아래에 있어 슬라이스할 층이 없습니다.${NL}잠시 뒤 다시 눌러 주세요.`,
+        !filesLoading && isEveryModelLoadFailed(files, loadFailed)
+          ? "불러온 모델이 전부 손상돼 슬라이스할 것이 없습니다. 목록에서 지워 주세요."
+          : `모델을 아직 불러오는 중이거나 모델이 전부 플레이트 아래에 있어 슬라이스할 층이 없습니다.${NL}잠시 뒤 다시 눌러 주세요.`,
       );
       return;
     }
@@ -618,13 +510,6 @@ const ViewerV2Page: React.FC = () => {
   const safeLayerIdx = Math.min(
     slicePreview.layerIdx,
     Math.max(0, layerCount - 1),
-  );
-
-  // Task0 출력영역 배너의 갈래 (Z3-b) — 내보내기를 막는 하드 위반(가로·세로 영역 밖·높이 초과·서포트)이 하나라도
-  //   있는가. 없으면 플레이트 아래로 파고든 것뿐이라 "잘린 채 출력" 안내만 한다(useSliceExport alertIfOutOfTask0Area 와
-  //   같은 판정). 평범한 계산으로 둔다 — 위쪽 early return 아래라 훅을 쓸 수 없고, 렌더당 항목 수십 개 이하.
-  const task0HardIssue = volumeIssues.some((it) =>
-    isTask0HardViolation(it.violation),
   );
 
   return (
@@ -826,74 +711,13 @@ const ViewerV2Page: React.FC = () => {
             </div>
           )}
 
-          {/*
-            출력영역 초과 경고 (C-2, `docs/판정_CHITUBOX분석_20260821.md`).
-            자동 소멸 없음 — 모델을 영역 안으로 되돌리면 훅이 빈 배열을 올려
-            저절로 사라진다. 뷰포트에는 해당 모델을 감싸는 빨간 와이어박스가
-            함께 표시된다(useBuildVolumeCheck).
-          */}
-          {/*
-            미리보기 모드에서는 숨긴다 (지시: 알림 배너 숨김). 안전장치가
-            사라지는 것은 아니다 — 내보내기 경로는 useSliceExport 의
-            `confirmIfOutOfBounds`(P-1) 가 여전히 확인 다이얼로그로 막는다.
-            "플레이트 위로 올리기" 는 모델을 움직이는 **변환**이라 편집 잠금
-            중인 미리보기 모드에 있어서도 안 된다.
-          */}
-          {!sliceMode && volumeIssues.length > 0 && (
-            <div className="absolute inset-x-0 top-4 flex justify-center px-4 pointer-events-none">
-              <div className="bg-red-50/95 backdrop-blur border border-red-300 rounded-md shadow px-4 py-2 text-sm text-red-900 select-none max-w-xl pointer-events-auto">
-                <div className="font-medium">
-                  {/* Task0 (Z3 → Z3-b): 항목에 서포트 묶음이 들어간다. 가로·세로 영역 밖·높이 초과가 하나라도 있으면
-                      내보내기 자체를 막는다(useSliceExport alertIfOutOfTask0Area·코어 1-b). 플레이트 아래로 파고든 것뿐이면
-                      잘린 채 출력되는 정상 사용(리드 2026-10-08)이라 안내만 — 내보낼 때 확인 후 허용. 기존 프로파일 문구는 그대로. */}
-                  {isTask0Profile(printerProfile) ? (
-                    task0HardIssue ? (
-                      <>
-                        ⚠ Task0 출력 가능 영역을 벗어난 항목(모델·서포트){" "}
-                        {volumeIssues.length}건 — 이대로는 내보낼 수 없습니다. 영역
-                        안으로 옮기세요.
-                      </>
-                    ) : (
-                      <>
-                        ⚠ 플레이트 아래로 파고든 모델 {volumeIssues.length}개 — 이대로
-                        내보내면 플레이트 아래 부분은 잘린 채 출력됩니다(일부러 자르는
-                        경우라면 그대로 진행).
-                      </>
-                    )
-                  ) : (
-                    <>
-                      ⚠ 출력영역을 벗어난 모델 {volumeIssues.length}개 — 이대로
-                      출력하면 잘려 나갑니다.
-                    </>
-                  )}
-                </div>
-                <ul className="mt-1 space-y-0.5">
-                  {volumeIssues.slice(0, 3).map((it) => (
-                    <li key={it.stlId} className="text-xs">
-                      · {it.fileName} — {it.message}
-                    </li>
-                  ))}
-                  {volumeIssues.length > 3 && (
-                    <li className="text-xs">
-                      · 외 {volumeIssues.length - 3}개
-                    </li>
-                  )}
-                </ul>
-                {/*
-                  플레이트 아래로 파고든 경우만 원클릭 해소 버튼을 띄운다 (B-21).
-                  회전하면 실제로 파고들기 때문에(자동 안착 없음 — B-12 A안)
-                  가장 흔한 경고이고, 손으로 ty 를 계산하지 않게 해 준다.
-                */}
-                {volumeIssues.some((it) => it.sinkDepthMm > 0) && (
-                  <button
-                    onClick={handleDropToPlate}
-                    className="mt-2 px-2 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
-                  >
-                    플레이트 위로 올리기 (Ctrl+Z 로 되돌리기 가능)
-                  </button>
-                )}
-              </div>
-            </div>
+          {/* 출력영역 초과 경고 (C-2) — 문구·갈래·버튼은 BuildVolumeBanner. 미리보기 모드에서는 숨긴다(지시: 알림 배너 숨김). */}
+          {!sliceMode && (
+            <BuildVolumeBanner
+              volumeIssues={volumeIssues}
+              printerProfile={printerProfile}
+              onDropToPlate={handleDropToPlate}
+            />
           )}
 
           {/* 드래그앤드롭 오버레이 — pointer-events-none 로 drop 이벤트가
