@@ -6,7 +6,7 @@ Top-down 레진 프린터용 하이브리드 슬라이서 (최종 목표: 2노�
 
 **현재 우선순위 (2026-10 기준)**: **11월 초 외부 데모.** 서포트 고도화는 뒤로, 기본기·사고 방지 우선.
 출력물은 자체 프린터(Task0)가 읽는 **`.zip` 하나** — CTB 완전 폐기(리드 결정 2026-09-28~29, 코드 제거 PR #105).
-AI 체제: 2026-09-23~ Opus 5.5 시험(계획·구현·검수 전부).
+AI 체제: 2026-10-22~ **멀티 모델 협업**(메인 Opus 오케스트레이터 + 역할별 서브에이전트 — 아래 "AI 멀티 모델 체제" 절). Opus 5.5 단일 시험(9/23~10/21)은 종료.
 
 ## 필수 참고 문서
 
@@ -101,6 +101,26 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 - **STL 축**: Babylon `STLFileLoader` 는 기본으로 STL (x, y, z) 를 (x, z, y) 로 넣어 **STL Z 를 위(Y)** 로 바꾼다(왼손 엔진용 반사). `utils/stl-loader.ts` 에 회전을 더 얹으면 안 된다 — 2026-10-13 까지 X −90° 가 한 번 더 걸려 치과 STL 이 90° 눕혀 읽혔다(데모 수정 1차 ①-b). 베드 좌표(`task0-frame` 베드 Y = world Z)가 반사를 한 번 더 해 출력은 거울상이 아니다. 수치 패널 표시축(`types/axis-display.ts`)은 별도 규약.
 - **Task0 파서 이식(`utils/task0/task0-gcode-parser.ts`)을 고치면** `verify-task0-parser.mjs` 출력이 "SKIP(차분 검사)" 가 아니라 "불일치 0건" 인지 확인할 것 —
   Task0 리포·Python 이 없는 PC 에서는 차분 검사가 SKIP 되고, 그때는 미묘한 이식 오류를 못 잡는다.
+
+## AI 멀티 모델 체제 (2026-10-22~)
+
+메인 세션 = **Opus**(오케스트레이터 — `.claude/settings.json` 의 `model`. 리드가 `/model` 로 바꾸면 그 세션은 그 모델).
+작업 분석·난이도 판정·계획·핵심 구현·통합·최종 보고를 맡고, 아래 서브에이전트(`.claude/agents/`)에 역할별로 위임한다.
+절차 정본 = `docs/WORKFLOW.md` §1·§3, 명령 = `/dev-cycle`. 공통 구현 규칙 = `.claude/skills/v2-coding-rules/SKILL.md`(coder·coder-sonnet·fixer 에 프리로드).
+
+| 에이전트 | 모델 | 쓰는 때 | 안 쓰는 때 |
+|---|---|---|---|
+| `architect` | Fable | **A 설계 필요**: 구조 경계·알고리즘·규격 해석·담당자 리뷰 대상 설계 변경. 코드 안 씀, 결정·계획 골격만 | 단순·일반 작업 |
+| `coder` | Opus | **C 핵심**: `utils/slice-*`·`workers/`·`utils/task0/`·`utils/gcode/`·`components/babylon*`·`data/`·`support/`·`utils/dental/`·`types/printer.ts` 기본값·좌표계 | 그 밖의 파일 |
+| `coder-sonnet` | Sonnet | **M 일반**: UI·패널·훅 분리·독립 모듈·검증 스크립트·문서 | 핵심 영역 — 멈추고 보고 |
+| `fixer` | Haiku | **S 단순**: 문구·주석·상수 한 곳·체크박스 — 파일·위치·내용이 정해진 수정 | 로직 변경, 핵심 영역 |
+| `scout` | Haiku | 탐색 — 사용처·흐름·문서 안 결정 찾기(읽기 전용) | grep 2~3번으로 끝나는 질문 |
+| `reviewer` | Fable 기본 | 독립 검수 — **구현한 모델과 다른 모델**로. C·A 는 Fable, M 은 호출 시 `model: opus` | S 는 메인이 diff 직접 확인 |
+
+- 난이도 판정은 메인 세션이 계획 단계에서 한다(기준표 `.claude/commands/dev-cycle.md` 1단계). C 는 메인(Opus)이 직접 구현해도 된다 — `coder` 는 worktree 격리·병렬이 필요할 때.
+- 서브에이전트 호출 1회 고정 비용 ≈ 4만 토큰(프로젝트 문맥 적재 — 10/22 실측). 도구 호출 몇 번으로 끝날 일은 메인이 직접. 서로 독립인 작업만 병렬.
+- 난이도에 따른 **모델 자동 전환은 Claude Code 에 없다** — 라우팅은 전부 메인 세션 판단 + 에이전트 정의의 `model:` + 호출 시 `model` 지정.
+- 검수 FAIL → 수정 → 재검수 최대 3회. 검증이 실패했으면 성공으로 보고하지 않는다. 불확실한 것은 "불확실" 로 표시하고 추측 구현 금지.
 
 ## Git / PR
 
