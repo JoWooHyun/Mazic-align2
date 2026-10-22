@@ -245,6 +245,19 @@
     [다음] 리드 실기(#145 머지판으로 같은 모델 재시도 - 경고 층 수) -> P1 /dev-cycle(줌 포함 여부 결정 뒤) -> inbox 검사 -> §32 반영 PR -> §36 뒤 §37
 
 
+  2026-10-22 | AI 멀티 모델 협업 체제 구성 (리드 지시 - Opus 5.5 단일 시험 9/23~10/21 종료)
+  --------------------------------------------------------------------------
+    [확인] Claude Code 2.1.49. 서브에이전트 model 프런트매터·호출 시 model 지정으로 fable/opus/sonnet/haiku 전부 호출 가능(각 1회 실측 OK).
+           난이도별 모델 **자동 전환은 없음** - 라우팅은 메인 세션 판단 + 에이전트 정의 + 호출 시 지정. 서브에이전트 1회 고정 비용 약 4만 토큰(프로젝트 문맥 적재).
+    [신규] .claude/agents/architect.md(Fable, 설계·결정 - 쓰기 도구 금지) / coder-sonnet.md(Sonnet, 일반 기능·UI·검증 스크립트) /
+           fixer.md(Haiku, 단순 수정 - 핵심 경로 금지·maxTurns 30) / scout.md(Haiku, 읽기 전용 탐색)
+    [신규] .claude/skills/v2-coding-rules/SKILL.md - coder·coder-sonnet·fixer 공통 규칙 한 곳(프리로드). .claude/settings.json - 메인 세션 model=opus
+    [갱신] coder.md(핵심 영역 명시, 규칙은 스킬로) / reviewer.md(model fable, 구현 모델과 다른 모델 원칙, 규칙 10·역할 이탈 검사, lint 기준선 "34" 오기 -> CLAUDE.md 참조) /
+           commands/dev-cycle.md(0 파악 -> 1 난이도 S/M/C/A 판정+계획 -> 2 등급별 구현 -> 3 교차 검수 -> 4 분기) /
+           CLAUDE.md "AI 멀티 모델 체제" 절·AI 체제 줄 / WORKFLOW §1 AI 표·§3 루프 / 인수인계 §0-4
+    [다음] 리드: 이 PR 머지 뒤 새 세션에서 /dev-cycle 1건 돌려 체제 확인(세션이 Opus 로 뜨는지, 검수가 Fable 로 가는지). AI: 위 10/21 [다음] 그대로
+
+
 ================================================================================
 
 
