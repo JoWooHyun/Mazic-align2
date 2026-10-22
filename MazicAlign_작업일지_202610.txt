@@ -245,20 +245,46 @@
     [다음] 리드 실기(#145 머지판으로 같은 모델 재시도 - 경고 층 수) -> P1 /dev-cycle(줌 포함 여부 결정 뒤) -> inbox 검사 -> §32 반영 PR -> §36 뒤 §37
 
 
+  2026-10-22 | AI 멀티 모델 협업 체제 구성 (리드 지시 - Opus 5.5 단일 시험 9/23~10/21 종료)
+  --------------------------------------------------------------------------
+    [확인] Claude Code 2.1.49. 서브에이전트 model 프런트매터·호출 시 model 지정으로 fable/opus/sonnet/haiku 전부 호출 가능(각 1회 실측 OK).
+           난이도별 모델 **자동 전환은 없음** - 라우팅은 메인 세션 판단 + 에이전트 정의 + 호출 시 지정. 서브에이전트 1회 고정 비용 약 4만 토큰(프로젝트 문맥 적재).
+    [신규] .claude/agents/architect.md(Fable, 설계·결정 - 쓰기 도구 금지) / coder-sonnet.md(Sonnet, 일반 기능·UI·검증 스크립트) /
+           fixer.md(Haiku, 단순 수정 - 핵심 경로 금지·maxTurns 30) / scout.md(Haiku, 읽기 전용 탐색)
+    [신규] .claude/skills/v2-coding-rules/SKILL.md - coder·coder-sonnet·fixer 공통 규칙 한 곳(프리로드). .claude/settings.json - 메인 세션 model=opus
+    [갱신] coder.md(핵심 영역 명시, 규칙은 스킬로) / reviewer.md(model fable, 구현 모델과 다른 모델 원칙, 규칙 10·역할 이탈 검사, lint 기준선 "34" 오기 -> CLAUDE.md 참조) /
+           commands/dev-cycle.md(0 파악 -> 1 난이도 S/M/C/A 판정+계획 -> 2 등급별 구현 -> 3 교차 검수 -> 4 분기) /
+           CLAUDE.md "AI 멀티 모델 체제" 절·AI 체제 줄 / WORKFLOW §1 AI 표·§3 루프 / 인수인계 §0-4
+    [다음] 리드: 이 PR 머지 뒤 새 세션에서 /dev-cycle 1건 돌려 체제 확인(세션이 Opus 로 뜨는지, 검수가 Fable 로 가는지). AI: 위 10/21 [다음] 그대로
+
+
+  2026-10-22 | 머지 뒤 정리 + #148 누락 복구 + 문서 현행화 + 코드 점검 (새 세션 전 정리 — 리드 지시)
+  --------------------------------------------------------------------------
+    [사고] #147 머지 22초 뒤 #148 이 이미 머지된 #147 브랜치(docs/post-merge-20261021)로 머지돼 **메인라인 누락**(#146 에 이어 두 번째).
+           -> docs/cleanup-20261022 에 그 브랜치를 merge 해 복구. 교훈: AI 는 PR 을 쌓지 않는다 / 리드에게 "Automatically delete head branches" 권장 -> WORKFLOW §8·인수인계 §6
+    [완료] 전체 검증(정리 PR 트리): tsc 0 · lint 26 · 검증 42종 42종 전부 PASS(task0-parser 차분 불일치 0건) · build 성공(38 s)
+    [갱신] docs/리팩토링_LLM구조_20260720.md §3·§4 구조도 현행화(coder-sonnet: 7/20 이후 파일 23개 [+]·정정 6곳 [~]·현행 훅 호출 순서 표) + §5 불변식 1 문구(dentalBrush 뒤 #7 useBuildVolumeCheck -> #8 useAlignFloorHover)
+    [신규] docs/점검_미사용export_20261022.md — v2 export 728건 전수 대조(scout/Haiku): 미사용 후보 129(타입 105·상수 19·함수 10) -> 데모 전 삭제 없음, R-5 후보. PLATE_Y·Vec3 중복 정의 발견
+    [수정] workers/slice-batch.worker.ts:88 주석(삭제된 mask-png 언급) — fixer/Haiku. 코드 변경 없음
+    [신규] docs/인수인계_20261022.md(20261019 -> archive), README 포인터·점검 행, 로드맵 10/22 머지 줄, CLAUDE.md BabylonScene 168줄, 작업일지 [2]
+    [확인] 멀티 모델 체제 첫 실전: scout(Haiku, 약 6.6만 토큰·12분)·coder-sonnet(약 17만 토큰·14분)·fixer(약 2.2만 토큰·2분) 전부 지시 범위 안에서 완료. 셋이 작업 트리를 공유하니 "네가 만진 파일만 보고" 지시가 필요(둘 다 남의 변경을 보고함)
+    [다음] 리드: 정리 PR 머지 -> 실기(인수인계 §4-1) -> GitHub 자동 브랜치 삭제 설정 / AI: 실기 결과 -> inbox 검사 -> 경로 미리보기 P1 -> §32 반영 -> §36 뒤 §37
+
+
 ================================================================================
 
 
-[2] 현재 상태 (2026-10-19 기준)
+[2] 현재 상태 (2026-10-22 기준)
 ================================================================================
 
-  ※ 시작점: docs/인수인계_20261019.md / 진행 상태: docs/통합로드맵.md(현행판) / 문서 지도: docs/README.md
+  ※ 시작점: docs/인수인계_20261022.md / 진행 상태: docs/통합로드맵.md(현행판) / 문서 지도: docs/README.md
 
   ── 커밋 상태 ──
-    - 기준 브랜치 integrate/v2-mainline @ 028b281 (#146 머지, 10/21 — #142~#146 전부 머지, 브랜치·worktree 삭제 완료)
-    - 열린 PR: #142(패널 축) -> #143(코드 정리 R-4·사고 방지 4차 소) -> #144(문서) -> #145(내보내기 경고·진행) 순서로 머지 / 보류 #29·#101
-    - 품질 기준선: tsc 0 / lint 26(v1 25 + 공용 1, v2 0) / 검증 42종 상시 PASS / build 성공 (merge commit 머지만 — squash 금지)
+    - 기준 브랜치 integrate/v2-mainline @ 988282c (#147 머지, 10/22). #148 은 머지된 #147 브랜치로 들어가 누락 -> 10/22 정리 PR(docs/cleanup-20261022)로 복구
+    - 열린 PR: 10/22 정리 PR(#148 복구 + 문서 현행화 + 점검) / 보류 #29·#101
+    - 품질 기준선: tsc 0 / lint 26(v1 25 + 공용 1, v2 0) / 검증 42종 상시 PASS / build 성공 (merge commit 머지만 — squash 금지, PR 쌓기 금지)
     - STL 축: 10/13 부터 표준 Z-up — 그 전에 만든 프로젝트는 모델 자세 90° 다름(데모용은 새 프로젝트)
-    - 체제: 2026-09-23~ Opus 5.5 시험(전 역할), 11월 초 외부 데모(드라이런 중심, 단일·2재료)
+    - 체제: 2026-10-22~ AI 멀티 모델(메인 Opus + architect/reviewer Fable, coder Opus, coder-sonnet, fixer/scout Haiku), 11월 초 외부 데모(드라이런 중심, 단일·2재료)
 
   ── 출력물 ──
     - Task0 용 job.zip 하나(run.gcode + 층 PNG + manifest + exposure + preview) - 앱에서 단일·2재료 모두 나옴
