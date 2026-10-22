@@ -170,6 +170,7 @@ PR 의 "조우현 확인 포인트"는 이 목록에서 해당 항목을 골라 
 - **병렬 개발**: 서로 다른 파일 영역이면 worktree 여러 개로 coder 를 동시에 돌려도 된다. 같은 파일을 고치면 나중 PR 을 앞 PR 위로 rebase 하고 규약(예: `settleTx`)에 맞춘다.
 - **쌓인 PR 은 GitHub "Create a merge commit" 으로 머지**(squash·rebase 금지 — 다음 PR 에 앞 PR 커밋이 다시 섞여 충돌).
 - **쌓인 PR 은 앞 PR 이 머지되면 베이스를 손으로 바꾼 뒤 머지**(Settings 에 "자동 브랜치 삭제" 가 꺼져 있어 베이스 브랜치가 남고, GitHub 는 베이스를 자동으로 옮기지 않는다 — 10/21 #146 이 이미 머지된 #144 브랜치로 들어가 메인라인에 안 실렸고 cherry-pick 으로 복구). 또는 앞 PR 머지 직후 그 브랜치를 바로 지운다.
+  **10/22 두 번째 발생**(#147 머지 22초 뒤 #148 이 머지된 #147 브랜치로 들어감 → `docs/cleanup-20261022` 에 그 브랜치를 merge 해 복구). 머지 버튼을 연달아 누르면 사람이 베이스를 바꿀 틈이 없다 → **AI 는 앞으로 PR 을 쌓지 않는다**(둘째 PR 은 앞 PR 머지 뒤에 연다. 같은 세션이면 한 PR 에 합친다). 리드가 GitHub Settings → General → "Automatically delete head branches" 를 켜면 GitHub 가 쌓인 PR 의 베이스를 자동으로 옮겨 이 함정이 사라진다(권장).
   리드가 머지를 AI 에 **위임**하면(10/7 — 위임 범위는 그때 지정한 PR 만): `gh pr merge N --merge --delete-branch --match-head-commit <검사한 head>` 로
   검사한 커밋만 넣고, PR 마다 mergeable 재계산을 기다리며, 끝나면 메인라인에서 tsc·lint·검증 전부·build 를 다시 돌린다.
 - **쌓인 PR 과 문서 PR 이 같은 줄을 고치면 충돌** → 기능 PR 은 다른 열린 PR 이 고치는 문서 줄(로드맵 체크·CLAUDE.md 검증 개수)을 건드리지 않고, 머지 뒤 한 번에 정리한다.

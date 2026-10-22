@@ -85,7 +85,7 @@ function sliceLayerMask(
 
 /**
  * 1bpp 마스크 → PNG 바이트 (OffscreenCanvas).
- * mask-png.ts(document canvas)의 워커 등가물 — 브라우저 PNG 인코더 동일.
+ * PNG 인코더 (옛 utils/mask-png.ts 의 document canvas 판은 10/15 R-4 에서 삭제 — 이제 이 워커 구현이 유일).
  */
 async function maskToPngBytes(mask: SliceMask): Promise<Uint8Array> {
   const canvas = new OffscreenCanvas(mask.width, mask.height);
