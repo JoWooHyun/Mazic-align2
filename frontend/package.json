@@ -12,6 +12,7 @@
   "dependencies": {
     "@babylonjs/core": "^6.36.0",
     "@babylonjs/loaders": "^6.36.0",
+    "earcut": "^3.2.4",
     "js-clipper": "^1.0.1",
     "manifold-3d": "^3.5.1",
     "react": "^18.2.0",

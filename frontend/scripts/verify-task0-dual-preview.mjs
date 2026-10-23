@@ -56,7 +56,7 @@ import * as materialDisplay from "../src/features/v2/components/babylon/material
 import { chainSegments, normalizeTriangleWinding, sliceTrianglesAtY } from "../src/features/v2/utils/slice-geometry.ts";
 import * as sliceMaterialMask from "../src/features/v2/utils/slice-material-mask.ts";
 import { rasterizePolygons } from "../src/features/v2/utils/slice-rasterize.ts";
-import { buildPolygonFillMesh, createSliceFillMaterial } from "../src/features/v2/utils/slice-render.ts";
+import { buildSliceFillMesh, createSliceFillMaterial } from "../src/features/v2/utils/slice-render.ts";
 import { MODEL_DIFFUSE_COLOR, MODEL_DIFFUSE_COLOR_OVERHANG, setModelDiffuseMode } from "../src/features/v2/utils/stl-loader.ts";
 import { createSupportMaterial } from "../src/features/v2/utils/support-render.ts";
 import { generateTask0Gcode } from "../src/features/v2/utils/task0/task0-gcode-writer.ts";
@@ -423,27 +423,26 @@ function colorScenario(api) {
   addSupport("p1");
   const diffuse = (id) => ctx.meshMapRef.current.get(id).material.diffuseColor;
 
-  // useSlicePreview 와 같은 절차 — fill 마다 정체 표식, 머티리얼은 sliceFillMaterialFor ?? 종전
+  // useSlicePreview 와 같은 절차 — fill 마다 정체 표식, 머티리얼은 sliceFillMaterialFor ?? 종전.
+  //   2026-10-23 단면 뚜껑 수정부터 fill 은 메시마다 하나(buildSliceFillMesh — 그 메시의 단면 폴리곤 전부를 nonzero 로 채움)
   const makeFills = () => {
     for (const fm of ctx.sliceFillMeshesRef.current) fm.dispose();
     ctx.sliceFillMeshesRef.current = [];
     for (const [stlId, mesh] of ctx.meshMapRef.current) {
       const tag = { kind: "stl", stlId };
       const mat = api.fillMatFor(ctx, tag) ?? ctx.sliceModelMatRef.current;
-      for (const p of chainSegments(sliceTrianglesAtY(normalizeTriangleWinding(Float32Array.from(mesh.getVerticesData("position"))), 0.5))) {
-        const fill = buildPolygonFillMesh(scene, p, 0.495, mat, "v2_slice_model_fill");
-        fill.metadata = { sliceFill: tag };
-        ctx.sliceFillMeshesRef.current.push(fill);
-      }
+      const polys = chainSegments(sliceTrianglesAtY(normalizeTriangleWinding(Float32Array.from(mesh.getVerticesData("position"))), 0.5));
+      const fill = buildSliceFillMesh(scene, polys, 0.495, mat, "v2_slice_model_fill");
+      fill.metadata = { sliceFill: tag };
+      ctx.sliceFillMeshesRef.current.push(fill);
     }
     const stag = { kind: "support" };
     const smat = api.fillMatFor(ctx, stag) ?? ctx.sliceSupportMatRef.current;
     for (const sm of ctx.supportMeshMapRef.current.values()) {
-      for (const p of chainSegments(sliceTrianglesAtY(normalizeTriangleWinding(Float32Array.from(sm.getVerticesData("position"))), 0.5))) {
-        const fill = buildPolygonFillMesh(scene, p, 0.495, smat, "v2_slice_support_fill");
-        fill.metadata = { sliceFill: stag };
-        ctx.sliceFillMeshesRef.current.push(fill);
-      }
+      const polys = chainSegments(sliceTrianglesAtY(normalizeTriangleWinding(Float32Array.from(sm.getVerticesData("position"))), 0.5));
+      const fill = buildSliceFillMesh(scene, polys, 0.495, smat, "v2_slice_support_fill");
+      fill.metadata = { sliceFill: stag };
+      ctx.sliceFillMeshesRef.current.push(fill);
     }
   };
   const fillOf = (pred) => ctx.sliceFillMeshesRef.current.filter((f) => pred(f.metadata.sliceFill));
