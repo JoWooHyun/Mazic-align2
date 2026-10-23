@@ -22,7 +22,7 @@ import {
 } from "../utils/auto-support-replace";
 import { confirmDeleteModels } from "../utils/confirm-delete-models";
 import { awaitPaint } from "../utils/run-with-busy";
-import { withSaveReport } from "../utils/save-failure";
+import { withSaveReport } from "../../../utils/save-failure";
 import { useBridgeControlPoints } from "./useBridgeControlPoints";
 import type {
   AddStlFile,

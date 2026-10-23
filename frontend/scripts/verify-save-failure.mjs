@@ -3,7 +3,7 @@
 //   실행: npx tsx scripts/verify-save-failure.mjs
 //   ⚠️ plain node 로 돌리면 확장자 없는 TS import 를 못 풀어 오탐이 난다(CLAUDE.md). 판정은 **exit code**.
 //
-//   (a) 헬퍼 단위 — pages/viewer/utils/save-failure.ts 를 불러 가짜 시계·알림으로 확인:
+//   (a) 헬퍼 단위 — utils/save-failure.ts 를 불러 가짜 시계·알림으로 확인:
 //       일반 오류 → 알림 1회 + 콘솔 / QuotaExceededError → 알림 0 + 콘솔 / 3 s 안 연속 실패 → 알림 1회 / 3 s 뒤 → 다시 알림
 //       · 같은 오류 객체는 한 번만 보고 · withSaveReport 는 같은 오류를 다시 던짐 · 알림이 던져도 안 깨짐
 //       + 기본 인스턴스 연결(settleAll 의 action 인자 · useUndoStore 의 되돌리기/다시 실행 실패 보고).
@@ -47,7 +47,7 @@ function makeChecker() {
   return { res, check: (ok, label) => res.push({ ok: !!ok, label }) };
 }
 
-const HELPER_REL = "pages/viewer/utils/save-failure.ts";
+const HELPER_REL = "utils/save-failure.ts";
 const readV2 = (rel) => readFileSync(join(V2, rel), "utf8").replace(/\r\n/g, "\n");
 
 /** 변조: from 이 소스에 정확히 1번 있어야 한다(없으면 공허한 대조군이므로 throw). */

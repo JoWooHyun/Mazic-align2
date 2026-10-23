@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useProjectsV2 } from "../hooks/useProjectsV2";
-import { withSaveReport } from "./viewer/utils/save-failure";
+import { withSaveReport } from "../utils/save-failure";
 
 /**
  * v2 프로젝트 목록 화면.

@@ -12,7 +12,7 @@ import {
   straightCps,
 } from "../../../utils/bridge-path";
 import { proportionalMoveCps } from "../utils/support-transform";
-import { withSaveReport } from "../utils/save-failure";
+import { withSaveReport } from "../../../utils/save-failure";
 import type { PatchSupport } from "./types";
 
 type Vec3 = [number, number, number];

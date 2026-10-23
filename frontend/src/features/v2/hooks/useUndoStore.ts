@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-import { reportSaveFailure } from "../pages/viewer/utils/save-failure";
+import { reportSaveFailure } from "../utils/save-failure";
 
 /**
  * v2 Undo/Redo 스택.

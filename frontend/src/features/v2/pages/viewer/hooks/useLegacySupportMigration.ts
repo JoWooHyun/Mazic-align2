@@ -15,7 +15,7 @@ import { useEffect } from "react";
 
 import type { BabylonSceneHandle } from "../../../components/BabylonScene";
 import type { SupportPointV2 } from "../../../support/types";
-import { withSaveReport } from "../utils/save-failure";
+import { withSaveReport } from "../../../utils/save-failure";
 import type { PatchSupport } from "./types";
 
 interface UseLegacySupportMigrationArgs {

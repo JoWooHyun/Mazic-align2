@@ -39,7 +39,7 @@ import {
 import { useLegacySupportMigration } from "./viewer/hooks/useLegacySupportMigration";
 import { useEscapeDeselect } from "./viewer/hooks/useEscapeDeselect";
 import { NL } from "./viewer/utils/text";
-import { withSaveReport } from "./viewer/utils/save-failure";
+import { withSaveReport } from "../utils/save-failure";
 import ViewerHeader from "./viewer/components/ViewerHeader";
 import SliceModeHeader from "./viewer/components/SliceModeHeader";
 import SliceLayerRail from "./viewer/components/SliceLayerRail";

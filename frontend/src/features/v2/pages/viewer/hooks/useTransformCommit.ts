@@ -18,7 +18,7 @@ import {
 } from "../../../utils/bridge-path";
 import { proportionalMoveCps } from "../utils/support-transform";
 import { settleAll } from "../utils/settle-all";
-import { reportSaveFailure, withSaveReport } from "../utils/save-failure";
+import { reportSaveFailure, withSaveReport } from "../../../utils/save-failure";
 import type { PatchSupport, UpdateTransform } from "./types";
 
 type Vec3 = [number, number, number];

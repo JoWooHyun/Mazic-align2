@@ -15,7 +15,7 @@ import type { STLFileV2 } from "../../../types/stl";
 import { task0CopySlotInit } from "../../../utils/task0/task0-material";
 import { addCopySuffix } from "../utils/file-naming";
 import { confirmDeleteModels } from "../utils/confirm-delete-models";
-import { withSaveReport } from "../utils/save-failure";
+import { withSaveReport } from "../../../utils/save-failure";
 import type { AddStlFile, RefreshSupports, RemoveStlFile } from "./types";
 
 /**
