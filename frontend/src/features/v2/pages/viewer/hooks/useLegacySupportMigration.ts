@@ -15,6 +15,7 @@ import { useEffect } from "react";
 
 import type { BabylonSceneHandle } from "../../../components/BabylonScene";
 import type { SupportPointV2 } from "../../../support/types";
+import { withSaveReport } from "../utils/save-failure";
 import type { PatchSupport } from "./types";
 
 interface UseLegacySupportMigrationArgs {
@@ -54,12 +55,15 @@ export function useLegacySupportMigration({
               (cp) => handle.stlLocalToWorld(s.stlId, cp) ?? cp,
             ) as typeof newCps;
           }
-          await patchSupport(s.id, {
-            contact: newContact,
-            base: newBase,
-            ...(newCps ? { curveControlPoints: newCps } : {}),
-            coordSpace: "world",
-          });
+          await withSaveReport(
+            "옛 서포트 좌표 변환",
+            patchSupport(s.id, {
+              contact: newContact,
+              base: newBase,
+              ...(newCps ? { curveControlPoints: newCps } : {}),
+              coordSpace: "world",
+            }),
+          );
         }
       })();
     }, 1500);

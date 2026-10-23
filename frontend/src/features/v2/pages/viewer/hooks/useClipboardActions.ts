@@ -15,6 +15,7 @@ import type { STLFileV2 } from "../../../types/stl";
 import { task0CopySlotInit } from "../../../utils/task0/task0-material";
 import { addCopySuffix } from "../utils/file-naming";
 import { confirmDeleteModels } from "../utils/confirm-delete-models";
+import { withSaveReport } from "../utils/save-failure";
 import type { AddStlFile, RefreshSupports, RemoveStlFile } from "./types";
 
 /**
@@ -38,7 +39,7 @@ export async function cutModels(
     .getState()
     .set(toCut.map((f) => ({ fileName: f.fileName, blob: f.blob, ...task0CopySlotInit(f) })));
   for (const f of toCut) {
-    await removeStlFile(f.id);
+    await withSaveReport("모델 잘라내기", removeStlFile(f.id));
   }
   // STL 삭제는 DB cascade 로 그 STL 의 서포트도 같이 사라지지만
   // useSupportsV2 state 가 stale 이라 명시적 refresh 필요 (Delete 경로와 동일) — 신규 4.
@@ -118,10 +119,13 @@ export function useClipboardActions({
     const newIds: string[] = [];
     for (const item of items) {
       // 원본의 Task0 재료 슬롯을 물려받는다 (D2 — 원본에 없으면 기본 B 그대로).
-      const created = await addStlFile(
-        addCopySuffix(item.fileName, files),
-        item.blob,
-        task0CopySlotInit(item),
+      const created = await withSaveReport(
+        "모델 붙여넣기",
+        addStlFile(
+          addCopySuffix(item.fileName, files),
+          item.blob,
+          task0CopySlotInit(item),
+        ),
       );
       newIds.push(created.id);
     }

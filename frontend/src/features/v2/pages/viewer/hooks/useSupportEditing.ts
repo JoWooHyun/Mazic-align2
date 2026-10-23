@@ -22,6 +22,7 @@ import {
 } from "../utils/auto-support-replace";
 import { confirmDeleteModels } from "../utils/confirm-delete-models";
 import { awaitPaint } from "../utils/run-with-busy";
+import { withSaveReport } from "../utils/save-failure";
 import { useBridgeControlPoints } from "./useBridgeControlPoints";
 import type {
   AddStlFile,
@@ -230,7 +231,7 @@ export function useSupportEditing({
           baseAttachedTo: pendingBridge.attachedTo,
         };
         setPendingBridge(null);
-        await addSupports([newPoint]);
+        await withSaveReport("브릿지 추가", addSupports([newPoint]));
         useUndoStore.getState().push({
           label: "add-bridge",
           undo: async () => {
@@ -266,7 +267,7 @@ export function useSupportEditing({
         addedAt: Date.now(),
         contactNormal: normal,
       };
-      await addSupports([newPoint]);
+      await withSaveReport("서포트 추가", addSupports([newPoint]));
       useUndoStore.getState().push({
         label: "add-support",
         undo: async () => {
@@ -304,7 +305,7 @@ export function useSupportEditing({
       }
       const removed = supports.filter((s) => cascadeIds.has(s.id));
       for (const id of cascadeIds) {
-        await supportRepo.deleteSupport(id);
+        await withSaveReport("서포트 삭제", supportRepo.deleteSupport(id));
       }
       await refreshSupports();
       if (selectedSupportId && cascadeIds.has(selectedSupportId)) {
@@ -344,7 +345,10 @@ export function useSupportEditing({
         newBaseXZ[1],
       ];
 
-      await patchSupport(id, { contact: newContact, base: newBase });
+      await withSaveReport(
+        "서포트 이동",
+        patchSupport(id, { contact: newContact, base: newBase }),
+      );
 
       useUndoStore.getState().push({
         label: "move-support",
@@ -404,7 +408,7 @@ export function useSupportEditing({
       if (!confirmDeleteModels(names)) return;
       setSelectedIds(new Set());
       void (async () => {
-        for (const id of ids) await removeStlFile(id);
+        for (const id of ids) await withSaveReport("모델 삭제", removeStlFile(id));
         // STL 삭제는 DB cascade 로 그 STL 의 서포트도 같이 사라지지만
         // useSupportsV2 state 가 stale 이라 명시적 refresh 필요.
         await refreshSupports();
@@ -436,18 +440,24 @@ export function useSupportEditing({
     const newIds: string[] = [];
     for (const src of sources) {
       // 원본의 Task0 재료 슬롯을 물려받는다 (D2 — 원본에 없으면 기본 B 그대로).
-      const created = await addStlFile(
-        addCopySuffix(src.fileName, files),
-        src.blob,
-        task0CopySlotInit(src),
+      const created = await withSaveReport(
+        "모델 복제",
+        addStlFile(
+          addCopySuffix(src.fileName, files),
+          src.blob,
+          task0CopySlotInit(src),
+        ),
       );
       // 원본 transform 을 복제하고 XZ 로 +5mm 이동해 원본 위에 겹치지 않게 한다.
       const base = src.transform ?? IDENTITY_TRANSFORM;
-      await updateTransform(created.id, {
-        ...base,
-        tx: base.tx + 5,
-        tz: base.tz + 5,
-      });
+      await withSaveReport(
+        "모델 복제",
+        updateTransform(created.id, {
+          ...base,
+          tx: base.tx + 5,
+          tz: base.tz + 5,
+        }),
+      );
       newIds.push(created.id);
     }
     setSelectedIds(new Set(newIds));
@@ -487,7 +497,7 @@ export function useSupportEditing({
     if (!projectId) return;
     if (supports.length === 0) return;
     const snapshot: SupportPointV2[] = supports.slice();
-    await clearAllSupports();
+    await withSaveReport("서포트 전체 삭제", clearAllSupports());
     useUndoStore.getState().push({
       label: "clear-supports",
       undo: async () => {

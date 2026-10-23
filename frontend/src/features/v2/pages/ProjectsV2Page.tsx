@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { useProjectsV2 } from "../hooks/useProjectsV2";
+import { withSaveReport } from "./viewer/utils/save-failure";
 
 /**
  * v2 프로젝트 목록 화면.
@@ -20,7 +21,10 @@ const ProjectsV2Page: React.FC = () => {
     if (!newName.trim() || submitting) return;
     setSubmitting(true);
     try {
-      const project = await create({ name: newName.trim() });
+      const project = await withSaveReport(
+        "프로젝트 만들기",
+        create({ name: newName.trim() }),
+      );
       setShowDialog(false);
       setNewName("");
       navigate(`/v2/viewer/${project.id}`);
@@ -31,7 +35,7 @@ const ProjectsV2Page: React.FC = () => {
 
   async function handleDelete(id: string, name: string) {
     if (!confirm(`프로젝트 "${name}" 을(를) 삭제할까요?`)) return;
-    await remove(id);
+    await withSaveReport("프로젝트 삭제", remove(id));
   }
 
   // 목록 화면에는 뷰어가 없어 STL 을 드롭할 대상이 없다. 기본 동작을

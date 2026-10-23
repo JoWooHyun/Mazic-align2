@@ -18,6 +18,7 @@ import {
 } from "../../../utils/bridge-path";
 import { proportionalMoveCps } from "../utils/support-transform";
 import { settleAll } from "../utils/settle-all";
+import { reportSaveFailure, withSaveReport } from "../utils/save-failure";
 import type { PatchSupport, UpdateTransform } from "./types";
 
 type Vec3 = [number, number, number];
@@ -143,7 +144,7 @@ export function useTransformCommit({
         }
 
         if (Object.keys(updates).length > 0) {
-          await patchSupport(child.id, updates);
+          await withSaveReport("부착된 서포트 따라 이동", patchSupport(child.id, updates));
         }
       }
     },
@@ -157,7 +158,9 @@ export function useTransformCommit({
       //   handleCommitTransform 으로 수렴하므로 무효화를 여기 한 곳에 배선한다.
       sceneHandleRef.current?.invalidateDentalResults(id);
       // 즉시 DB 반영. (그 사이 메쉬는 이미 preview 로 반영돼 있음)
-      void updateTransform(id, end);
+      updateTransform(id, end).catch((e: unknown) => {
+        reportSaveFailure("모델 위치 저장", e);
+      });
 
       // 부착된 서포트도 transform delta 만큼 같이 이동시킨다.
       //   단점/auto: contact, base 둘 다 동일 변환.
@@ -209,6 +212,7 @@ export function useTransformCommit({
                 // 삭제 실패 시 안내 배너를 띄우지 않는다 — 실제로 지워지지
                 // 않았는데 "제거되었습니다" 라고 말하면 안 되므로. 로그만 남김.
                 console.error("재설계 서포트 무효화 삭제 실패 (B-1):", e);
+                reportSaveFailure("재설계 서포트 정리", e);
               }
             })()
           : Promise.resolve();
@@ -323,6 +327,7 @@ export function useTransformCommit({
         await settleAll(
           "transform:commit",
           newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
+          "서포트 위치 저장",
         );
         // 변환된 부모 Bridge 들의 새 path 로 부착된 child 들도 따라옴.
         for (const f of follows) {
@@ -369,7 +374,7 @@ export function useTransformCommit({
               sub.curveControlPoints.length,
             );
           }
-          await patchSupport(sub.id, updates);
+          await withSaveReport("브릿지 위치 저장", patchSupport(sub.id, updates));
         }
       })();
 
@@ -388,6 +393,7 @@ export function useTransformCommit({
           await settleAll(
             "transform:undo",
             oldStates.map(({ id: sid, patch }) => patchSupport(sid, patch)),
+            "서포트 위치 되돌리기",
           );
           // B-1: 무효화로 삭제됐던 재설계 서포트를 원본 그대로 복원. transform
           //   되돌림과 같은 entry 라 Ctrl+Z 한 번으로 둘 다 돌아온다.
@@ -403,6 +409,7 @@ export function useTransformCommit({
           await settleAll(
             "transform:redo",
             newPatches.map(({ id: sid, patch }) => patchSupport(sid, patch)),
+            "서포트 위치 다시 적용",
           );
           // B-1: 다시 변형했으므로 재설계 서포트도 다시 삭제 (단일 tx).
           if (invalidated.length > 0) {

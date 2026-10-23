@@ -12,6 +12,7 @@ import {
   straightCps,
 } from "../../../utils/bridge-path";
 import { proportionalMoveCps } from "../utils/support-transform";
+import { withSaveReport } from "../utils/save-failure";
 import type { PatchSupport } from "./types";
 
 type Vec3 = [number, number, number];
@@ -56,7 +57,7 @@ export function useBridgeControlPoints({
       // 자동 우회 호출 X — 사용자가 끈 위치를 그대로 보존.
       // 모델 안 침투 시 사용자가 직접 변곡점을 다시 조정한다.
 
-      await patchSupport(supportId, { curveControlPoints: newCps });
+      await withSaveReport("브릿지 변곡점 이동", patchSupport(supportId, { curveControlPoints: newCps }));
       await followAttachedChildren(
         supportId,
         target.base,
@@ -117,7 +118,7 @@ export function useBridgeControlPoints({
         contact: newContact,
       };
       if (newCps) patch.curveControlPoints = newCps;
-      await patchSupport(supportId, patch);
+      await withSaveReport("브릿지 끝점 이동", patchSupport(supportId, patch));
       await followAttachedChildren(supportId, newBase, newCps, newContact);
 
       useUndoStore.getState().push({
@@ -157,7 +158,7 @@ export function useBridgeControlPoints({
         target.contact,
         t,
       );
-      await patchSupport(supportId, { curveControlPoints: newCps });
+      await withSaveReport("브릿지 변곡점 추가", patchSupport(supportId, { curveControlPoints: newCps }));
       await followAttachedChildren(
         supportId,
         target.base,
@@ -191,7 +192,7 @@ export function useBridgeControlPoints({
       const oldCps = target.curveControlPoints;
       if (idx < 0 || idx >= oldCps.length) return;
       const newCps = removeControlPoint(oldCps, idx);
-      await patchSupport(supportId, { curveControlPoints: newCps });
+      await withSaveReport("브릿지 변곡점 삭제", patchSupport(supportId, { curveControlPoints: newCps }));
       await followAttachedChildren(
         supportId,
         target.base,
@@ -223,7 +224,7 @@ export function useBridgeControlPoints({
     const oldCps = target.curveControlPoints;
     // 기존 개수 유지하여 직선 reset (cps 길이 보존).
     const newCps = straightCps(target.base, target.contact, oldCps.length);
-    await patchSupport(selectedSupportId, { curveControlPoints: newCps });
+    await withSaveReport("브릿지 곡선 직선 복원", patchSupport(selectedSupportId, { curveControlPoints: newCps }));
     // attached child 도 follow.
     await followAttachedChildren(
       selectedSupportId,

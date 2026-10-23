@@ -39,6 +39,7 @@ import {
 import { useLegacySupportMigration } from "./viewer/hooks/useLegacySupportMigration";
 import { useEscapeDeselect } from "./viewer/hooks/useEscapeDeselect";
 import { NL } from "./viewer/utils/text";
+import { withSaveReport } from "./viewer/utils/save-failure";
 import ViewerHeader from "./viewer/components/ViewerHeader";
 import SliceModeHeader from "./viewer/components/SliceModeHeader";
 import SliceLayerRail from "./viewer/components/SliceLayerRail";
@@ -409,7 +410,7 @@ const ViewerV2Page: React.FC = () => {
   }
 
   async function handleRemove(id: string) {
-    await removeStlFile(id);
+    await withSaveReport("모델 삭제", removeStlFile(id));
     // STL 삭제 시 DB cascade 로 supports 도 사라지므로 state sync.
     await refreshSupports();
     setSelectedIds((prev) => {
