@@ -10,7 +10,8 @@
 //   (1) 추출기 동치 — 파일 A·B·C(gen-task0-dryrun 과 같은 입력, 앱 코어 runTask0GcodeExport)·파일 D(2재료)에서
 //       extractTask0Moves 의 deposit 만 거른 결과 = task0-coverage extractTask0DepositSegments (JSON 글자 단위 같음),
 //       travel 수 = 층 블록의 G0/G1 X·Y 줄 수 − deposit 수, 층 수 = task0LayerCount, 타입 배열판(buildTask0PathPreview) = 객체판(float32).
-//       고정 sha(verify-task0-export·verify-task0-dual-export 와 같은 값)로 산출물 바이트가 그대로임도 함께 본다.
+//       산출물 바이트 고정 sha 는 이 스크립트가 들고 있지 않는다 — 단일 소스는 verify-task0-export·verify-task0-dual-export
+//       (사본을 두면 writer 가 의도적으로 바뀌는 PR 과 엇갈려 깨진다 — 10/23 §32 PR 시험 병합에서 실제로 발생).
 //   (2) 좌표 일치 — 큐브 단면(world 폴리곤)을 rasterizePolygons 로 그린 마스크의 흰 영역 경계 ≟ bedToSectionPx(worldToBed(꼭짓점)):
 //       세로 ±0.5 px(래스터가 행 중심 표본), 가로 ±1 px(래스터가 가로 구간을 floor/ceil 로 넓게 칠함). 표본 점 안/밖 판정,
 //       파일 A 도포 끝점이 전부 흰 픽셀 위. 플레이트 150×85 · 512×288(앱) · 300×300 · 400×100(종횡비 다른 px) 셋.
@@ -32,7 +33,6 @@
 //   실행: npx tsx scripts/verify-task0-path-preview.mjs
 //   ⚠️ plain node 로 돌리면 확장자 없는 TS import 를 못 풀어 오탐이 난다(CLAUDE.md).
 
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -71,13 +71,6 @@ import { fixtureCube10, fixtureFileB, fixtureGapPlates, meshesTopY } from "./ver
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const V2 = path.resolve(SCRIPT_DIR, "..", "src", "features", "v2");
 
-/** 파일 A·C·B·D sha256 — verify-task0-export.mjs EXPECTED_SHA · verify-task0-dual-export.mjs FILE_D_SHA 와 같은 값 */
-const EXPECTED_SHA = {
-  cube10: "dde08ea97b2e144dabc842d1257980bdd4d51fa59b7bf7453c463e5f264928b9",
-  "gap-plates": "ab3f8d7431386b5deaa3a4f44df09dfe1b0b1f0ac82303423cc63ccac76d7859",
-  "file-b": "b1e65f70c96a3e5cee17a97c27d8b2bb029faa8e82791bca2ef09361098a8339",
-  "pillars-plate": "53730df71c6a7d984615962e9228c9a6a54636e84941d6b69310334f9ee28faa",
-};
 const LH = 0.1;
 const W_DEP = TASK0_DEFAULTS.depositWidthMm;
 const WRITER = task0WriterOptionsForProfile(TASK0_BUILT_IN_PROFILE);
@@ -98,7 +91,6 @@ function assert(cond, msg) {
 function control(label, passedWithMutant) {
   assert(!passedWithMutant, `대조군 ${label} → 검사가 실패한다(변조를 잡는다)`);
 }
-const sha256 = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const read = (...p) => fs.readFileSync(path.join(V2, ...p), "utf8");
 
 // ── 픽스처 → run.gcode (앱 코어) ─────────────────────────────────────────
@@ -202,7 +194,7 @@ function toolChangeParkCheck(gcode, ext) {
 function sectionExtract(files) {
   console.log("\n(1) 추출기 동치 — 파일 A·B·C·D");
   for (const [name, f] of Object.entries(files)) {
-    assert(f.gcode !== null && sha256(f.gcode) === EXPECTED_SHA[name], `${name}: run.gcode sha256 = 고정값 (산출물 바이트 그대로)`);
+    assert(f.gcode !== null, `${name}: run.gcode 생성됨`);
     if (f.gcode === null) continue;
     const ext = extractTask0Moves(f.gcode);
     const deps = ext.layers.reduce((s, l) => s + l.filter((m) => m.kind === "deposit").length, 0);
