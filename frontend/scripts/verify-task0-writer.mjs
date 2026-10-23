@@ -388,6 +388,9 @@ export function buildModel(gcode, park = [TASK0_DEFAULTS.parkXMm, TASK0_DEFAULTS
   for (const layer of layers) {
     let pos = [park[0], park[1]];
     for (const op of layer.ops) {
+      // (Z1-d) T 줄 = 툴 전환 — Task0 매크로가 리프트·파킹 (0,0) 후 다음 줄을 실행(규격 v0.3.5 §6). 그래서 전환 직후 첫 트래블은
+      //   파킹에서 출발한 것으로 본다(c4·c4b·통계 재측정 모두). 단일 재료(층 안 T 없음)는 영향 없음
+      if (op.cmd === "T0" || op.cmd === "T1") pos = [park[0], park[1]];
       if (op.kind === "travel" || op.kind === "deposit") {
         const to = [op.args.X ?? pos[0], op.args.Y ?? pos[1]];
         op.from = pos;

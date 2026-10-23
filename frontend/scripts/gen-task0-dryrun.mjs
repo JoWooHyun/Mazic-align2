@@ -1,7 +1,8 @@
 // Task0 드라이런 파일 생성 (로드맵 0절 2주차 PR-1 Z1-a2·Z1-b2·Z1-c — 10/7~8 Task0 프린터 드라이런용, D1a 파일 D 2재료).
 //
-//   만드는 것 (writer = src/features/v2/utils/task0/task0-gcode-writer.ts, 규격서 v0.3.4 — Z1-c: 모든 툴 리트랙트 상태로
-//   시작, 툴의 첫 도포 앞에도 E+r, 층마다 E+r 수 = E-r 수):
+//   만드는 것 (writer = src/features/v2/utils/task0/task0-gcode-writer.ts, 규격서 v0.3.5 @ 481f416 — Z1-c(v0.3.4): 모든 툴 리트랙트
+//   상태로 시작, 툴의 첫 도포 앞에도 E+r, 층마다 E+r 수 = E-r 수 / Z1-d(v0.3.5): 파일 D 의 T 전환 직후 첫 트래블은 파킹 (0,0) 출발,
+//   갇힌 층만 B → A(파일 D 에는 없음), 툴 전환 6 s):
 //     파일 A  task0_A_cube10_lh0.1.gcode   10 mm 정육면체, 출력 가능 영역 가운데(베드 (80, 47.5) = world x 5, z 5),
 //                                          바닥 Y 0, lh 0.1 → 100층
 //     파일 B  task0_B_thin_5L_lh0.1.gcode  (Z1-b2) 한 층에 세 형상 — ① 10×10 판 + 가운데 3×3 구멍 ② 얇은 링(반경 4,
@@ -31,7 +32,7 @@
 //     리트랙트 수·E 합·줄 수·sha256·채움 조각/점/우회 트래블 수·드라이런 예상 시간)와 커버리지 층별 최악값 요약을 출력한다.
 //     드라이런 예상 시간 = XY 이동 길이(도포 + 트래블) ÷ 10 mm/s(드라이런 F600) + E 단독 줄 |E| ÷ 10 mm/s
 //       + 도포한 층 × 23 s(파킹 3 + 블레이드 15 + LED 3 + 오버헤드 2 — 협의 §24-3 추정). Z 이동은 뺀다(층당 1초 미만).
-//       (D) + 툴 전환 수 × 0.5 s (규격 §13 toolChangeSec 잠정 — 퍼지 도입 시 5~15 s). 실출력 추정(manifest estimate 식,
+//       (D) + 툴 전환 수 × 6 s (규격 v0.3.5 §13 toolChangeSec 잠정 — 리프트·파킹 왕복·오프셋, 퍼지 도입 시 +5~15 s). 실출력 추정(manifest estimate 식,
 //       task0-jobzip buildTask0Estimate — 노광은 기본값)도 함께 찍는다.
 //   ⚠️ plain node 로 돌리면 확장자 없는 TS import 를 못 풀어 오탐이 난다(CLAUDE.md).
 
@@ -116,7 +117,7 @@ function dryrunSeconds(result) {
 function main() {
   const { out } = parseArgs(process.argv.slice(2));
   const params = resolveTask0WriterParams();
-  console.log("Task0 드라이런 파일 생성 (Z1-a2·Z1-b2·Z1-c·D1a, 규격서 v0.3.4)");
+  console.log("Task0 드라이런 파일 생성 (Z1-a2·Z1-b2·Z1-c·D1a·Z1-d, 규격서 v0.3.5)");
   console.log(
     `  설정: w ${params.depositWidthMm} mm, K ${params.syringeKMm3PerMm} mm³/mm, 과충전 ${params.overfill}, ` +
       `r ${params.retractMm} mm, 리트랙트 생략 < ${params.retractMinTravelMm} mm, ` +

@@ -12,7 +12,8 @@
 //
 //     ④ 닫힌 고리 lh 0.05 — verify-task0-dual (D) 와 같은 판정(closedRingChecks — 전 층 실패 보고, 교차 출력 0, B 커버리지 FAIL)
 //   실행: npx tsx scripts/bench-task0-dual.mjs [①~④ 중 고를 번호 1·2·3·4, 기본 전부] [--flip]
-//     --flip = dualMaterial.flipOrderWhenStuck (규격 §6 【미정】 "갇힌 층은 B → A" — 기본 끔 옵션, 켜면 얼마나 줄어드는지 측정용)
+//     --flip = dualMaterial.flipOrderWhenStuck 켬 (규격 v0.3.5 §6 "갇힌 층만 B → A" 잠정 허용 — Z1-d 부터 writer 기본값이 켬.
+//              이 벤치는 예전 기본(끔)과 비교하려고 옵션을 명시해 넘긴다: --flip 없으면 false = 예전 기본, 있으면 true = 지금 기본)
 //   ⚠️ plain node 로 돌리면 확장자 없는 TS import 를 못 풀어 오탐이 난다(CLAUDE.md).
 
 import path from "node:path";

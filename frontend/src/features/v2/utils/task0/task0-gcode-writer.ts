@@ -1,8 +1,9 @@
 /**
- * Task0 G-code writer — B안 줄 채움 (규격서 v0.3.4 §3·§4·§5·§7·§8·§10)
+ * Task0 G-code writer — B안 줄 채움 (규격서 v0.3.5 §3·§4·§5·§6·§7·§8·§10)
  *
- * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.4 @ 커밋 a4ebc6c. 협의 §25~§26·§30
- *   (v0.3.4 = Z1-c: 시작 시 프라이밍 후 E-r — 모든 툴이 리트랙트 상태로 시작, 툴의 첫 도포 앞에도 E+r).
+ * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.5 @ 커밋 481f416 (Z1-d). 협의 §25~§26·§30·§32
+ *   (v0.3.4 = Z1-c: 시작 시 프라이밍 후 E-r — 모든 툴이 리트랙트 상태로 시작, 툴의 첫 도포 앞에도 E+r.
+ *    v0.3.5 = Z1-d: T 전환 직후 첫 트래블은 파킹 (0,0) 에서 출발(§6 잠정안), 갇힌 층만 B → A 잠정 허용(§6) — 아래 "2재료").
  * 설계: `docs/계획_Z1_task0출력_20261002.md` S1~S9 (Z1-a2). 기존 marlin G-code(`utils/gcode/`)와는 별개 —
  *   그쪽 바이트는 이 파일과 무관하게 그대로다(S1).
  * 출력 검사: `utils/task0/task0-gcode-parser.ts`(Task0 파서 이식) + `scripts/verify-task0-writer.mjs`.
@@ -23,7 +24,8 @@
  *      위쪽(+Y) 단면을 택한다. 그 차이로 생기는 넘침·미도포는 w/2 띠 안이라 무해(Z1-a2 검수에서 확인).
  *      맞닿은 구간(끝 = 다음 시작)은 하나로 잇는다(래스터에서는 연속 픽셀이므로).
  *   5. 구간 양끝을 w/2 씩 안쪽으로 → 1 µm 격자에 맞춘 뒤 길이 ≤ 0 이면 버림(얇은 부분은 Z1-b, 개수는 통계).
- *   6. 행 순서 +Y 단조. 행 안 방향은 서펜타인 — 도포한 행 기준으로 첫 행 +X, 다음 행 −X, … 번갈아.
+ *   6. 행 순서 +Y 단조(v0.3.5 §7-1: 폭 w 띠 단위 — 행 하나가 띠 하나). 행 안 방향은 서펜타인 — 도포한 행 기준으로
+ *      첫 행 +X, 다음 행 −X, … 번갈아.
  *      한 행의 여러 구간은 진행 방향 순서.
  *   7. 이동: 층 첫 트래블(파킹 → 첫 도포점) = 직선 1줄. 같은 행 안 구간 사이 = 행 선을 따라 직선.
  *      행 사이 = L자(먼저 Y 로 다음 행, 그다음 X 로 다음 구간 시작) — 다음 행 선은 아직 안 칠한 곳이라
@@ -97,7 +99,14 @@
  *     를 본다(A 가 B 를 완전히 둘러싼 층 등 — 앱 내보내기는 경고로 알리고 낸다). **교차를 성공으로 내지 않는다**(모든 트래블은
  *     c4 + c4b 엄격 판정 통과). 단일 재료도 같은 변형을 쓴다(retryStuckLayers — 위 "얇은 부분 채움", 후보 순서·번호는 다르다).
  *   - 얇은 부분 채움의 점 도포는 다른 재료(뺄 단면) 픽셀 안으로 끝이 들어가지 않게 줄인다(task0-thin-fill — B 우선).
- *   - flipOrderWhenStuck(기본 끔): 변형으로도 막힌 층만 B → A 로 다시 계획(규격 §6 【미정】 "갇힌 층은 B → A" — 측정용).
+ *   - flipOrderWhenStuck(기본 켬 — Z1-d): 변형으로도 막힌 층만 B → A 로 다시 계획(규격 v0.3.5 §6 "B 가 A 안에 갇힌 층만
+ *     B → A" 잠정 허용 — 실레진 때 경계 오염 확인 후 확정). 조건 ① 층 첫 툴 ≠ 직전 층 마지막 툴이면 블록 안 T 명시 — 아래 출력부가
+ *     파일 전체 툴 상태와 비교해 층 머리에 T 를 낸다. 조건 ② 뒤집은 층에서도 A 노즐이 칠한 B 를 스치지 않음 — 계획은 모든 툴의
+ *     칠한 선분을 paintedBefore 로 받으므로 c4·c4b 를 지키고, d(§7-2)는 내보내기 검사기(task0-travel-check)가 경고로 본다.
+ *   - 전환 트래블 (v0.3.5 §6 잠정안 — Z1-d): T 매크로가 Z 리프트 → 파킹 (0,0) → 오프셋 → Z 복원을 한 뒤 다음 줄을 실행하므로
+ *     **전환 직후 첫 트래블은 (0,0) 에서 출발**한다. 그래서 층 안 두 번째 패스의 계획 시작점 = 파킹이고(planLayer), 출력부는
+ *     T 줄 뒤 위치를 파킹으로 되돌려 트래블 다리·길이(통계 travelMm → estimate)를 (0,0) 부터 낸다. 전환 전 끝점 → 첫 도포점 직선은
+ *     검사하지 않는다(규격). options.switchTravelFromPark=false(대조군 전용)면 예전 동작(앞 패스 끝점 출발).
  *   - 툴 상태: 리트랙트 여부를 **툴마다** 둔다. 모든 툴 리트랙트로 시작(§10), 층 블록 끝에 모든 툴 리트랙트, 툴별 E 순변화
  *     층마다 0. 툴 전환 = (지금 툴이 언리트랙트면 길이와 무관하게) E−r → `T1`(또는 `T0`) → 트래블 → E+r → 도포(§5 전환 순서).
  *     층 첫 패스의 툴이 직전 층 끝 툴과 다르면 층 머리(G1 Z) 다음에 T 줄 — 그때는 이미 모두 리트랙트라 E−r 없음.
@@ -150,6 +159,11 @@ export interface Task0WriterOptions {
    */
   retryStuckLayers?: boolean;
   /**
+   * (2재료) T 전환 직후 첫 트래블을 파킹 (0,0) 에서 출발로 계획·출력 (기본 true — 규격 v0.3.5 §6, 머리 주석 "2재료" 전환 트래블).
+   * false 는 대조군 전용 — 예전 동작(앞 패스 끝점에서 출발). 단일 재료에는 영향 없음(층 안 T 전환이 없다).
+   */
+  switchTravelFromPark?: boolean;
+  /**
    * 층 진행 콜백 (Z2 — 앱 워커 진행률). 층 하나를 다 쓸 때마다 (끝낸 층 수, 전체 층 수) 로 부른다.
    * 출력 바이트·통계에는 영향이 없다(읽기만 하는 알림).
    */
@@ -179,8 +193,8 @@ export interface Task0DualMaterialOptions {
   /** 부스러기 제거 최소 면적 (mm², 계획 §5-3) — 자리만. D1a 는 0(끔)만 받는다 */
   minFragmentAreaMm2?: number;
   /**
-   * 기본 순서·변형 계획으로도 경로 없는 항목이 남는 층만 순서를 뒤집어(B → A) 다시 계획 (기본 false).
-   * 규격 §6 【미정】 "B 가 A 안에 갇힌 층은 B → A" — Task0 판단 전이라 기본 끔, 켜면 얼마나 줄어드는지 측정용.
+   * 기본 순서·변형 계획으로도 경로 없는 항목이 남는 층만 순서를 뒤집어(B → A) 다시 계획 (기본 true — Z1-d).
+   * 규격 v0.3.5 §6 "B 가 A 안에 갇힌 층만 B → A" 잠정 허용(담당자 10/8 — 실레진 때 확정). false 는 대조군·측정용(예전 기본).
    */
   flipOrderWhenStuck?: boolean;
 }
@@ -343,8 +357,8 @@ const SPAN_JOIN_EPS = 1e-9;
 /** 트래블 리트랙트 판정 여유 (mm) — 1.0 mm 가 부동소수로 0.9999… 가 돼도 리트랙트 쪽으로 */
 const TRAVEL_EPS = 1e-9;
 
-/** START 앞 메타 첫 줄 — 리트랙트 규칙 판(spec)을 함께 적는다 (Z1-c: v0.3.4 첫 도포 앞 E+r) */
-export const TASK0_WRITER_ID = 'MazicAlign v2 task0-gcode-writer (Z1-c, spec v0.3.4)';
+/** START 앞 메타 첫 줄 — 규칙 판(spec)을 함께 적는다 (Z1-c: v0.3.4 첫 도포 앞 E+r / Z1-d: v0.3.5 전환 트래블 (0,0) 출발) */
+export const TASK0_WRITER_ID = 'MazicAlign v2 task0-gcode-writer (Z1-d, spec v0.3.5)';
 
 // ==================== 설정 ====================
 
@@ -788,7 +802,9 @@ interface LayerPlan {
 }
 
 /**
- * 순서대로 패스를 계획 — 처음 도포하는 패스는 first 변형, 그 뒤 패스는 later 변형(앞 패스가 칠한 선분·끝 위치를 받아).
+ * 순서대로 패스를 계획 — 처음 도포하는 패스는 first 변형, 그 뒤 패스는 later 변형(앞 패스가 칠한 선분을 받아).
+ * 뒤 패스의 시작점 = 파킹(switchFromPark — 규격 v0.3.5 §6: 뒤 패스는 늘 T 전환 뒤라 매크로가 (0,0) 에 파킹),
+ * switchFromPark=false(대조군)면 예전처럼 앞 패스 끝 위치.
  * retryOnStuck 은 패스마다 planPass 로 그대로 (2재료는 늘 true, 단일 재료는 기본 계획 false·재시도 후보 true).
  */
 function planLayer(
@@ -801,6 +817,7 @@ function planLayer(
   thinFillOn: boolean,
   detour: boolean,
   retryOnStuck: boolean,
+  switchFromPark: boolean,
 ): LayerPlan {
   const plans: (PassPlan | null)[] = [];
   const painted: Task0DepositSegment[] = [];
@@ -817,7 +834,8 @@ function planLayer(
     const traced = tracePass(pass, plan, pos);
     if (traced.segs.length > 0) {
       painted.push(...traced.segs);
-      pos = traced.end;
+      // 다음 패스는 다른 툴 — T 전환 뒤 파킹에서 출발 (대조군은 예전처럼 이 패스 끝에서)
+      pos = switchFromPark ? parkUm : traced.end;
     }
   }
   return { passes, plans, unreachable, failed };
@@ -856,7 +874,7 @@ function resolveDualMaterial(
     order,
     subtractOverlap: opt.subtractOverlap ?? true,
     perToolRetract: opt.perToolRetract ?? true,
-    flipOrderWhenStuck: opt.flipOrderWhenStuck ?? false,
+    flipOrderWhenStuck: opt.flipOrderWhenStuck ?? true,
   };
 }
 
@@ -891,6 +909,7 @@ export function generateTask0Gcode(
   const parkYUm = toUm(params.parkYMm);
   const thinFillOn = options.thinFill ?? true;
   const detourOn = options.thinFillDetour ?? true;
+  const switchFromPark = options.switchTravelFromPark ?? true;
 
   const layerCount = task0LayerCount(topY, lh);
   const zDecimals = layerNumberDecimals(lh);
@@ -1057,7 +1076,7 @@ export function generateTask0Gcode(
     //      2재료는 머리 주석 "2재료" 의 층 계획, 단일 재료는 retryStuckLayers(기본 켬)일 때 머리 주석 "얇은 부분 채움" 의 후보 순서
     const park: [number, number] = [parkXUm, parkYUm];
     const planOf = (seq: LayerPass[], first: PassVariant | null, later: PassVariant | null, retryOnStuck: boolean): LayerPlan =>
-      planLayer(seq, park, first, later, w, eRatePerMm, thinFillOn, detourOn, retryOnStuck);
+      planLayer(seq, park, first, later, w, eRatePerMm, thinFillOn, detourOn, retryOnStuck, switchFromPark);
     // 기본 계획 — 단일 재료는 retryOnStuck 없이(통과 층 바이트 불변), 2재료는 지금처럼 켠다
     let chosen = planOf(passes, null, null, dual !== null);
     const ok = (pl: LayerPlan): boolean => pl.unreachable === 0 && !pl.failed;
@@ -1164,6 +1183,12 @@ export function generateTask0Gcode(
         body.push(`T${pass.tool}`);
         tool = pass.tool;
         stat.toolChanges++;
+        // 규격 v0.3.5 §6 — 매크로가 노즐을 파킹 (0,0) 에 두고 다음 줄을 실행 → 첫 트래블은 파킹에서 (계획도 그렇게 세웠다).
+        //   층 머리 T 면 이미 파킹 위치라 그대로
+        if (switchFromPark) {
+          posX = parkXUm;
+          posY = parkYUm;
+        }
       }
 
       if (plan !== null && plan.route !== null) {
@@ -1263,7 +1288,7 @@ export function generateTask0Gcode(
   // START 앞 메타 — 단독 주석 줄 (Task0 는 START 이전을 무시)
   const header: string[] = [
     `; ${TASK0_WRITER_ID}`,
-    '; Task0 G-code spec v0.3.4 (B pattern: serpentine 0 deg row fill, L moves between rows)',
+    '; Task0 G-code spec v0.3.5 (B pattern: serpentine 0 deg row fill, L moves between rows)',
     `; layerCount: ${layerCount}`,
     `; layerHeightMm: ${heightText}`,
     `; topYMm: ${metaNum(topY)}`,

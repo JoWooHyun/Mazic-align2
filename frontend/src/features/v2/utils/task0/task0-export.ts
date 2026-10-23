@@ -1,8 +1,9 @@
 /**
  * Task0 내보내기 코어 (Z2 run.gcode · Z3 job.zip) — 앱 워커와 검증 스크립트가 **같은 함수**를 부른다
  *
- * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.4 @ 커밋 a4ebc6c (§3·§5·§11·§12·§13 — 파서 v0.2.1 03c0519),
- *   협의 §26-1·§30.
+ * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.5 @ 커밋 481f416 (§3·§5·§6·§7·§11·§12·§13 — 파서 v0.2.1
+ *   03c0519 그대로), 협의 §26-1·§30·§32. (Z1-d: v0.3.4 a4ebc6c → v0.3.5 — 층 수 상한 9999·트래블 여유 거리 d 경고·
+ *   toolChangeSec 6·갇힌 층 B → A 기본 켬)
  * 설계: `docs/계획_Z1_task0출력_20261002.md` §4·§4-2 (Z2 인계 — 워커 필수, 채움 실패면 막고 안내 → 2026-10-15 부터 경고로 바꿈,
  *   아래 "막음 / 경고" / Z3 인계 — 마스크는 투사
  *   프레임, writer 와 같은 meshes·topY, 층당 PNG 약 20 ms 라 워커·진행 표시, float32 topY 층 수 함정).
@@ -16,6 +17,7 @@
  *   0. topY 를 1 µm 로 정규화 — task0-frame task0NormalizeTopY (float32 최고점 함정. **이 입구 한 곳**이라 writer·마스크·
  *      manifest 가 같은 값을 받는다. 정확한 topY(파일 A·B·C)는 그대로).
  *   1. 층이 없으면(메시 없음·topY ≤ 0) 막음.
+ *   1-a. 층 수 > 9999 면 막음(Z1-d) — Task0 거부 조건 4(PNG 이름 4자리 고정·상한 9999층, 규격 v0.3.5 §11). writer 전에.
  *   1-b. **출력 가능 영역** — 메시(모델·서포트) 꼭짓점 전부의 베드 bbox(writer 와 같은 worldToBed·베드 값)가 영역
  *      (프로파일 printable, 빠지면 TASK0_DEFAULTS X 10~150 × Y 10~85 — 규격 §1, 경계 포함·허용 1 µm) 밖이면 writer 를
  *      돌리지 않고 막음. Task0 에는 "일부만 잘라 출력" 이 없다 — 투사 밖은 노광되지 않고(writer 커버리지 검사가 엉뚱하게
@@ -28,6 +30,11 @@
  *      dryrun(E 제거). 경고·오류가 하나라도 있거나 층 수가 writer 와 다르면 막음("내보낼 파일은 경고 0 인 것만").
  *      실출력(job.zip) 기준은 print 모드이고, 11월 데모는 Task0 드라이런 탭에서 돌기 때문에 dryrun 두 모드도
  *      함께 본다(writer 검증 c1 과 같은 세 모드).
+ *   4-c. (Z1-d, 단일·2재료 공통 — 앞 단계에 막은 이유가 없을 때만) 트래블 여유 거리 d 검사(task0-travel-check
+ *      checkTask0TravelClearance — 규격 v0.3.5 §7-2, d = TASK0_DEFAULTS.travelClearanceMm 잠정 w). 위반은 **경고 1줄**
+ *      (Task0 가 거부하지 않는 품질 문제 — 규칙 10)과 경고 층. 수치는 요약 travelClearance 에도 남긴다.
+ *      ★ 리드 결정 분기: TRAVEL_CLEARANCE_AS_WARNING(지금 true = 경고). false 로 바꾸면 경고·경고 층에 넣지 않고 요약 수치만
+ *      남긴다(화면에 회색 정보 줄로 보이는 것은 SliceSidePanel 이 summary.travelClearance 를 읽게 하는 별도 작업).
  *   5. 막은 이유가 없으면 gcode + 요약(층 수·빈 층·채움 층·길이·예상 시간 — task0-jobzip buildTask0Estimate 재사용)
  *      + warnings(막지 않은 알림)·failedLayers(경고 층).
  *   막을 때는 gcode 를 돌려주지 않는다(null) — 화면에 보일 이유 문장(한국어)만 돌려준다.
@@ -37,8 +44,9 @@
  *   | 막음 (ok false, 파일 없음 — issues)                  | 경고 (ok true, 파일 냄 — warnings)                           |
  *   |------------------------------------------------------|--------------------------------------------------------------|
  *   | 1   층 없음                                          | 3   얇은 부분 채움 실패 (단일 재료)                          |
- *   | 1-b 출력 가능 영역 밖 (메시, writer 전)              | 3   2재료 갇힌 B·맞물림·얇은 부분 채움 실패                  |
- *   | 1-c 2재료 슬롯 수·값                                 | 4-b 2재료 커버리지 실패·B 우선 위반·트래블 스침              |
+ *   | 1-a 층 수 > 9999 (거부 조건 4)                       | 3   2재료 갇힌 B·맞물림·얇은 부분 채움 실패                  |
+ *   | 1-b 출력 가능 영역 밖 (메시, writer 전)              | 4-b 2재료 커버리지 실패·B 우선 위반·트래블 스침              |
+ *   | 1-c 2재료 슬롯 수·값                                 | 4-c 트래블 여유 거리 d 위반 (단일·2재료)                     |
  *   | 1-b 사후 G-code XY 좌표가 영역 밖 (노즐 범위)        | 7   도포 영역 ≠ 노광 영역 (빈 층 집합 불일치)                |
  *   | 4   Task0 파서 경고·오류·층 수 불일치                |                                                              |
  *   | 4-b 2재료 G-code 층 수 ≠ 기대·프리앰블 도포           |                                                              |
@@ -61,20 +69,22 @@
  *      표본 두 장(첫 도포 층·첫 빈 층)만 풀어 흰 픽셀 수를 맞춰 본다. manifest estimate = 요약 estimate(화면 = 파일)도 본다.
  *   진행 = ('gcode', 층 n/N) → ('png', 층 n/N) → ('verify', 0/1 → 1/1).
  *
- * 2재료 (D1b — 규격서 v0.3.4 §5·§6·§11, 계획 `docs/계획_Z1_task0출력_20261002.md` §4-5 D1b 인계,
+ * 2재료 (D1b — 규격서 v0.3.4 §5·§6·§11 → Z1-d v0.3.5 §6, 계획 `docs/계획_Z1_task0출력_20261002.md` §4-5 D1b 인계,
  *   `docs/계획_하이브리드슬라이서설정_20260928.md` §5-2·§5-3·§6 결정 5):
  *   입력 materialSlots(메시마다 A/B — 앱은 task0-material task0ExportMaterialSlots: 서포트 = A, STL = 파일의 materialSlot·기본 B)가
  *   있을 때만. 없으면 위 단일 재료 경로를 한 글자도 바꾸지 않는다(파일 A·B·C·견본 바이트 그대로).
  *   1-c. 슬롯 수 = 메시 수, 값은 A/B — 아니면 막음(writer 의 RangeError 대신 이유 문장).
  *   2.  writer 옵션에 dualMaterial { …writer.dualMaterial, slots } (D1a — 층 안 T0 → T1 2패스, 툴별 리트랙트, B 우선 겹침).
- *   3.  writer 'failed' 층은 원인을 갈라 경고로 적는다 — 재료 B 가 칠한 A 에 갇힘(층 순서 B → A 는 규격 §6 【미정】 — Task0 답 대기,
- *       협의 §31-4) / 칠한 레진을 가로질러야 하는 항목 / 얇은 부분 채움 실패 (dualFailedLayerIssues).
+ *   3.  writer 'failed' 층은 원인을 갈라 경고로 적는다 — 재료 B 가 칠한 A 에 갇힘(Z1-d: writer 가 그 층만 B → A 로 뒤집어
+ *       보고도 — 규격 v0.3.5 §6 잠정 허용 — 길이 없는 층) / 칠한 레진을 가로질러야 하는 항목 / 얇은 부분 채움 실패 (dualFailedLayerIssues).
  *       (D2) 판정은 writer 층 통계의 툴 패스별 경로 없는 항목 수(Task0LayerStats.unreachableByTool)로 — 예전 휴리스틱("T1 도포 0")은
  *       B 가 일부만 갇힌 층(갇히지 않은 B 는 칠함)을 "맞물림" 으로 잘못 읽었다.
  *   4-b. 자기 검사(앞 단계에 막은 이유가 없을 때만 — 경고는 세지 않음): task0-coverage checkTask0DualGcodeCoverage(재료별
- *       (a)(b)(c)(d) — A 영역 = PA − PB, 넘침은 합집합, B 우선) + 트래블 엄격 판정(T 줄을 넘는 전환 트래블 포함 — task0-fill-route
- *       task0TravelContactOk, verify c4b 정의). 층 수·프리앰블은 막음, 커버리지·B 우선·트래블 스침은 경고.
- *   5.  요약에 dual(툴 전환 수·툴별 도포 길이·슬롯별 메시 수·막지 않는 알림), estimate 툴 전환 시간 = 툴 전환 수 × 0.5 s(규격 §13).
+ *       (a)(b)(c)(d) — A 영역 = PA − PB, 넘침은 합집합, B 우선) + 트래블 엄격 판정(task0-travel-check checkTask0TravelContact —
+ *       verify c4b 정의, Z1-d: T 줄 뒤 경로는 파킹 (0,0) 에서 출발 — 규격 v0.3.5 §6). 층 수·프리앰블은 막음, 커버리지·B 우선·
+ *       트래블 스침은 경고. (d 검사는 단일 재료와 같이 4-c)
+ *   5.  요약에 dual(툴 전환 수·툴별 도포 길이·슬롯별 메시 수·막지 않는 알림), estimate 툴 전환 시간 = 툴 전환 수 ×
+ *       TASK0_TIME_CONSTANTS.toolChangeSec(v0.3.5 §13 — 6 s).
  *   7.  빈 층 대조는 그대로 — G-code 빈 층(두 툴 모두 XY 이동 없음)과 합집합 마스크(모든 메시 — 층 PNG 는 PA ∪ PB 한 장)를 맞댄다.
  *   8.  manifest materials 2개(A = T0 TASK0_DEFAULT_MATERIAL_NAME, B = T1 TASK0_DEFAULT_MATERIAL_NAME_B — D2 부터 입력 materialName·
  *       materialNameB 로 바꿀 수 있다, 정규화는 task0-material normalizeTask0MaterialName 한 곳)·dualMaterial true·
@@ -84,7 +94,6 @@
  * 순수 TS — DOM/Node/Babylon 의존 없음(Web Worker·tsx 공통 — performance.now 만).
  */
 import { checkTask0DualGcodeCoverage, type Task0DualCoverageReport } from './task0-coverage';
-import { task0TravelContactOk, type Task0UmSegment } from './task0-fill-route';
 import {
   TASK0_DEFAULTS,
   task0LayerCount,
@@ -105,6 +114,7 @@ import {
   TASK0_DEFAULT_MATERIAL_NAME_B,
   TASK0_JOB_CONDITION_LABELS,
   TASK0_JOB_GENERATOR,
+  TASK0_JOB_MAX_LAYER_COUNT,
   assembleTask0JobZip,
   buildTask0Estimate,
   buildTask0JobFiles,
@@ -118,7 +128,7 @@ import { normalizeTask0MaterialName } from './task0-material';
 import type { Task0RasterFrame } from './task0-mask';
 import { decodeTask0GrayPng } from './task0-png';
 import { task0LayerPolygonsBed, task0SplitMeshesBySlot, type Task0MaterialSlot } from './task0-slice';
-import type { Task0UmPoint } from './task0-thin-fill';
+import { checkTask0TravelClearance, checkTask0TravelContact } from './task0-travel-check';
 
 // ==================== 타입 ====================
 
@@ -185,10 +195,27 @@ export interface Task0ExportSummary {
   retracts: number;
   /** 파일 줄 수 */
   lineCount: number;
-  /** 규격 §11·§13 estimate 8필드 (s) — 툴 전환 시간 = 툴 전환 수 × 0.5 s (단일 재료 0) */
+  /** 규격 §11·§13 estimate 8필드 (s) — 툴 전환 시간 = 툴 전환 수 × TASK0_TIME_CONSTANTS.toolChangeSec (단일 재료 0) */
   estimate: Task0Estimate;
   /** 2재료 요약 (D1b) — 단일 재료면 null */
   dual: Task0DualExportSummary | null;
+  /**
+   * (Z1-d) 트래블 여유 거리 d 검사 수치 (머리 주석 4-c) — 앞 단계에서 막혀 검사하지 않았으면 null.
+   * 경고로 낼지는 TRAVEL_CLEARANCE_AS_WARNING 이 정한다(수치는 어느 쪽이든 여기 남는다)
+   */
+  travelClearance: Task0TravelClearanceSummary | null;
+}
+
+/** (Z1-d) 트래블 여유 거리 d 검사 수치 — 길이 mm */
+export interface Task0TravelClearanceSummary {
+  /** 판정에 쓴 d (TASK0_DEFAULTS.travelClearanceMm) */
+  clearanceMm: number;
+  /** 위반 트래블 수 (전 층 합) */
+  count: number;
+  /** 위반 층 (0-based, 오름차순) */
+  layers: number[];
+  /** 위반 트래블의 칠한 중심선까지 최소 거리 — 위반 없으면 null */
+  minDistMm: number | null;
 }
 
 /** 파서 검사 한 모드의 결과 */
@@ -312,7 +339,14 @@ export const TASK0_EXPORT_MAX_LISTED = 8;
  * Task0 는 이 값을 읽지 않는다(§11 "Task0가 읽는 것" 목록에 없음) → 출력 단계(Z3)와 규격판을 적는다.
  * 견본 경로(gen-task0-sample-zip)는 task0-jobzip TASK0_JOB_GENERATOR 를 그대로 쓴다 — 두 zip 은 manifest 의 이 글자만 다르다.
  */
-export const TASK0_APP_JOB_GENERATOR = 'MazicAlign v2 Z3 app export (Task0 spec v0.3.4)';
+export const TASK0_APP_JOB_GENERATOR = 'MazicAlign v2 Z3 app export (Task0 spec v0.3.5)';
+
+/**
+ * ★ 리드 결정 분기 (Z1-d, 머리 주석 4-c) — 트래블 여유 거리 d 위반을 경고로 낼지.
+ *   true (지금): 경고 1줄 + 경고 층(규칙 10 — 품질 문제는 경고하고 진행, 규격 v0.3.5 §7-2 "검증기 항목").
+ *   false: 경고·경고 층에 넣지 않고 요약 travelClearance 수치만(회색 정보 줄로 보이려면 화면 쪽 작업이 따로 필요).
+ */
+export const TRAVEL_CLEARANCE_AS_WARNING = true;
 
 // ==================== 본체 ====================
 
@@ -455,9 +489,10 @@ function thinFillFailedWarning(layers: readonly number[], lh: number): string {
  * writer 가 'failed' 로 남긴 층의 이유 (2재료 — 경고 문장, 막지 않는다) — writer 층 통계(툴 패스별 경로 없는 항목 수
  * unreachableByTool — D2)와 그 층의 재료별 단면 유무로 가른다:
  *   ① 두 재료가 다 있고 T1(재료 B) 패스에 경로 없는 항목이 있다 = 재료 B 가 칠한 A 에 둘러싸여 T1 로 들어갈 길이 없다
- *      (층 안 순서 A → B — 그 층만 B → A 로 내는 것은 규격 §6 【미정】, Task0 답 대기 — 협의 §31-4). B 가 일부만 갇혀
- *      나머지 B 는 칠한 층도 여기(D1b 의 "T1 도포 0" 휴리스틱은 이것을 ② 로 읽었다).
- *      writer 순서 옵션이 기본(A → B, 뒤집기 끔)일 때만 이렇게 읽는다 — 실험 옵션(order 'BA'·flipOrderWhenStuck)이면 ②.
+ *      (층 안 순서 A → B). B 가 일부만 갇혀 나머지 B 는 칠한 층도 여기(D1b 의 "T1 도포 0" 휴리스틱은 이것을 ② 로 읽었다).
+ *      Z1-d: writer 가 막힌 층만 B → A 로 뒤집어 다시 계획한다(flipOrderWhenStuck 기본 켬 — 규격 v0.3.5 §6 잠정 허용).
+ *      뒤집어 통과한 층은 'failed' 가 아니므로 여기 남는 층은 뒤집어도 길이 없던 층(층 통계 orderFlipped false = A → B 계획 그대로).
+ *      writer 순서 옵션이 기본(A → B)이고 그 층을 뒤집어 내지 않았을 때만 이렇게 읽는다 — 실험 순서(order 'BA')면 ②.
  *   ② 두 재료가 다 있고 경로 없는 항목이 있는데 ① 이 아니다(T0 패스에서 막힘·실험 순서) = 칠한 레진을 가로지르지 않고는 갈 수
  *      없는 항목 — 패스별 항목 수를 함께 적는다.
  *   ③ 그 밖(한 재료만 있는 층, 경로는 있는데 채움 뒤 커버리지 실패) = 단일 재료와 같은 "얇은 부분 채움 실패".
@@ -472,7 +507,8 @@ function dualFailedLayerIssues(
 ): string[] {
   const split = task0SplitMeshesBySlot(meshes, slots);
   const { bedWidthMm, bedDepthMm } = gen.params;
-  const abOrder = (writer?.dualMaterial?.order ?? 'AB') === 'AB' && !writer?.dualMaterial?.flipOrderWhenStuck;
+  const abOrder = (writer?.dualMaterial?.order ?? 'AB') === 'AB';
+  const flipOn = writer?.dualMaterial?.flipOrderWhenStuck ?? true;
   const trapped: number[] = [];
   const blocked: number[] = [];
   const thin: number[] = [];
@@ -485,7 +521,7 @@ function dualFailedLayerIssues(
     const interlocked = hasA && hasB && s.unreachable > 0;
     const [stuckT0 = 0, stuckT1 = 0] = s.unreachableByTool;
     if (!interlocked) thin.push(n);
-    else if (abOrder && stuckT1 > 0) {
+    else if (abOrder && !s.orderFlipped && stuckT1 > 0) {
       trapped.push(n);
       trappedItems += stuckT1;
     } else {
@@ -499,8 +535,11 @@ function dualFailedLayerIssues(
     out.push(
       `재료 B(T1)가 재료 A(T0)에 둘러싸여 T1 로 들어갈 길이 없는 층 ${trapped.length}개: ${listLayersZ(trapped, lh)} — ` +
         `T1 패스에서 길이 없는 도포 항목 ${trappedItems}개. ` +
-        '층 안 순서 A → B 에서는 칠한 A 를 가로질러야 합니다(규격 §7 교차 금지). 그 층만 B → A 로 내는 것은 규격 §6 【미정】이라 ' +
-        'Task0 답을 기다리는 중입니다(협의 §31-4). 재료 배정(A/B)이나 모델 배치를 바꿔 보세요.',
+        '층 안 순서 A → B 에서는 칠한 A 를 가로질러야 합니다(규격 §7 교차 금지). ' +
+          (flipOn
+            ? '그 층만 B → A 로 뒤집어도(규격 §6 잠정 허용) 길이가 없습니다. '
+            : '그 층만 B → A 로 뒤집는 계획을 끈 설정입니다(flipOrderWhenStuck false). ') +
+          '재료 배정(A/B)이나 모델 배치를 바꿔 보세요.',
     );
   }
   if (blocked.length > 0) {
@@ -527,68 +566,27 @@ const COVERAGE_CHECK_LABELS: readonly ['a' | 'b' | 'c' | 'd' | 'overflow', strin
 const toUm = (mm: number): number => Math.round(mm * 1000);
 
 /**
- * 트래블 엄격 판정 (2재료 자기 검사) — 층마다 그 층에서 이미 칠한 선분(모든 툴, 정수 µm)과 트래블 경로(연속한 XY 이동 줄 —
- * T 줄·E 단독 줄은 경로를 끊지 않는다)를 task0-fill-route task0TravelContactOk(= verify-task0-writer c4b 정의 — 교차·
- * 경유점 접촉·되짚기 외 겹침 금지)로 본다. 층 시작 위치 = 파킹(규격 §9). 도포 = X/Y 와 E 가 같이 있는 줄.
- * @returns 위반이 있는 층과 건수 (층 번호 오름차순)
+ * (Z1-d, 머리 주석 4-c) 트래블 여유 거리 d 검사 — 수치와 경고 문장(위반 없으면 null). 단일·2재료 공통.
+ * 경고 문장은 쉬운 말을 앞에, 규격 근거는 뒤에. 순서를 뒤집은 층(2재료)에서 다른 툴 비드에 다가간 위반이 있으면 따로 적는다.
  */
-function travelContactViolations(gcode: string, parkUm: Task0UmPoint): { layer: number; count: number }[] {
-  const out: { layer: number; count: number }[] = [];
-  let started = false;
-  let layer = -1;
-  let pos: Task0UmPoint = parkUm;
-  let painted: Task0UmSegment[] = [];
-  let path: Task0UmPoint[] | null = null;
-  let count = 0;
-  const flush = (): void => {
-    if (path !== null && !task0TravelContactOk(path, painted, painted.length - 1)) count++;
-    path = null;
-  };
-  const endLayer = (): void => {
-    flush();
-    if (layer >= 0 && count > 0) out.push({ layer, count });
-  };
-  for (const raw of gcode.split('\n')) {
-    const line = raw.trim();
-    if (!started) {
-      started = line === '; EXECUTABLE_BLOCK_START';
-      continue;
-    }
-    if (line === ';LAYER_CHANGE') {
-      endLayer();
-      layer++;
-      pos = parkUm;
-      painted = [];
-      path = null;
-      count = 0;
-      continue;
-    }
-    if (line === '' || line.startsWith(';') || layer < 0) continue;
-    const toks = line.split(/\s+/);
-    const cmd = toks[0].toUpperCase();
-    if (cmd !== 'G0' && cmd !== 'G1') continue;
-    let x: number | null = null;
-    let y: number | null = null;
-    let hasE = false;
-    for (const t of toks.slice(1)) {
-      const k = t[0].toUpperCase();
-      if (k === 'X') x = toUm(Number(t.slice(1)));
-      else if (k === 'Y') y = toUm(Number(t.slice(1)));
-      else if (k === 'E') hasE = true;
-    }
-    if (x === null && y === null) continue; // Z·E 단독·F 단독 — 경로를 끊지 않는다
-    const to: Task0UmPoint = [x ?? pos[0], y ?? pos[1]];
-    if (hasE) {
-      flush();
-      painted.push([pos, to]);
-    } else {
-      if (path === null) path = [pos];
-      path.push(to);
-    }
-    pos = to;
-  }
-  endLayer();
-  return out;
+function travelClearanceCheck(gen: Task0GcodeResult): { summary: Task0TravelClearanceSummary; warning: string | null } {
+  const p = gen.params;
+  const clearanceMm = TASK0_DEFAULTS.travelClearanceMm;
+  const v = checkTask0TravelClearance(gen.gcode, { parkXMm: p.parkXMm, parkYMm: p.parkYMm, clearanceMm });
+  const count = v.reduce((a, x) => a + x.count, 0);
+  const layers = v.map((x) => x.layer);
+  const minDistMm = v.length > 0 ? Math.min(...v.map((x) => x.minDistMm)) : null;
+  const summary: Task0TravelClearanceSummary = { clearanceMm, count, layers, minDistMm };
+  if (v.length === 0 || minDistMm === null) return { summary, warning: null };
+  const flipped = new Set(gen.totals.orderFlippedLayers);
+  const flippedHit = v.filter((x) => x.againstOtherTool && flipped.has(x.layer)).map((x) => x.layer);
+  const flippedNote =
+    flippedHit.length > 0 ? ` (B → A 로 낸 층 ${listLayers(flippedHit)} 에서 A 노즐 ↔ B 비드 포함, 규격 §6 ②)` : '';
+  const warning =
+    `트래블이 칠한 레진에서 d = ${trimNum(clearanceMm, 3)} mm 안으로 지나는 곳 ${count}건` +
+    `(층 ${listLayers(layers)}, 최소 ${trimNum(minDistMm, 3)} mm)${flippedNote} — 드라이런에는 영향 없음. ` +
+    '실레진 전 노즐 외경 실측으로 d 확정 후 writer 우회 규칙을 맞춥니다(규격 §7-2·§14).';
+  return { summary, warning };
 }
 
 /**
@@ -645,7 +643,7 @@ function dualSelfCheck(
     );
     for (const n of cov.overlapLayers) failedLayers.add(n);
   }
-  const travel = travelContactViolations(gen.gcode, [toUm(p.parkXMm), toUm(p.parkYMm)]);
+  const travel = checkTask0TravelContact(gen.gcode, [toUm(p.parkXMm), toUm(p.parkYMm)]);
   if (travel.length > 0) {
     const total = travel.reduce((s, v) => s + v.count, 0);
     warnings.push(
@@ -681,6 +679,25 @@ function exportGcodeStage(
         ok: false,
         gcode: null,
         issues: ['슬라이스할 층이 없습니다 — 모델이 플레이트 위에 있는지 확인하세요.'],
+        failedLayers: [],
+        summary: null,
+        parser: [],
+      },
+      gen: null,
+    };
+  }
+
+  // (1-a) 층 수 상한 — Task0 거부 조건 4(PNG 이름 4자리 고정, 상한 9999층 — 규격 v0.3.5 §11). writer 전에 막는다
+  if (layerCountExpected > TASK0_JOB_MAX_LAYER_COUNT) {
+    return {
+      out: {
+        ok: false,
+        gcode: null,
+        issues: [
+          `층 ${layerCountExpected}개가 Task0 상한 ${TASK0_JOB_MAX_LAYER_COUNT}층을 넘습니다(층두께 ${trimNum(lh, 6)} mm, ` +
+            `높이 ${trimNum(topY, 3)} mm) — 층두께를 키우거나 모델 높이를 줄이세요. ` +
+            '(Task0 거부 조건 4 — PNG 이름 4자리 고정, 규격 §11)',
+        ],
         failedLayers: [],
         summary: null,
         parser: [],
@@ -748,6 +765,7 @@ function exportGcodeStage(
       toolChangeCount: t.toolChanges,
     }),
     dual: dualSlots === null ? null : dualSummaryOf(result, dualSlots, mat.warnings),
+    travelClearance: null,
   };
 
   const issues: string[] = []; // 막음 — 기계가 거부하는 조건 (머리 주석 "막음 / 경고")
@@ -795,6 +813,16 @@ function exportGcodeStage(
     issues.push(...self.issues);
     warnings.push(...self.warnings);
     for (const n of self.failedLayers) failedAll.add(n);
+  }
+
+  // (4-c) 트래블 여유 거리 d (Z1-d — 단일·2재료 공통, 앞 단계가 막았으면 건너뜀). 경고로 낼지는 리드 결정 분기 한 곳
+  if (issues.length === 0) {
+    const tc = travelClearanceCheck(result);
+    summary.travelClearance = tc.summary;
+    if (TRAVEL_CLEARANCE_AS_WARNING && tc.warning !== null) {
+      warnings.push(tc.warning);
+      for (const n of tc.summary.layers) failedAll.add(n);
+    }
   }
 
   const failedLayers = [...failedAll].sort((a, b) => a - b);

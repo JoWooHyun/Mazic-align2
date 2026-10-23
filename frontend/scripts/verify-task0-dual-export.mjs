@@ -9,31 +9,38 @@
 //       estimate toolChangeSec, 층 노광 = 재료별 큰 값(buildTask0MaterialExposure)
 //     + 데이터(types/stl.ts materialSlot?·types/project.ts task0MaterialMode? — data/*.repo.ts 경유), 배선(소스 검사): 씬 handle
 //       getSliceGeometry 메시 정체·setMaterialSlotColors, 워커·메시지, useSliceExport, useTask0Material, 패널·목록·페이지.
-//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.4 @ a4ebc6c §5(툴별 리트랙트)·§6(A = T0, B = T1, 층 안 A → B, 노광 큰 값)·
-//   §11(manifest materials[]·dualMaterial·toolChangeCount)·§13(toolChangeSec 0.5). 설계 = docs/계획_Z1_task0출력_20261002.md §4-5(D1b 인계),
+//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.5 @ 481f416 (Z1-d — v0.3.4 a4ebc6c 에서) §5(툴별 리트랙트)·§6(A = T0, B = T1,
+//   층 안 A → B, 갇힌 층만 B → A 잠정 허용, T 전환 직후 첫 트래블은 파킹 (0,0) 출발, 노광 큰 값)·§7-2(트래블 여유 거리 d — 경고)·
+//   §11(manifest materials[]·dualMaterial·toolChangeCount)·§13(toolChangeSec 6). 설계 = docs/계획_Z1_task0출력_20261002.md §4-5(D1b 인계),
 //   docs/계획_하이브리드슬라이서설정_20260928.md §5-1·§5-2·§5-3·§6 결정 5.
 //
 //   (1) 앱 경로 = 스크립트 경로 — 파일 D 형상(서포트 기둥 4 + 판, verify-task0-dual fixtureDualPillarsPlate)을 **앱 순서**(씬 handle
 //       getSliceGeometry 와 같이 STL 먼저·서포트 뒤, 메시 정체 kind·stlId 붙임)로 만들고 슬롯은 task0ExportMaterialSlots('dual', …)로 →
-//       코어 run.gcode = gen-task0-dryrun 파일 D(generateTask0Gcode 직접 호출, 형상 순서)와 **같은 바이트**(sha256 53730df7…),
+//       코어 run.gcode = gen-task0-dryrun 파일 D(generateTask0Gcode 직접 호출, 형상 순서)와 **같은 바이트**(sha256 a7a90c68…),
+//       (Z1-d 고정값 근거) writer 대조군 switchTravelFromPark false + 머리 메타 두 줄 v0.3.4 문구 = Z1-c 판 sha256 53730df7…, 기본 출력과
+//       대조군의 차이는 층 4·5 의 T1 뒤(B 패스)뿐 — 도포 선분 집합(방향 무시)·E 값·층 4·5 의 T1 앞·나머지 층은 그대로.
+//       2재료 zip 도 같은 방식: 대조군 writer + 시간 상수 toolChangeSec 0.5 + 옛 generator 로 만든 zip 의 run.gcode 머리 두 줄을 되돌리면 Z1-c 판 zip sha256.
 //       job.zip: run.gcode 같은 바이트·manifest materials 2개(A T0 모델레진 / B T1 템프레진, 노광 = DEFAULT_*)·dualMaterial true·
-//       toolChangeCount 3·estimate toolChangeSec = 3 × 0.5·estimate = 화면 요약, 층 PNG 전부 = 합집합 마스크(task0-mask, 모든 메시) × 255
+//       toolChangeCount 3·estimate toolChangeSec = 3 × TASK0_TIME_CONSTANTS.toolChangeSec(6)·estimate = 화면 요약, 층 PNG 전부 = 합집합 마스크(task0-mask, 모든 메시) × 255
 //       (두 재료가 다 있는 층은 A 만·B 만 마스크보다 흰 픽셀이 많음), verifyTask0JobZip(전부 풀기) 위반 0, 견본 경로 buildTask0JobZip
 //       (writer dualMaterial) 과 같은 zip 바이트, zip sha256 고정값.
 //   (1b) 실제 워커 모듈 — slice-batch.worker.ts 를 가짜 self 로 불러 앱과 같은 모양의 메시지(meshes = 메시 정체가 붙은 항목, materialSlots)
 //       → task0-gcode 의 gcode = 파일 D 바이트, task0-jobzip 의 zip = (1) 의 zip 바이트.
 //   (2) 단일 모드·재료 정보 없음 → 기존 바이트 — task0ExportMaterialSlots('single') = undefined(STL 에 materialSlot 'A' 가 있어도),
-//       코어 run.gcode 파일 A·C·B sha256 = Z1-c 고정값(verify-task0-export 와 같은 값), materialSlots: undefined 키도 같음, 요약 dual null·
-//       툴 전환 0, 견본 job.zip sha256 616b0e61…(verify-task0-jobzip-export 와 같은 값). 마스크 ZIP·marlin 은 Node 에서 못 돌린다
+//       코어 run.gcode 파일 A·C·B sha256 = Z1-d 고정값(verify-task0-export 와 같은 값), materialSlots: undefined 키도 같음, 요약 dual null·
+//       툴 전환 0, 견본 job.zip sha256 10e653f3…(verify-task0-jobzip-export 와 같은 값). 마스크 ZIP·marlin 은 Node 에서 못 돌린다
 //       (OffscreenCanvas·js-clipper) → (6) 에서 소스로: getSliceGeometry 의 삼각형·순서 그대로, 워커 마스크·marlin 경로는 triangles 만 읽음.
 //   (3) 슬롯 결정 — task0MeshSlots: 서포트는 붙은 STL 이 B 여도 A, STL materialSlot 없음 → B, 'A' → A, 모르는 값·목록에 없는 STL → B.
 //       코어로: 왼쪽 상자(A 지정) + 오른쪽 상자(지정 없음) + 오른쪽에 붙은 서포트 기둥 → T0 도포는 왼쪽 상자·기둥 자리만, T1 은 오른쪽 상자만.
 //   (4) 막음·경고 (2026-10-15 리드 결정 — 기계가 거부하는 조건만 막고 품질 문제는 경고, task0-export 머리 주석 "막음 / 경고"):
-//       ① 갇힌 B(닫힌 고리 A + 안의 B, verify-task0-dual fixtureClosedRing) → 경고: run.gcode·job.zip 둘 다 파일 있음, 경고
-//       "재료 B(T1)가 재료 A(T0)에 둘러싸여 … 협의 §31-4"("얇은 부분 채움 실패" 문구 없음), 경고 층 = 전 층 ② 출력 가능 영역 밖(2재료
+//       ① 갇힌 B(닫힌 고리 A + 안의 B, verify-task0-dual fixtureClosedRing) — (Z1-d) 기본 writer 는 그 층만 B → A(규격 v0.3.5 §6 잠정 허용):
+//       run.gcode·job.zip 파일 있음, 경고 = 트래블 여유 거리 d 1줄뿐("B → A 로 낸 층 … A 노즐 ↔ B 비드 포함, 규격 §6 ②"), 툴 전환 20·
+//       estimate 20 × 6 s. 대조군 flipOrderWhenStuck false → 경고 "재료 B(T1)가 재료 A(T0)에 둘러싸여 … 뒤집는 계획을 끈 설정"
+//       ("얇은 부분 채움 실패" 문구 없음), 경고 층 = 전 층, 툴 전환 0·T1 도포 0 ② 출력 가능 영역 밖(2재료
 //       입력을 베드 X 밖으로) → writer 전에 같은 영역 문구(막음) ③ 슬롯 수 ≠ 메시 수 → 이유(막음) ④ 2재료 자기 검사 → 경고 —
 //       writer 대조군 옵션으로 만든 위반 출력: 겹침 차집합 끔(subtractOverlap false) → "B 우선 위반", 우회 끔(thinFillDetour false,
-//       U 자 A 안의 B) → "트래블이 칠한 레진을 가로지르거나" — 둘 다 파일은 나오고 경고에 같은 문구, 기본 옵션이면 경고 0.
+//       U 자 A 안의 B) → "트래블이 칠한 레진을 가로지르거나" — 둘 다 파일은 나오고 경고에 같은 문구. 기본 옵션이면 겹친 상자는 경고 0,
+//       U 자는 (Z1-d) 트래블 여유 거리 d 경고 1줄만(전환 트래블이 파킹에서 출발해 U 입구로 돌아 들어가며 칠한 A 에서 w/2 — 교차 경고 0).
 //   (5) 데이터 — 가짜 IndexedDB(이 스크립트 안, 스토어·인덱스·커서만)에 data/*.repo.ts 를 그대로 돌림: DB 버전 4·스토어 3개·인덱스 그대로,
 //       새 프로젝트·STL 레코드에는 새 필드 없음(기본값 single·B), updateProject/updateStlFile 로 저장 → 다시 읽어 그 값, transform 과 함께
 //       보존, 옛 레코드(putProject/putStlFile 필드 없음) → 기본값, 저장한 슬롯으로 task0ExportMaterialSlots, .mzalign 내보내기 → 가져오기('new')
@@ -44,9 +51,9 @@
 //   (7) 대조군 — a. 서포트 슬롯을 B 로 바꾼 task0-material → (1) 의 파일 D 바이트·(3) 의 "서포트 = A" 가 실패
 //       b. job.zip 의 toolChangeCount 를 0 으로 고정한 task0-jobzip(+ 그것을 쓰는 코어) → 파일 D job.zip 이 막히고(자기 검사 — 툴 전환 수
 //          불일치) 견본 경로 zip 은 검사기가 잡는다 c. 코어에서 2재료 자기 검사를 빼면 (4)④ 의 B 우선 위반·교차 트래블 출력이 경고 없이
-//          나온다(경고를 만드는 것이 이 검사) d. 트래블 검사만 빼면 교차 출력은 트래블 경고 없이 나오고 B 우선 위반 경고는 그대로(두 검사가
-//          각각 필요) e. 갇힌 B 판정을 빼면 경고가 엉뚱한 "두 재료가 맞물린 단면" 으로 바뀐다(D2 — 판정이 writer 통계 기반, 그 전에는
-//          "얇은 부분 채움 실패" 였다) f. deps 에서 재료 모드·files 를 빼거나 무효화 deps 에서 재료 모드를 빼면 (6) 이 실패한다
+//          나온다(경고를 만드는 것이 이 검사 — d 경고(4-c)는 따로라 남는다) d. 트래블 검사만 빼면 교차 출력은 트래블 교차 경고 없이 나오고
+//          B 우선 위반 경고는 그대로(두 검사가 각각 필요) e. 갇힌 B 판정을 빼면(대조군 flipOrderWhenStuck false 입력) 경고가 엉뚱한
+//          "두 재료가 맞물린 단면" 으로 바뀐다(D2 — 판정이 writer 통계 기반, 그 전에는 "얇은 부분 채움 실패" 였다) f. deps 에서 재료 모드·files 를 빼거나 무효화 deps 에서 재료 모드를 빼면 (6) 이 실패한다
 //       g. 슬롯 입력을 무시하는 코어(D1b 이전 동작) → 단일 재료 파일이 나와 (1) 의 파일 D 바이트·manifest 2재료가 실패.
 //       (수정 전 트리 전체로 돌리면 task0-material.ts 가 없어 import 단계에서 exit 1 — 구현 확인 때 실측.)
 //   (8) 성능 참고 — TASK0_PERF=1 일 때만(판정 없음): 2재료 job.zip — 파일 D 형상, 구 + 기둥 서포트(verify-task0-dual sphereSeedModel) 단계별 시간.
@@ -77,6 +84,7 @@ import {
 import {
   TASK0_DEFAULT_MATERIAL_NAME,
   TASK0_DEFAULT_MATERIAL_NAME_B,
+  assembleTask0JobZip,
   buildTask0Exposure,
   buildTask0JobZip,
   buildTask0MaterialExposure,
@@ -122,18 +130,60 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const V2 = path.resolve(SCRIPT_DIR, "..", "src", "features", "v2");
 const TASK0_SRC = path.join(V2, "utils", "task0");
 
-/** gen-task0-dryrun.mjs 파일 D (D1a — 서포트 기둥 A + 판 B, lh 0.1, 툴 전환 3) sha256 */
-const FILE_D_SHA = "53730df71c6a7d984615962e9228c9a6a54636e84941d6b69310334f9ee28faa";
-/** 파일 A·C·B (Z1-c, 규격 v0.3.4) sha256 — verify-task0-export.mjs EXPECTED_SHA 와 같은 값 */
+/** gen-task0-dryrun.mjs 파일 D (D1a — 서포트 기둥 A + 판 B, lh 0.1, 툴 전환 3) sha256 (Z1-d 고정값 — 규격 v0.3.5) */
+const FILE_D_SHA = "a7a90c684789556f7f3ca5d19e29317a637b6110f709d98cbead13d9b0518f0c";
+/** 같은 파일의 Z1-c 판(규격 v0.3.4) sha256 — Z1-d 고정값 갱신의 근거로만 (대조군 writer + 머리 두 줄 치환) */
+const PREV_FILE_D_SHA_V034 = "53730df71c6a7d984615962e9228c9a6a54636e84941d6b69310334f9ee28faa";
+/** 파일 A·C·B (Z1-d, 규격 v0.3.5) sha256 — verify-task0-export.mjs EXPECTED_SHA 와 같은 값 */
 const SINGLE_SHA = {
-  cube10: "dde08ea97b2e144dabc842d1257980bdd4d51fa59b7bf7453c463e5f264928b9",
-  "gap-plates": "ab3f8d7431386b5deaa3a4f44df09dfe1b0b1f0ac82303423cc63ccac76d7859",
-  "file-b": "b1e65f70c96a3e5cee17a97c27d8b2bb029faa8e82791bca2ef09361098a8339",
+  cube10: "d5c9db45d7ca7a51823bcb20234d329bd88c19b8ee4d4e8edf57f3de96a6cd6e",
+  "gap-plates": "3baf90a6768acc409dee05a0b62b9158cba3637654a809e131e71b044997c117",
+  "file-b": "5c8fbf74b37d1d3e1c05f468384f3cc27f89ded6480120eeaaaca30356e1bc5f",
 };
-/** 견본 sample.job.zip (Z1-c) sha256 — verify-task0-jobzip-export.mjs SAMPLE_SHA 와 같은 값 */
-const SAMPLE_SHA = "616b0e610dfa0a101f357d2a8a30bdb7f3823ddd773350ffe40682f7c8192989";
-/** (1) 2재료 job.zip (파일 D 형상, 앱 generator, generatedAt D_GENERATED_AT) sha256 — 이 PR(D1b)에서 처음 정한 값 */
-const DUAL_ZIP_SHA = "e9edb893e4e0b40e271ebfda9dcdfb4885859087a64c549fccffbe407ce26050";
+/** 견본 sample.job.zip (Z1-d) sha256 — verify-task0-jobzip-export.mjs SAMPLE_SHA 와 같은 값 */
+const SAMPLE_SHA = "10e653f345dcd70295bc3a8dddd28bda5d944675a7fde9e94bc5468dd720fc62";
+/** (1) 2재료 job.zip (파일 D 형상, 앱 generator, generatedAt D_GENERATED_AT) sha256 — Z1-d 고정값 */
+const DUAL_ZIP_SHA = "83db607e89f4e96eb89f6f63d4bf230895ab42d91289ae6c11b44b36420310b0";
+/** 같은 zip 의 Z1-c 판(D1b 에서 처음 정한 값) — 근거로만 (아래 sectionAppPath 의 재현) */
+const PREV_DUAL_ZIP_SHA_V034 = "e9edb893e4e0b40e271ebfda9dcdfb4885859087a64c549fccffbe407ce26050";
+/** Z1-c 판 머리 메타 두 줄 · 앱 generator */
+const V034_HEADER = [
+  "; MazicAlign v2 task0-gcode-writer (Z1-c, spec v0.3.4)",
+  "; Task0 G-code spec v0.3.4 (B pattern: serpentine 0 deg row fill, L moves between rows)",
+];
+const V034_APP_GENERATOR = "MazicAlign v2 Z3 app export (Task0 spec v0.3.4)";
+/** run.gcode 머리 메타 두 줄을 Z1-c 문구로 */
+const revertHeaderV034 = (gcode) => {
+  const lines = gcode.split("\n");
+  lines[0] = V034_HEADER[0];
+  lines[1] = V034_HEADER[1];
+  return lines.join("\n");
+};
+/** 층 블록 (;LAYER_CHANGE 부터 다음 ;LAYER_CHANGE 앞까지) — 줄 배열 */
+const layerBlocks = (gcode) => {
+  const out = [];
+  for (const l of gcode.split("\n")) {
+    if (l === ";LAYER_CHANGE") out.push([]);
+    if (out.length > 0) out[out.length - 1].push(l);
+  }
+  return out;
+};
+/** 도포 줄 → "방향 없는 선분|E" 정렬 목록 (줄 사이 위치는 직전 이동 줄에서) */
+const depositSet = (block) => {
+  const out = [];
+  let pos = null;
+  for (const l of block) {
+    const m = /^G1 X(\S+) Y(\S+)( E(\S+))? F/.exec(l);
+    if (!m) {
+      if (l === "T0" || l === "T1") pos = null;
+      continue;
+    }
+    const to = `${m[1]},${m[2]}`;
+    if (m[4] !== undefined) out.push(`${[pos, to].sort().join("~")}|${m[4]}`);
+    pos = to;
+  }
+  return out.sort();
+};
 const D_GENERATED_AT = "2026-10-07T00:00:00.000Z";
 const D_LH = 0.1;
 
@@ -225,6 +275,32 @@ async function sectionAppPath() {
   // 스크립트 경로 = gen-task0-dryrun 파일 D (형상 순서·writer 기본값)
   const script = generateTask0Gcode(scriptMeshes, meshesTopY(scriptMeshes), D_LH, { dualMaterial: { slots: fx.slots } });
   assert(sha256(script.gcode) === FILE_D_SHA, `스크립트 경로(generateTask0Gcode 직접) = 파일 D sha256 ${sha256(script.gcode).slice(0, 16)}…`);
+  // (Z1-d 고정값 근거) 전환 트래블 대조군(switchTravelFromPark false = 앞 패스 끝 출발) + 머리 두 줄 v0.3.4 문구 → Z1-c 판 바이트
+  const prevD = generateTask0Gcode(scriptMeshes, meshesTopY(scriptMeshes), D_LH, { dualMaterial: { slots: fx.slots }, switchTravelFromPark: false });
+  assert(
+    sha256(revertHeaderV034(prevD.gcode)) === PREV_FILE_D_SHA_V034,
+    `대조군 writer(switchTravelFromPark false) + 머리 메타 2줄 v0.3.4 문구 = Z1-c 판 파일 D sha256 ${PREV_FILE_D_SHA_V034.slice(0, 16)}…`,
+  );
+  // 차이 범위 — 층 4·5(두 재료 층)의 T1 뒤(B 패스)만. 도포 선분 집합(방향 무시)·E 값은 그대로, 그 밖의 층·T1 앞은 같은 줄
+  const nb = layerBlocks(script.gcode);
+  const ob = layerBlocks(prevD.gcode);
+  const diffLayers = nb.map((b, n) => (b.join("\n") === ob[n]?.join("\n") ? -1 : n)).filter((n) => n >= 0);
+  const beforeT1Same = [4, 5].every((n) => {
+    const i = nb[n].indexOf("T1");
+    return i > 0 && i === ob[n].indexOf("T1") && nb[n].slice(0, i + 1).join("\n") === ob[n].slice(0, i + 1).join("\n");
+  });
+  const depSame = nb.length === ob.length && nb.every((b, n) => JSON.stringify(depositSet(b)) === JSON.stringify(depositSet(ob[n])));
+  assert(
+    JSON.stringify(diffLayers) === "[4,5]" && beforeT1Same && depSame && nb.length === 10,
+    `기본 출력 vs 대조군: 다른 층 ${JSON.stringify(diffLayers)} — 층 4·5 의 T1 까지 같은 줄, 전 층 도포 선분 집합(방향 무시)·E 값 같음 ` +
+      `(전환 트래블 길이 ${prevD.totals.travelMm.toFixed(3)} → ${script.totals.travelMm.toFixed(3)} mm)`,
+  );
+  // 기본 출력의 층 4·5 전환 트래블 첫 줄 = 파킹에서 곧게 (L자 꺾임 없이 — 꺾이는 점이 출력 가능 영역 밖이 되지 않게)
+  const firstAfterT1 = [4, 5].map((n) => nb[n][nb[n].indexOf("T1") + 1]);
+  assert(
+    firstAfterT1.every((l) => /^G1 X\S+ Y\S+ F6000$/.test(l)) && script.totals.xyBounds.xMin >= 10 && script.totals.xyBounds.yMin >= 10,
+    `층 4·5 T1 다음 줄 = 파킹 (0,0) 에서 첫 트래블 "${firstAfterT1[0]}", G-code XY 최소 (${script.totals.xyBounds.xMin}, ${script.totals.xyBounds.yMin}) ≥ (10, 10)`,
+  );
 
   const g = runTask0GcodeExport(coreInput(items, slots));
   assert(g.ok && g.gcode === script.gcode, `코어 run.gcode = 파일 D 같은 바이트 (${g.ok ? sha256(g.gcode).slice(0, 16) : g.issues[0]}…)`);
@@ -257,8 +333,10 @@ async function sectionAppPath() {
   );
   assert(man.dualMaterial === true && man.toolChangeCount === 3, `manifest dualMaterial ${man.dualMaterial}, toolChangeCount ${man.toolChangeCount} (= run.gcode T 전환 3)`);
   assert(
-    man.estimate.toolChangeSec === 1.5 && JSON.stringify(man.estimate) === JSON.stringify(j.summary.estimate),
-    `manifest estimate toolChangeSec ${man.estimate.toolChangeSec} = 3 × 0.5, estimate = 화면 요약 (총 ${man.estimate.totalSec} s)`,
+    TASK0_TIME_CONSTANTS.toolChangeSec === 6 && man.estimate.toolChangeSec === 3 * TASK0_TIME_CONSTANTS.toolChangeSec &&
+      JSON.stringify(man.estimate) === JSON.stringify(j.summary.estimate) &&
+      Math.abs(man.estimate.totalSec - Object.entries(man.estimate).filter(([k]) => k !== "totalSec").reduce((a, [, v]) => a + v, 0)) < 1e-6,
+    `manifest estimate toolChangeSec ${man.estimate.toolChangeSec} = 3 × ${TASK0_TIME_CONSTANTS.toolChangeSec} (규격 v0.3.5 §13), totalSec = 7개 합, estimate = 화면 요약 (총 ${man.estimate.totalSec} s)`,
   );
   const exp = JSON.parse(dec.decode(e.get("exposure.json")));
   assert(
@@ -289,6 +367,31 @@ async function sectionAppPath() {
   });
   assert(sha256(sp.bytes) === sha256(j.zip), `견본 경로 buildTask0JobZip(writer dualMaterial) = 코어 zip 같은 바이트 (${sha256(j.zip).slice(0, 16)}…)`);
   assert(sha256(j.zip) === DUAL_ZIP_SHA, `2재료 job.zip sha256 고정값 (${sha256(j.zip)})`);
+  // (Z1-d 고정값 근거) 대조군 writer + toolChangeSec 0.5 + 옛 generator 로 만든 zip 의 run.gcode 머리 두 줄을 되돌려 다시 묶으면 Z1-c 판 zip
+  const old = await buildTask0JobZip({
+    meshes: allMeshes,
+    topY: meshesTopY(allMeshes),
+    layerHeightMm: D_LH,
+    writer: { ...APP.writer, dualMaterial: { slots }, switchTravelFromPark: false },
+    exposure: APP.exposure,
+    generator: V034_APP_GENERATOR,
+    generatedAt: D_GENERATED_AT,
+    time: { toolChangeSec: 0.5 },
+  });
+  const oldFiles = old.files.map((f) => (f.name === "run.gcode" ? { name: f.name, data: new TextEncoder().encode(revertHeaderV034(dec.decode(f.data))) } : f));
+  const oldZip = await assembleTask0JobZip(oldFiles);
+  const newEnt = await zipEntries(j.zip);
+  const oldEnt = await zipEntries(oldZip);
+  const samePngExp = [...newEnt.keys()].filter((k) => k.startsWith("layers/") || k === "exposure.json" || k === "preview.png").every((k) => sha256(newEnt.get(k)) === sha256(oldEnt.get(k)));
+  const oldMan = JSON.parse(dec.decode(oldEnt.get("manifest.json")));
+  const manDiffKeys = Object.keys(man).filter((k) => JSON.stringify(man[k]) !== JSON.stringify(oldMan[k]));
+  const estDiffKeys = Object.keys(man.estimate).filter((k) => man.estimate[k] !== oldMan.estimate[k]);
+  assert(
+    sha256(oldZip) === PREV_DUAL_ZIP_SHA_V034 && samePngExp && JSON.stringify(manDiffKeys) === '["generator","estimate"]' &&
+      JSON.stringify(estDiffKeys) === '["travelSec","toolChangeSec","totalSec"]' && man.estimate.toolChangeSec - oldMan.estimate.toolChangeSec === 16.5,
+    `Z1-c 판 zip 재현 sha256 ${sha256(oldZip).slice(0, 16)}… = ${PREV_DUAL_ZIP_SHA_V034.slice(0, 16)}… — PNG·exposure·preview 같음, manifest 차이 ${JSON.stringify(manDiffKeys)} ` +
+      `(estimate ${JSON.stringify(estDiffKeys)}, 툴 전환 +${(man.estimate.toolChangeSec - oldMan.estimate.toolChangeSec).toFixed(1)} s)`,
+  );
   return { items, slots, gcode: g.ok ? g.gcode : null, zip: j.zip };
 }
 
@@ -364,7 +467,7 @@ async function sectionSingle() {
     const r2 = runTask0GcodeExport({ ...base, materialSlots: undefined });
     assert(
       r.ok && sha256(r.gcode) === SINGLE_SHA[fx.name] && r2.ok && r2.gcode === r.gcode && r.summary.dual === null && r.summary.estimate.toolChangeSec === 0,
-      `${fx.name}: 코어 run.gcode sha256 = Z1-c 고정값 (${r.ok ? sha256(r.gcode).slice(0, 16) : "막힘"}…), materialSlots: undefined 도 같은 바이트, dual null, 툴 전환 0 s`,
+      `${fx.name}: 코어 run.gcode sha256 = Z1-d 고정값 (${r.ok ? sha256(r.gcode).slice(0, 16) : "막힘"}…), materialSlots: undefined 도 같은 바이트, dual null, 툴 전환 0 s`,
     );
   }
   const sample = {
@@ -487,29 +590,49 @@ function overlapInput(dualWriter = {}) {
   };
 }
 
-function ringInput() {
+/** 닫힌 고리 A + 안의 B (verify-task0-dual fixtureClosedRing). dualWriter = writer.dualMaterial 의 나머지 옵션(대조군 flipOrderWhenStuck 등) */
+function ringInput(dualWriter = null) {
   const ring = fixtureClosedRing();
   const meshes = ring.meshes();
-  return { meshes, topY: meshesTopY(meshes), layerHeightMm: 0.1, writer: APP.writer, printable: APP.printable, materialSlots: ring.slots };
+  const writer = dualWriter === null ? APP.writer : { ...APP.writer, dualMaterial: { slots: ring.slots, ...dualWriter } };
+  return { meshes, topY: meshesTopY(meshes), layerHeightMm: 0.1, writer, printable: APP.printable, materialSlots: ring.slots };
 }
 
 async function sectionBlocked() {
   console.log("\n(4) 막음·경고 — 기계가 거부하는 조건(영역·슬롯)은 막고, 품질 문제(갇힌 B·B 우선·트래블 스침)는 경고 + 파일");
-  // ① 갇힌 B → 경고 (2026-10-15 리드 결정 — 막지 않는다). 파일은 나오고 경고에 구체 이유
-  const ri = ringInput();
+  // ① 갇힌 B — (Z1-d) 기본 writer 는 그 층만 B → A (규격 v0.3.5 §6 잠정 허용). 파일은 나오고 경고는 트래블 여유 거리 d 1줄뿐
+  const allLayers = JSON.stringify([...Array(10).keys()]);
+  const rf = ringInput();
+  const rfg = runTask0GcodeExport(rf);
+  const rfj = await runTask0JobZipExport(rf);
+  for (const [what, r, file] of [["run.gcode", rfg, rfg.gcode], ["job.zip", rfj, rfj.zip]]) {
+    const warns = r.ok ? r.warnings : [];
+    assert(
+      r.ok && file !== null && file.length > 0 && JSON.stringify(r.failedLayers) === allLayers && warns.length === 1 &&
+        warns[0].startsWith("트래블이 칠한 레진에서 d = 0.5 mm 안으로 지나는 곳 160건") &&
+        warns[0].includes("B → A 로 낸 층 0, 1, 2") && warns[0].includes("A 노즐 ↔ B 비드 포함, 규격 §6 ②") &&
+        !warns.some((s) => s.includes("둘러싸여") || s.includes("얇은 부분 채움 실패")),
+      `① 갇힌 B(닫힌 고리) 기본 ${what}: 그 층만 B → A — 막지 않음(파일 있음), 경고 = d 1줄 "${warns[0]?.slice(0, 60) ?? (r.ok ? "(없음)" : "(막힘)")}…"`,
+    );
+  }
+  assert(
+    rfg.ok && rfg.summary.dual?.toolChanges === 20 && rfg.summary.dual.depositMmByTool[1] > 0 && rfg.summary.estimate.toolChangeSec === 20 * TASK0_TIME_CONSTANTS.toolChangeSec,
+    `① 기본 요약 — 툴 전환 ${rfg.ok ? rfg.summary.dual?.toolChanges : "?"}(층마다 층 머리 T1 + T0), T1 도포 > 0, estimate 툴 전환 20 × 6 s`,
+  );
+  // ① 대조군 — flipOrderWhenStuck false(예전 기본): 갇힌 B → 경고 (2026-10-15 리드 결정 — 막지 않는다). 파일은 나오고 경고에 구체 이유
+  const ri = ringInput({ flipOrderWhenStuck: false });
   const rg = runTask0GcodeExport(ri);
   const rj = await runTask0JobZipExport(ri);
-  const allLayers = JSON.stringify([...Array(10).keys()]);
   for (const [what, r, file] of [["run.gcode", rg, rg.gcode], ["job.zip", rj, rj.zip]]) {
     const warns = r.ok ? r.warnings : [];
     assert(
       r.ok && file !== null && file.length > 0 && JSON.stringify(r.failedLayers) === allLayers &&
-        warns.some((s) => s.startsWith("재료 B(T1)가 재료 A(T0)에 둘러싸여 T1 로 들어갈 길이 없는 층 10개") && s.includes("층 0 (Z 0.1 mm)") && s.includes("협의 §31-4")) &&
+        warns.some((s) => s.startsWith("재료 B(T1)가 재료 A(T0)에 둘러싸여 T1 로 들어갈 길이 없는 층 10개") && s.includes("층 0 (Z 0.1 mm)") && s.includes("뒤집는 계획을 끈 설정")) &&
         !warns.some((s) => s.includes("얇은 부분 채움 실패")),
-      `① 갇힌 B(닫힌 고리) ${what}: 막지 않음(파일 있음), 경고 층 전 층, 경고 ${warns.length}건 "${warns[0]?.slice(0, 46) ?? (r.ok ? "(없음)" : "(막힘)")}…"`,
+      `① 갇힌 B(닫힌 고리, 대조군 flipOrderWhenStuck false) ${what}: 막지 않음(파일 있음), 경고 층 전 층, 경고 ${warns.length}건 "${warns[0]?.slice(0, 46) ?? (r.ok ? "(없음)" : "(막힘)")}…"`,
     );
   }
-  assert(rg.ok && rg.summary.dual?.toolChanges === 0 && rg.summary.dual.depositMmByTool[1] === 0, "① 요약 — 툴 전환 0, T1 도포 0 (경고 이유를 화면에 보이는 데 씀)");
+  assert(rg.ok && rg.summary.dual?.toolChanges === 0 && rg.summary.dual.depositMmByTool[1] === 0, "① 대조군 요약 — 툴 전환 0, T1 도포 0 (경고 이유를 화면에 보이는 데 씀)");
   // ② 출력 가능 영역 밖 — 파일 D 형상을 world X +72 (베드 X 147~157)
   const { items, slots } = (() => {
     const d = appItemsD();
@@ -550,8 +673,10 @@ async function sectionBlocked() {
   );
   const uo = runTask0GcodeExport(uRingInput({}));
   assert(
-    uo.ok && uo.warnings.length === 0 && uo.summary.dual.toolChanges === 5,
-    `④ 같은 배치를 기본 옵션(우회 켬)으로 내면 경고 0 (툴 전환 ${uo.ok ? uo.summary.dual.toolChanges : "?"})`,
+    uo.ok && uo.warnings.length === 1 && uo.warnings[0].startsWith("트래블이 칠한 레진에서 d = ") && !uo.warnings[0].includes("B → A") &&
+      uo.summary.dual.toolChanges === 5,
+    `④ 같은 배치를 기본 옵션(우회 켬)으로 내면 교차 경고 0 — d 경고 1줄만(전환 트래블이 파킹에서 U 입구로 돌아 들어가며 칠한 A 에서 w/2), ` +
+      `순서 그대로 A → B (툴 전환 ${uo.ok ? uo.summary.dual.toolChanges : "?"})`,
   );
 }
 
@@ -1026,8 +1151,10 @@ async function loadMutantSet(tag, mutations, entry) {
 }
 
 const AT_DUAL_SELF = "  if (dualSlots !== null && issues.length === 0) {";
-const AT_TRAVEL = "  const travel = travelContactViolations(gen.gcode, [toUm(p.parkXMm), toUm(p.parkYMm)]);";
-const AT_TRAPPED = "    else if (abOrder && stuckT1 > 0) {";
+const AT_TRAVEL = "  const travel = checkTask0TravelContact(gen.gcode, [toUm(p.parkXMm), toUm(p.parkYMm)]);";
+const AT_TRAPPED = "    else if (abOrder && !s.orderFlipped && stuckT1 > 0) {";
+/** (Z1-d) 트래블 여유 거리 d 경고(4-c — 2재료 자기 검사와 따로)는 빼고 본다 */
+const notClearance = (r) => (r.ok ? r.warnings.filter((s) => !s.startsWith("트래블이 칠한 레진에서 d = ")) : null);
 const AT_SUPPORT_SLOT = "export const TASK0_SUPPORT_SLOT: Task0MaterialSlot = 'A';";
 const AT_TOOL_CHANGES = "  const toolChangeCount = gcode.totals.toolChanges;";
 const AT_DUAL_SLOTS = "  const dualSlots = dualSlotsOf(input);";
@@ -1066,20 +1193,20 @@ async function sectionControls(ref) {
   const cOvZ = await noSelf.runTask0JobZipExport(overlapInput({ subtractOverlap: false }));
   const cUn = noSelf.runTask0GcodeExport(uRingInput({ thinFillDetour: false }));
   assert(
-    cOv.ok && cOv.warnings.length === 0 && cOvZ.ok && cOvZ.warnings.length === 0 && cUn.ok && cUn.warnings.length === 0,
-    "c. 2재료 자기 검사를 빼면 B 우선 위반 출력(run.gcode·job.zip)과 교차 트래블 출력이 경고 없이 나온다 — (4)④ 의 경고를 만드는 것은 이 검사",
+    cOv.ok && notClearance(cOv).length === 0 && cOvZ.ok && notClearance(cOvZ).length === 0 && cUn.ok && notClearance(cUn).length === 0,
+    "c. 2재료 자기 검사를 빼면 B 우선 위반 출력(run.gcode·job.zip)과 교차 트래블 출력이 (d 경고 말고는) 경고 없이 나온다 — (4)④ 의 경고를 만드는 것은 이 검사",
   );
   // d. 트래블 검사만 제거
   const noTravel = await loadMutantSet("no-travel", { "task0-export.ts": [[AT_TRAVEL, "  const travel: { layer: number; count: number }[] = [];"]] }, "task0-export.ts");
   const dUn = noTravel.runTask0GcodeExport(uRingInput({ thinFillDetour: false }));
   const dOv = noTravel.runTask0GcodeExport(overlapInput({ subtractOverlap: false }));
   assert(
-    dUn.ok && !dUn.warnings.some((s) => s.startsWith("트래블이 칠한 레진")) && dOv.ok && dOv.warnings.some((s) => s.startsWith("B 우선 위반")),
+    dUn.ok && !dUn.warnings.some((s) => s.startsWith("트래블이 칠한 레진을 가로지르거나")) && dOv.ok && dOv.warnings.some((s) => s.startsWith("B 우선 위반")),
     "d. 트래블 검사만 빼면 교차 출력은 트래블 경고 없이 나오고 B 우선 위반 경고는 그대로 — 커버리지 검사만으로는 교차를 못 잡는다",
   );
   // e. 갇힌 B 판정 제거 (D2 — 판정이 writer 통계 unreachableByTool 기반이 된 뒤: 빼면 "맞물림" 문구로 떨어진다)
-  const noTrap = await loadMutantSet("no-trapped", { "task0-export.ts": [[AT_TRAPPED, "    else if (abOrder && stuckT1 > 0 && false) {"]] }, "task0-export.ts");
-  const eR = noTrap.runTask0GcodeExport(ringInput());
+  const noTrap = await loadMutantSet("no-trapped", { "task0-export.ts": [[AT_TRAPPED, "    else if (abOrder && !s.orderFlipped && stuckT1 > 0 && false) {"]] }, "task0-export.ts");
+  const eR = noTrap.runTask0GcodeExport(ringInput({ flipOrderWhenStuck: false }));
   const eW = eR.ok ? eR.warnings : [];
   assert(
     eR.ok && !eW.some((s) => s.includes("둘러싸여")) && eW.some((s) => s.startsWith("두 재료가 맞물린 단면에서")),
@@ -1134,7 +1261,7 @@ async function sectionPerf() {
 }
 
 async function main() {
-  console.log("Task0 2재료 앱 내보내기 검증 (D1b — 파일별 재료·job.zip/run.gcode 2재료·manifest 2재료, 규격서 v0.3.4)");
+  console.log("Task0 2재료 앱 내보내기 검증 (D1b — 파일별 재료·job.zip/run.gcode 2재료·manifest 2재료, 규격서 v0.3.5)");
   const ref = await sectionAppPath();
   await sectionWorkerModule(ref);
   await sectionSingle();

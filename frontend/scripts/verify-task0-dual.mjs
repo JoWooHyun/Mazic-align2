@@ -2,6 +2,7 @@
 //
 //   무엇을: src/features/v2/utils/task0/task0-gcode-writer.ts 의 dualMaterial 옵션(층 안 T0/T1 2패스 + 툴별 리트랙트 +
 //     재료 겹침 우선순위 B > A + 재료별 커버리지)이 규격서 v0.3.4(Task0 리포 docs/Task0_Gcode_규격서_초안.md @ a4ebc6c)
+//     → Z1-d v0.3.5(481f416 — §6 T 전환 직후 첫 트래블은 파킹 (0,0) 출발, 갇힌 층만 B → A 잠정 허용, §7-2 트래블 여유 거리 d)
 //     §5(툴별 리트랙트 상태 기계·전환 순서 E−r → T1 → 트래블 → E+r → 도포·층 끝 모든 툴 리트랙트)·§6(층 안 T0/T1 순차,
 //     기본 A(T0) → B(T1), 동시 토출 없음)·§3(도포 = 노광, 2재료 경계 물림은 합집합 안이면 허용)·§7(트래블 교차 0)대로인지.
 //     설계 = docs/계획_하이브리드슬라이서설정_20260928.md §5-3(R_B = PB, R_A = PA − R_B), §5-2(서포트 = A).
@@ -28,7 +29,8 @@
 //       c3 **툴별** 리트랙트 상태 기계 (verify-task0-writer checkRetract — D1a 에서 툴별로 확장): T 줄을 따라 툴별 상태,
 //          모든 툴 리트랙트로 시작, 층마다 툴별 순변화 0·E+r 수 = E−r 수, T 전환 직전 지금 툴 리트랙트, 전환 뒤 첫 도포 앞 E+r,
 //          인접 규칙(E+r 다음 = 도포, E−r 다음 = T·트래블·층 끝), 층 끝 모든 툴 리트랙트
-//       c4·c4b 트래블 교차 0 — **모든 툴**의 칠한 선분 기준(전환 트래블 포함, T 줄은 트래블 경로를 끊지 않는다)
+//       c4·c4b 트래블 교차 0 — **모든 툴**의 칠한 선분 기준(전환 트래블 포함). (Z1-d) T 줄 뒤 위치 = 파킹 (0,0) — 전환 트래블은
+//          파킹에서 출발한 경로로 본다(verify-task0-writer buildModel, 규격 v0.3.5 §6)
 //       c5 툴 패스마다 +Y 단조(띠)·행 간격 — 띠 원점 = 그 재료 단면 최소 Y. **2재료 패스 규칙**(재작업): 행 방향·띠 방향 번갈아는
 //          보지 않는다(막힌 끝을 피해 반대 끝으로 들어갈 수 있게) — 대신 한 띠 안 항목은 한 방향 X 순서, 한 행 구간끼리 간격 ≥ w,
 //          띠 번호 비감소·띠 경계 자르기는 그대로. 행만 있는 층의 L자 모양도 안 본다(교차는 c4·c4b). 앞 패스는 층 첫 트래블 = 직선
@@ -48,10 +50,12 @@
 //       툴별 c3 FAIL 이고 **툴을 모르는 c3(T 줄을 지운 출력)는 통과**(= 확장이 필요한 이유) / 우회 끔(thinFillDetour=false) →
 //       c4 FAIL — 층마다 [A 패스 + 전환 트래블 + B 첫 도포] 만 남긴 모델에서도 두 재료 층마다 1건(= 전환 트래블), 우회 켬이면 0 /
 //       순서 B→A(order 'BA') → c10 FAIL (기대 순서를 B→A 로 주면 나머지는 통과)
-//   (D) 닫힌 고리(A 가 B 를 완전히 둘러쌈) — A→B 순서로는 B 로 들어갈 길이 없다: writer 가 그 층을 thinFill 'failed'
-//       (unreachable > 0)로 보고하고, 내놓은 출력에도 교차 트래블이 없어야(c3·c4·c4b 통과). order 'BA' 면 통과함을 기록
-//       (규격 §6 【미정】 "B 가 A 안에 갇힌 층은 B → A" — Task0 에 물을 거리). lh 0.1 만 — lh 0.05 는 bench-task0-dual ④
-//       (같은 판정 함수 closedRingChecks, 실패 층이 두 배라 오래 걸려 상시 검증에서 뺐다).
+//   (D) 닫힌 고리(A 가 B 를 완전히 둘러쌈) — A→B 순서로는 B 로 들어갈 길이 없다. (Z1-d) 기본 writer(flipOrderWhenStuck 기본 켬 —
+//       규격 v0.3.5 §6 "갇힌 층만 B → A" 잠정 허용)는 그 층만 B → A 로 내서 실패 0·커버리지 통과·c1~c10 통과(기대 순서 B→A),
+//       조건 ① 층마다 층 머리(G1 Z 다음)에 T1 명시. 조건 ② A 트래블 ↔ 칠한 B 비드는 c4·c4b 0, d(§7-2) 는 실측 기록(writer 계획은
+//       w/2 기하 — 협의 §37 질문 2). 대조군 flipOrderWhenStuck false(예전 기본): 그 층을 thinFill 'failed'(unreachable > 0)로
+//       보고하고, 내놓은 출력에도 교차 트래블이 없어야(c3·c4·c4b 통과). order 'BA' 면 통과함도 기록.
+//       lh 0.1 만 — lh 0.05 는 bench-task0-dual ④ (같은 판정 함수 closedRingChecks, 오래 걸려 상시 검증에서 뺐다).
 //   (E) 단일 재료 회귀 — dualMaterial 없는 호출 = 옵션 키 없는 호출, 파일 A sha256 고정값(verify-task0-export 와 같은 값),
 //       T 줄은 프리앰블뿐. 옵션 검사(경계 여유·부스러기 0 만, 슬롯 수·값).
 //   (F) 라이브러리 단위 — rasterizeTask0Region = 두 래스터의 AND NOT, 커버리지 옵션 없는 호출 = 빈 옵션 호출,
@@ -83,8 +87,10 @@ import {
 } from "../src/features/v2/utils/task0/task0-coverage.ts";
 import { generateTask0Gcode, resolveTask0WriterParams } from "../src/features/v2/utils/task0/task0-gcode-writer.ts";
 import * as fillRoute from "../src/features/v2/utils/task0/task0-fill-route.ts";
+import { TASK0_DEFAULTS } from "../src/features/v2/utils/task0/task0-frame.ts";
 import { rasterizeTask0Mask, rasterizeTask0Region } from "../src/features/v2/utils/task0/task0-mask.ts";
 import { task0LayerPolygonsBed } from "../src/features/v2/utils/task0/task0-slice.ts";
+import { checkTask0TravelClearance } from "../src/features/v2/utils/task0/task0-travel-check.ts";
 import {
   LAYER,
   SNAP_TOL,
@@ -119,8 +125,8 @@ const REPO_ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const TASK0_DIR = process.env.TASK0_DIR || path.resolve(REPO_ROOT, "..", "Task0");
 /** Task0 원본 파서 커밋 (v0.2.1 — 규격서 v0.3.4 §12) */
 const ORIGIN_PARSER_COMMIT = "03c0519";
-/** 파일 A sha256 (Z1-c 고정값 — verify-task0-export.mjs EXPECTED_SHA.cube10 과 같은 값) */
-const FILE_A_SHA = "dde08ea97b2e144dabc842d1257980bdd4d51fa59b7bf7453c463e5f264928b9";
+/** 파일 A sha256 (Z1-d 고정값 — verify-task0-export.mjs EXPECTED_SHA.cube10 과 같은 값) */
+const FILE_A_SHA = "d5c9db45d7ca7a51823bcb20234d329bd88c19b8ee4d4e8edf57f3de96a6cd6e";
 
 // ── assert 유틸 ──────────────────────────────────────────────────────────
 let failed = 0;
@@ -993,6 +999,9 @@ function sectionFixtures(params) {
           if (JSON.stringify(seq) !== JSON.stringify(want)) bad.push(`층 ${n}: ${JSON.stringify(seq)} ≠ ${JSON.stringify(want)}`);
         });
         assert(bad.length === 0, `층별 도포 툴 순서 = 형상 기대 (기둥만 T0 / 둘 다 T0→T1 / 판만 T1 등)${bad.length ? " — " + bad.slice(0, 3).join(" / ") : ""}`);
+        // (Z1-d) 조건 ① — 층 첫 툴이 직전 층 끝 툴과 다르면 층 머리(G1 Z 다음)에 T 명시 (규격 v0.3.5 §6)
+        const head = layerHeadToolViolations(result.gcode, (n) => fixture.expectSeq((n + 0.5) * lh)[0] ?? null);
+        assert(head.length === 0, `조건 ① 층 첫 툴 ≠ 직전 층 끝 툴이면 층 머리에 T 명시${head.length ? " — " + head.slice(0, 3).join(" / ") : ""}`);
       }
       const variantLayers = t.routeVariantLayers ?? [];
       const flippedLayers = t.orderFlippedLayers ?? [];
@@ -1180,27 +1189,102 @@ function sectionWriterControls(params) {
 // ── (D) 닫힌 고리 ─────────────────────────────────────────────────────────
 
 /**
- * 닫힌 고리 판정 — [{ ok, msg }]. A→B 순서로는 B 로 들어갈 길이 없으니 전 층 'failed'·경로 없는 항목 > 0·T1 도포 0·T 전환 0,
- * 내놓은 출력은 형식·상태 기계·교차 0 (c1·c2·c3·c4·c4b·c6·c7), 재료 B 커버리지 FAIL. withBA 면 order 'BA' 가 통과함도 기록.
- * verify 는 lh 0.1 만 돌린다 — lh 0.05 는 bench-task0-dual ④ 가 같은 함수로 본다(실패 층이 많아 오래 걸림).
+ * (Z1-d) 조건 ① — 층마다 기대 첫 도포 툴(expectFirst(n), 도포 없는 층은 null)이 직전 층 끝 툴과 다르면, 그 층 블록 안
+ * 첫 도포 앞에 그 툴의 T 줄이 있어야 한다(Task0 는 툴 상태를 추적해 보정하지 않음 — 규격 v0.3.5 §6 ①). 층 머리 T 면 G1 Z 바로 다음.
+ * @returns 위반 문장 목록
+ */
+export function layerHeadToolViolations(gcode, expectFirst) {
+  const out = [];
+  const model = buildModel(gcode);
+  let tool = 0; // 프리앰블 T0
+  for (const layer of model.layers) {
+    const startTool = tool;
+    const want = expectFirst(layer.index);
+    let firstDepTool = null;
+    let tBeforeDep = null;
+    for (const op of layer.ops) {
+      const t = toolOfOp(op);
+      if (t >= 0) {
+        if (firstDepTool === null && tBeforeDep === null) tBeforeDep = { t, head: layer.ops.indexOf(op) === 1 && layer.ops[0].kind === "z" };
+        tool = t;
+      } else if (op.kind === "deposit" && firstDepTool === null) firstDepTool = tool;
+    }
+    if (want === null) continue;
+    if (firstDepTool !== want) out.push(`층 ${layer.index}: 첫 도포 툴 T${firstDepTool} ≠ 기대 T${want}`);
+    else if (want !== startTool && (tBeforeDep === null || tBeforeDep.t !== want || !tBeforeDep.head)) {
+      out.push(`층 ${layer.index}: 첫 툴 T${want} ≠ 직전 층 끝 T${startTool} 인데 층 머리(G1 Z 다음)에 T${want} 없음`);
+    }
+  }
+  return out;
+}
+
+/**
+ * 닫힌 고리 판정 — [{ ok, msg }] (머리 주석 (D)). 기본 writer = 그 층만 B → A(규격 v0.3.5 §6 잠정 허용)로 통과,
+ * 대조군 flipOrderWhenStuck false = 예전 기본(전 층 'failed'·경로 없는 항목 > 0·T1 도포 0·T 전환 0, 내놓은 출력은 형식·상태 기계·
+ * 교차 0 — c1·c2·c3·c4·c4b·c6·c7, 재료 B 커버리지 FAIL). withBA 면 order 'BA' 가 통과함도 기록.
+ * verify 는 lh 0.1 만 돌린다 — lh 0.05 는 bench-task0-dual ④ 가 같은 함수로 본다(오래 걸림).
  */
 export function closedRingChecks(lh, params, withBA = false) {
   const out = [];
   const fixture = fixtureClosedRing();
   const ctx = makeDualCtx(fixture, lh, params);
+  // 기본 — flipOrderWhenStuck 기본 켬 (Z1-d)
+  const tf = Date.now();
+  const f = generateTask0Gcode(ctx.meshes, ctx.topY, lh, { dualMaterial: { slots: fixture.slots } });
+  const msF = Date.now() - tf;
+  const ft = f.totals;
+  out.push({
+    ok:
+      ft.thinFillFailedLayers.length === 0 && ft.unreachable === 0 && ft.orderFlippedLayers.length === ft.layerCount &&
+      ft.byTool[1].segments > 0 && ft.toolChanges === 2 * ft.layerCount,
+    msg:
+      `[${ctx.name}] 기본(flipOrderWhenStuck 기본 켬): 실패 층 ${ft.thinFillFailedLayers.length}, 경로 없는 항목 ${ft.unreachable}, ` +
+      `B → A 층 ${ft.orderFlippedLayers.length}/${ft.layerCount}, T1 도포 ${ft.byTool[1].segments}줄, T 전환 ${ft.toolChanges} (층마다 2 — 층 머리 T1 + T0) (writer ${msF} ms)`,
+  });
+  const resF = runDualOutputChecks(f.gcode, { ...ctx, expectOrder: [1, 0] });
+  const badF = Object.keys(resF).filter((k) => resF[k].length > 0);
+  out.push({ ok: badF.length === 0, msg: `  … 출력 검사 c1~c10 통과(기대 순서 B→A)${badF.length ? ` — 실패 ${badF.join("·")}: ${badF.map((k) => resF[k][0]).join(" / ")}` : ""}` });
+  const covF = checkTask0DualGcodeCoverage(ctx.meshes, ctx.slots, ctx.topY, lh, f.gcode, { depositWidthMm: params.depositWidthMm });
+  out.push({ ok: covF.pass, msg: `  … 재료별 커버리지 ${covF.pass ? "통과" : "FAIL"} (A·B 모두 (a)(b)(c)(d)·넘침·B 우선)` });
+  const head = layerHeadToolViolations(f.gcode, () => 1);
+  out.push({
+    ok: head.length === 0,
+    msg: `  … 조건 ① 층마다 첫 툴 T1 ≠ 직전 층 끝 T0 → 층 머리(G1 Z 다음)에 T1 명시 (규격 v0.3.5 §6)${head.length ? ` — ${head.slice(0, 3).join(" / ")}` : ""}`,
+  });
+  // 대조군 — 층 0 머리 T1 을 지우면(직전 툴 T0 로 B 를 칠하는 파일) 조건 ① 검사가 잡는다
+  const fl = f.gcode.split("\n");
+  const firstT1 = fl.indexOf("T1");
+  const headMut = firstT1 >= 0 ? layerHeadToolViolations([...fl.slice(0, firstT1), ...fl.slice(firstT1 + 1)].join("\n"), () => 1) : [];
+  out.push({ ok: headMut.length > 0, msg: `  … 대조군: 층 0 머리 T1 을 지운 파일 → 조건 ① 위반 ${headMut.length}건 (${headMut[0] ?? "없음"})` });
+  // 조건 ② — A 트래블 ↔ 칠한 B 비드: 교차·접촉(c4·c4b)은 위 검사가 0 으로 봤다. d(§7-2) 는 실측 기록 — writer 는 w/2 기하로 계획한다
+  //   (A 행 끝이 B 행 끝에서 정확히 w, 우회 경로는 칠한 B 에서 w/2 — 설계 §5 질문 2·4). lh 0.1 실측 = 층마다 16건, 최소 0.25 mm
+  const clr = checkTask0TravelClearance(f.gcode, { parkXMm: params.parkXMm, parkYMm: params.parkYMm, clearanceMm: TASK0_DEFAULTS.travelClearanceMm });
+  const clrN = clr.reduce((a, v) => a + v.count, 0);
+  const clrMin = clr.length ? Math.min(...clr.map((v) => v.minDistMm)) : null;
+  out.push({
+    ok: clr.length === ft.layerCount && clr.every((v) => v.againstOtherTool) && (lh !== 0.1 || (clrN === 160 && Math.abs(clrMin - 0.25) < 1e-9)),
+    msg:
+      `  … (기록) 조건 ② d = ${TASK0_DEFAULTS.travelClearanceMm} mm 판정: A 트래블이 칠한 B 비드에 d 안으로 ${clrN}건 · ${clr.length}개 층 · ` +
+      `최소 ${clrMin?.toFixed(3)} mm — 전부 다른 툴 비드(내보내기는 경고 1줄, 막지 않음 — 협의 §37 질문 2)`,
+  });
+  // 대조군 — flipOrderWhenStuck false (예전 기본): A→B 순서로는 B 로 들어갈 길이 없다
   const t0 = Date.now();
-  const r = generateTask0Gcode(ctx.meshes, ctx.topY, lh, { dualMaterial: { slots: fixture.slots } });
+  const r = generateTask0Gcode(ctx.meshes, ctx.topY, lh, { dualMaterial: { slots: fixture.slots, flipOrderWhenStuck: false } });
   const ms = Date.now() - t0;
   const t = r.totals;
   out.push({
     ok: t.thinFillFailedLayers.length === t.layerCount && t.unreachable > 0 && t.byTool[1].segments === 0 && t.toolChanges === 0,
-    msg: `[${ctx.name}] 전 층 'failed' (${t.thinFillFailedLayers.length}/${t.layerCount}), 경로 없는 항목 ${t.unreachable}, T1 도포 0, T 전환 0 (writer ${ms} ms)`,
+    msg: `[${ctx.name}] 대조군 flipOrderWhenStuck false: 전 층 'failed' (${t.thinFillFailedLayers.length}/${t.layerCount}), 경로 없는 항목 ${t.unreachable}, T1 도포 0, T 전환 0 (writer ${ms} ms)`,
   });
   const res = runDualOutputChecks(r.gcode, { ...ctx });
   const okKeys = ["c1", "c2", "c3", "c4", "c4b", "c6", "c7"].filter((k) => res[k].length === 0);
   out.push({ ok: okKeys.length === 7, msg: `  … 내놓은 출력은 형식·상태 기계·교차 0 (c1·c2·c3·c4·c4b·c6·c7 통과 ${okKeys.length}/7) — 억지로 가로지르지 않음` });
   const cov = checkTask0DualGcodeCoverage(ctx.meshes, ctx.slots, ctx.topY, lh, r.gcode, { depositWidthMm: params.depositWidthMm });
-  out.push({ ok: !cov.pass && cov.worst.B.bWithoutDeposit > 0, msg: `  … 재료 B 커버리지 FAIL (B 섬 도포 0 — ${cov.worst.B.bWithoutDeposit}) = 쓰는 쪽이 막아야 할 파일` });
+  out.push({ ok: !cov.pass && cov.worst.B.bWithoutDeposit > 0, msg: `  … 재료 B 커버리지 FAIL (B 섬 도포 0 — ${cov.worst.B.bWithoutDeposit}) = 쓰는 쪽이 경고할 파일` });
+  out.push({
+    ok: f.gcode !== r.gcode,
+    msg: "  … 기본 출력 ≠ 대조군 출력 (flipOrderWhenStuck 기본값이 실제로 켜짐)",
+  });
   if (withBA) {
     const ba = generateTask0Gcode(ctx.meshes, ctx.topY, lh, { dualMaterial: { slots: fixture.slots, order: "BA" } });
     const covBA = checkTask0DualGcodeCoverage(ctx.meshes, ctx.slots, ctx.topY, lh, ba.gcode, { depositWidthMm: params.depositWidthMm });
@@ -1210,14 +1294,14 @@ export function closedRingChecks(lh, params, withBA = false) {
       ok: ba.totals.thinFillFailedLayers.length === 0 && covBA.pass && badBA.length === 0,
       msg:
         `  … (기록) order 'BA' 면 통과 — 실패 층 ${ba.totals.thinFillFailedLayers.length}, 커버리지 ${covBA.pass ? "통과" : "FAIL"}, ` +
-        `우회 ${ba.totals.detourTravels} (규격 §6 【미정】 "B 가 A 안에 갇힌 층은 B → A" — Task0 에 물을 거리)`,
+        `우회 ${ba.totals.detourTravels} (규격 v0.3.5 §6 "갇힌 층만 B → A" 잠정 허용 — 기본 writer 는 층마다 이것을 고른다)`,
     });
   }
   return out;
 }
 
 function sectionClosedRing(params) {
-  console.log("\n(D) 닫힌 고리 — A→B 순서로는 B 로 들어갈 길이 없음 (층 실패로 보고, lh 0.1 — lh 0.05 는 bench-task0-dual ④):");
+  console.log("\n(D) 닫힌 고리 — A→B 순서로는 B 로 들어갈 길이 없음 → 기본은 그 층만 B → A (대조군은 층 실패로 보고, lh 0.1 — lh 0.05 는 bench-task0-dual ④):");
   for (const { ok, msg } of closedRingChecks(0.1, params, true)) assert(ok, msg);
 }
 
@@ -1397,7 +1481,7 @@ function sectionOriginalParser(outputs) {
 }
 
 function main() {
-  console.log("Task0 2재료 writer 검증 (D1a — 층 안 T0/T1 2패스, 툴별 리트랙트, B 우선 차집합, 재료별 커버리지; 규격서 v0.3.4)");
+  console.log("Task0 2재료 writer 검증 (D1a — 층 안 T0/T1 2패스, 툴별 리트랙트, B 우선 차집합, 재료별 커버리지; 규격서 v0.3.5)");
   const params = resolveTask0WriterParams();
   const outputs = sectionFixtures(params);
   sectionMutations(outputs);
