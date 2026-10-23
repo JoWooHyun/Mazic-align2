@@ -30,6 +30,10 @@ import {
   task0ExportMaterialNames,
   task0ExportMaterialSlots,
 } from "../../../utils/task0/task0-material";
+import {
+  buildTask0PathPreview,
+  type Task0PathPreview,
+} from "../../../utils/task0/task0-path-preview";
 import { profileExposure } from "../utils/profile-exposure";
 import { previewLayerCount } from "../utils/layer-count";
 import { NL } from "../utils/text";
@@ -80,6 +84,11 @@ export function useSliceExport({
   const [task0Report, setTask0Report] = useState<Task0ExportReport | null>(
     null,
   );
+  // Task0 경로 미리보기 (P1 — 계획 docs/계획_경로미리보기_20261019.md D1) — 마지막 run.gcode 내보내기의 층별 이동.
+  //   task0Report 와 **같은 수명**: 아래 무효화 effect·두 Task0 핸들러 시작에서 같이 지우고, sameInputs 일 때만 채운다.
+  //   run.gcode 텍스트는 보관하지 않는다 — 파싱한 타입 배열만(계획서 §5 메모리). job.zip 결과에는 G-code 텍스트가 없어
+  //   (워커가 zip 바이트만 보냄) 경로는 run.gcode 내보내기에서만 생긴다.
+  const [task0Path, setTask0Path] = useState<Task0PathPreview | null>(null);
 
   // 마지막 Task0 결과는 그때의 입력(모델·서포트·프로파일·층두께)에만 맞다 (Z2 인계) — 입력이 바뀌거나 슬라이스 화면을
   //   나가면 지운다. 모델·서포트 편집은 슬라이스 화면 밖에서만 되므로(편집 잠금) 화면을 나갈 때 지우면 서포트만 옮긴
@@ -95,6 +104,7 @@ export function useSliceExport({
   useEffect(() => {
     task0ReportEpochRef.current += 1;
     setTask0Report(null);
+    setTask0Path(null);
   }, [
     files,
     supportsLength,
@@ -405,6 +415,7 @@ export function useSliceExport({
     const epoch = task0ReportEpochRef.current;
     setBatchExport({ busy: true, done: 0, total: 0 });
     setTask0Report(null);
+    setTask0Path(null);
     try {
       const meshes = handle.getSliceGeometry();
       const topY = handle.getSceneTopY();
@@ -501,6 +512,7 @@ export function useSliceExport({
     const epoch = task0ReportEpochRef.current;
     setBatchExport({ busy: true, done: 0, total: 0 });
     setTask0Report(null);
+    setTask0Path(null);
     try {
       const meshes = handle.getSliceGeometry();
       const topY = handle.getSceneTopY();
@@ -541,6 +553,10 @@ export function useSliceExport({
       downloadBlob(blob, fileName);
       if (sameInputs) {
         setTask0Report({ ok: true, kind: "gcode", fileName, summary: result.summary, warnings: result.warnings });
+        // 경로 미리보기 (P1) — 내려받은 파일과 **같은 텍스트**에서. 파싱 실패는 미리보기만 포기(파일은 이미 냈다).
+        setTask0Path(
+          safeBuildTask0Path(result.gcode, printerProfile),
+        );
       }
       // 막지 않은 경고(얇은 부분 채움 실패 등 — 품질 문제)는 내려받은 뒤 한 번 알린다. 없으면 알림 없음
       if (result.warnings.length > 0) {
@@ -584,5 +600,25 @@ export function useSliceExport({
     handleExportTask0JobZip,
     handleExportTask0Gcode,
     task0Report,
+    // 경로 미리보기 (P1) — Task0 프로파일이 아니면 undefined (단면 패널이 경로 도구를 안 보인다), 경로가 없으면 null
+    task0Path: isTask0Profile(printerProfile) ? task0Path : undefined,
   };
+}
+
+/** run.gcode 텍스트 → 경로 미리보기. 실패하면 null (미리보기만 포기 — 내보내기 결과·알림과 무관) */
+function safeBuildTask0Path(
+  gcode: string,
+  printerProfile: PrinterProfileV2,
+): Task0PathPreview | null {
+  try {
+    return buildTask0PathPreview(gcode, {
+      writer: task0WriterOptionsForProfile(printerProfile),
+      // 단면 래스터의 플레이트 = 씬 plateWRef/plateDRef 와 같은 출처(ViewerV2Page 가 buildVolumeMm 을 넘김)
+      plateWidthMm: printerProfile.buildVolumeMm[0],
+      plateDepthMm: printerProfile.buildVolumeMm[1],
+    });
+  } catch (e) {
+    console.warn("Task0 경로 미리보기를 만들지 못했습니다", e);
+    return null;
+  }
 }

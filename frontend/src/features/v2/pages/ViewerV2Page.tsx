@@ -144,6 +144,7 @@ const ViewerV2Page: React.FC = () => {
     handleExportTask0JobZip,
     handleExportTask0Gcode,
     task0Report,
+    task0Path,
   } = useSliceExport({
     files,
     project,
@@ -767,6 +768,8 @@ const ViewerV2Page: React.FC = () => {
             lcdWidthPx={printerProfile.lcdWidthPx}
             lcdHeightPx={printerProfile.lcdHeightPx}
             materialSlots={task0Material.sliceSlots}
+            layerIdx={safeLayerIdx}
+            task0Path={task0Path}
           />
         )}
 
