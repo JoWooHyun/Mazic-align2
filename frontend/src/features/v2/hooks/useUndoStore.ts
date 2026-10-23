@@ -81,7 +81,8 @@ export const useUndoStore = create<UndoState>((set, get) => ({
     } catch (err) {
       // 실패 항목은 버린다 — 남겨 두면 Ctrl+Z 마다 같은 실패를 반복해 이력이 막힌다.
       console.warn(`[undo] "${entry.label}" 되돌리기 실패 — 이력에서 제외:`, err);
-      // C9 — undo 콜백은 전부 저장(repo 쓰기)이라 실패하면 DB 가 되돌려지지 않았다. 사용자에게도 알린다
+      // C9 — undo 콜백은 거의 저장(repo 쓰기)이라 실패하면 DB 가 되돌려지지 않았다. 사용자에게도 알린다
+      //   (대상이 이미 지워져 "not found" 로 실패하는 경우도 같은 문구 — 되돌려지지 않은 것은 같다)
       //   (저장 지점이 이미 보고한 같은 오류는 reportSaveFailure 가 중복으로 보고하지 않는다).
       reportSaveFailure("되돌리기", err);
       set((s) =>

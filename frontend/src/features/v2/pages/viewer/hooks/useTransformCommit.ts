@@ -210,7 +210,7 @@ export function useTransformCommit({
                 onRedesignInvalidated?.(invalidated.length);
               } catch (e) {
                 // 삭제 실패 시 안내 배너를 띄우지 않는다 — 실제로 지워지지
-                // 않았는데 "제거되었습니다" 라고 말하면 안 되므로. 로그만 남김.
+                // 않았는데 "제거되었습니다" 라고 말하면 안 되므로. 로그 + 저장 실패 알림(C9).
                 console.error("재설계 서포트 무효화 삭제 실패 (B-1):", e);
                 reportSaveFailure("재설계 서포트 정리", e);
               }
