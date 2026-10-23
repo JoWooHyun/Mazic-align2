@@ -7,7 +7,7 @@
 //     src/features/v2/utils/build-volume.ts        (checkPrintableArea · checkItemsInPrintableArea — 모델 + 서포트)
 //     src/features/v2/hooks/usePrinterProfileStore.ts (빌트인 목록·새 설치 기본 선택·저장값 하위 호환)
 //     + 배선(소스 검사): 워커·서비스·useSliceExport·SliceSidePanel·ViewerV2Page·BabylonScene 훅 순서.
-//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.4 @ a4ebc6c §1(베드 150×85, 출력 가능 영역 X 10~150 × Y 10~85,
+//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.5 @ 481f416 (Z1-d — v0.3.4 a4ebc6c 에서) §1(베드 150×85, 출력 가능 영역 X 10~150 × Y 10~85,
 //   투사 (10,10)·73 µm·1920×1080, Z 0~2000)·§5(리트랙트)·§8(F 한계)·§12(파서 v0.2.1). 설계 = docs/계획_Z1_task0출력_20261002.md §4·§4-2.
 //
 //   (1) 프로파일 — 빌트인 Task0 필드(outputKind 'task0', 1920×1080, 73 µm, 150×85×2000), 값이 TASK0_DEFAULTS 와 같음
@@ -19,10 +19,13 @@
 //       서포트 바닥 Y 잡음은 위반 아님, 모델 플레이트 아래·높이 초과, 기존 대칭 검사(checkBuildVolume) 문구 그대로.
 //   (3) 앱 경로 = 스크립트 경로 — 워커 코어 runTask0GcodeExport 를 gen-task0-dryrun.mjs 와 같은 입력(파일 A·C·B,
 //       lh 0.1, 빌트인 Task0 프로파일의 writer 옵션)으로 → generateTask0Gcode 직접 호출과 같은 문자열 + sha256 고정값
-//       (Z1-c 규격 v0.3.4: A dde08ea9… / C ab3f8d74… / B b1e65f70…), 파서 3모드 경고·오류 0, 요약(층 수·빈 층·채움 층·estimate),
-//       층 진행 콜백(1..n 차례, 바이트 무영향).
-//       고정값 갱신 근거(Z1-c): 새 출력에서 **파일 첫 도포 앞 E+r 1줄 + 머리 메타 두 줄**만 되돌리면 Z1-b2 판(b50b691)
-//       sha256(A 22415b46… / C 3975b066… / B a62e93fa…)이 그대로 나온다 = 바이트 변화는 v0.3.4 리트랙트 규칙뿐.
+//       (Z1-d 규격 v0.3.5: A d5c9db45… / C 3baf90a6… / B 5c8fbf74…), 파서 3모드 경고·오류 0, 요약(층 수·빈 층·채움 층·estimate),
+//       층 진행 콜백(1..n 차례, 바이트 무영향). 경고: A·C 0, B 는 트래블 여유 거리 d(v0.3.5 §7-2) 경고 1줄만(양성 대조군 —
+//       얇은 부분 채움 조각이 행 사이에 놓여 행 중심선에서 w/2, 층 0~4).
+//       고정값 갱신 근거(Z1-d): 새 출력의 **머리 메타 두 줄**만 v0.3.4 문구로 바꾸면 Z1-c 판 sha256(A dde08ea9… / C ab3f8d74… /
+//       B b1e65f70…)이 그대로 나온다 = 단일 재료 바이트 변화는 머리 두 줄뿐(전환 트래블·뒤집기는 2재료만).
+//       (Z1-c 근거 이어서) 거기서 **파일 첫 도포 앞 E+r 1줄 + 머리 메타 두 줄**을 되돌리면 Z1-b2 판(b50b691)
+//       sha256(A 22415b46… / C 3975b066… / B a62e93fa…)이 그대로 나온다 = 그때 바이트 변화는 v0.3.4 리트랙트 규칙뿐.
 //       리트랙트 수: 층마다 E+r = E−r, 파일 E+r = Z1-b2 판 + 1(A 99→100 / C 3→4 / B 199→200).
 //   (3b) 실제 워커 모듈 — slice-batch.worker.ts 를 가짜 self 로 Node 에서 불러 task0-gcode 메시지를 넣으면
 //       progress(스로틀, 마지막 = 전체 층) + task0-done 1건, gcode sha256 = 위 고정값, 막힘은 error 가 아닌 task0-done,
@@ -90,12 +93,34 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const V2 = path.resolve(SCRIPT_DIR, "..", "src", "features", "v2");
 const TASK0_SRC = path.join(V2, "utils", "task0");
 
-/** gen-task0-dryrun.mjs 가 쓰는 파일 A·C·B 의 sha256 (Z1-c 고정값 — 규격 v0.3.4: 첫 도포 앞 E+r) */
+/** gen-task0-dryrun.mjs 가 쓰는 파일 A·C·B 의 sha256 (Z1-d 고정값 — 규격 v0.3.5: 머리 메타 두 줄만 바뀜) */
 const EXPECTED_SHA = {
+  cube10: "d5c9db45d7ca7a51823bcb20234d329bd88c19b8ee4d4e8edf57f3de96a6cd6e",
+  "gap-plates": "3baf90a6768acc409dee05a0b62b9158cba3637654a809e131e71b044997c117",
+  "file-b": "5c8fbf74b37d1d3e1c05f468384f3cc27f89ded6480120eeaaaca30356e1bc5f",
+};
+/** 같은 파일의 Z1-c 판(규격 v0.3.4 — 0f2d330 까지의 고정값) sha256 — Z1-d 고정값 갱신의 근거로만 쓴다 */
+const PREV_SHA_V034 = {
   cube10: "dde08ea97b2e144dabc842d1257980bdd4d51fa59b7bf7453c463e5f264928b9",
   "gap-plates": "ab3f8d7431386b5deaa3a4f44df09dfe1b0b1f0ac82303423cc63ccac76d7859",
   "file-b": "b1e65f70c96a3e5cee17a97c27d8b2bb029faa8e82791bca2ef09361098a8339",
 };
+/** Z1-c 판 머리 메타 첫 두 줄 */
+const V034_HEADER = [
+  "; MazicAlign v2 task0-gcode-writer (Z1-c, spec v0.3.4)",
+  "; Task0 G-code spec v0.3.4 (B pattern: serpentine 0 deg row fill, L moves between rows)",
+];
+/** 새 출력의 머리 메타 두 줄 — 첫 줄 = TASK0_WRITER_ID, 둘째 줄 = 규격판 문구 */
+const V035_SPEC_LINE = "; Task0 G-code spec v0.3.5 (B pattern: serpentine 0 deg row fill, L moves between rows)";
+
+/** 새 출력 → Z1-c 판 재현: 머리 메타 두 줄만 옛 문구로. 모양이 예상과 다르면 null */
+function revertToV034(gcode) {
+  const lines = gcode.split("\n");
+  if (lines[0] !== `; ${TASK0_WRITER_ID}` || lines[1] !== V035_SPEC_LINE) return null;
+  lines[0] = V034_HEADER[0];
+  lines[1] = V034_HEADER[1];
+  return lines.join("\n");
+}
 /** 같은 파일의 Z1-b2 판(b50b691 — 규격 v0.3.3, 첫 사용 E+r 생략) sha256 — Z1-c 고정값 갱신의 근거로만 쓴다 */
 const PREV_SHA_Z1B2 = {
   cube10: "22415b46a3e974f20252e747aa036038c8dce09b1ea06065857526682f99218c",
@@ -111,12 +136,13 @@ const RE_FIRST_DEPOSIT = /^G1 X\S+ Y\S+ E[0-9]/;
 const RE_E_PLUS = /^G1 E[0-9]/;
 
 /**
- * 새 출력 → Z1-b2 판 재현: 머리 메타 두 줄을 옛 문구로, 파일 첫 도포 앞 E+r 1줄 삭제(옛 규칙 "처음 쓸 때 E+r 생략").
+ * Z1-c 판(revertToV034 결과) → Z1-b2 판 재현: 머리 메타 두 줄을 옛 문구로, 파일 첫 도포 앞 E+r 1줄 삭제(옛 규칙 "처음 쓸 때 E+r 생략").
  * 모양이 예상과 다르면 null.
  */
 function revertToZ1b2(gcode) {
+  if (gcode === null) return null;
   const lines = gcode.split("\n");
-  if (lines[0] !== `; ${TASK0_WRITER_ID}` || !lines[1].startsWith("; Task0 G-code spec v0.3.4 ")) return null;
+  if (lines[0] !== V034_HEADER[0] || lines[1] !== V034_HEADER[1]) return null;
   lines[0] = Z1B2_HEADER[0];
   lines[1] = Z1B2_HEADER[1];
   const d = lines.findIndex((l) => RE_FIRST_DEPOSIT.test(l));
@@ -125,6 +151,11 @@ function revertToZ1b2(gcode) {
   return lines.join("\n");
 }
 const countEPlus = (gcode) => gcode.split("\n").filter((l) => RE_E_PLUS.test(l)).length;
+/** 경고 가르기 — 얇은 부분 채움 실패 / (Z1-d) 트래블 여유 거리 d */
+const thinFillWarnings = (r) => (r.ok ? r.warnings.filter((s) => s.includes("얇은 부분 채움 실패")) : []);
+const clearanceWarnings = (r) => (r.ok ? r.warnings.filter((s) => s.startsWith("트래블이 칠한 레진에서 d = ")) : []);
+/** 경고 층 기대값 = 채움 실패 층 ∪ d 위반 층 (오름차순) */
+const unionLayers = (...lists) => [...new Set(lists.flat())].sort((a, b) => a - b);
 
 /** 기존 빌트인 3종 — Z2 전(788c255) 값 그대로여야 한다 */
 const LEGACY_BUILT_INS = [
@@ -409,14 +440,30 @@ function sectionSamePath() {
     const hash = r.ok ? sha256(r.gcode) : "(막힘)";
     outputs[fx.name] = r;
     assert(r.ok, `${fx.name}: 통과 (막힘 이유 ${r.ok ? "없음" : JSON.stringify(r.issues)})`);
-    assert(
-      r.ok && r.warnings.length === 0 && r.failedLayers.length === 0,
-      `${fx.name}: 경고 0 · 경고 층 0 (${r.ok ? JSON.stringify(r.warnings) : "막힘"})`,
-    );
+    if (fx.name === "file-b") {
+      // (Z1-d) 파일 B — 트래블 여유 거리 d 경고 1줄만(양성 대조군: 채움 조각이 행 사이 w/2 에 놓임, 층 0~4 전부). 파일은 낸다
+      assert(
+        r.ok && r.warnings.length === 1 && /^트래블이 칠한 레진에서 d = 0\.5 mm 안으로 지나는 곳 90건\(층 0, 1, 2, 3, 4, 최소 0\.157 mm\)/.test(r.warnings[0]) &&
+          JSON.stringify(r.failedLayers) === "[0,1,2,3,4]" && r.summary.travelClearance?.count === 90,
+        `${fx.name}: 경고 = 트래블 d 1줄만 · 경고 층 [0..4] (${r.ok ? JSON.stringify(r.warnings) : "막힘"})`,
+      );
+    } else {
+      assert(
+        r.ok && r.warnings.length === 0 && r.failedLayers.length === 0 && r.summary.travelClearance?.count === 0,
+        `${fx.name}: 경고 0 · 경고 층 0 · d 위반 0 (${r.ok ? JSON.stringify(r.warnings) : "막힘"})`,
+      );
+    }
     assert(r.ok && r.gcode === direct.gcode, `${fx.name}: 코어 출력 = generateTask0Gcode 직접 호출 (gen-task0-dryrun 이 쓰는 것)`);
     assert(hash === EXPECTED_SHA[fx.name], `${fx.name}: sha256 ${hash.slice(0, 16)}… = 고정값 ${EXPECTED_SHA[fx.name].slice(0, 16)}…`);
-    // Z1-c 고정값 근거 — 바이트 변화는 v0.3.4 리트랙트 규칙(첫 도포 앞 E+r)과 머리 메타 두 줄뿐
-    const prev = revertToZ1b2(direct.gcode);
+    // Z1-d 고정값 근거 — 바이트 변화는 머리 메타 두 줄뿐 (git 옛 커밋이 아니라 같은 출력의 머리 줄 치환으로)
+    const v034 = revertToV034(direct.gcode);
+    const v034Hash = v034 === null ? "(모양 다름)" : sha256(v034);
+    assert(
+      v034Hash === PREV_SHA_V034[fx.name],
+      `${fx.name}: 머리 메타 2줄만 v0.3.4 문구로 바꾸면 Z1-c 판 sha256 ${v034Hash.slice(0, 16)}… = ${PREV_SHA_V034[fx.name].slice(0, 16)}…`,
+    );
+    // Z1-c 고정값 근거 (이어서) — 그때 바이트 변화는 v0.3.4 리트랙트 규칙(첫 도포 앞 E+r)과 머리 메타 두 줄뿐
+    const prev = revertToZ1b2(v034);
     const prevHash = prev === null ? "(모양 다름)" : sha256(prev);
     assert(
       prevHash === PREV_SHA_Z1B2[fx.name],
@@ -522,11 +569,14 @@ async function sectionWorkerModule() {
   const sw = FAIL_INPUTS.spiral({ retryStuckLayers: false });
   const wMsgs = await send(sw.meshes, sw.topY, sw.layerHeightMm, { ...writer, ...sw.writer });
   const wDone = wMsgs.find((m) => m.type === "task0-done");
+  const wDirect = runTask0GcodeExport({ ...sw, writer: { ...writer, ...sw.writer } });
   assert(
-    wDone !== undefined && wDone.result.ok && typeof wDone.result.gcode === "string" &&
-      JSON.stringify(wDone.result.failedLayers) === "[9]" && wDone.result.warnings.some((s) => s.includes("얇은 부분 채움 실패")) &&
-      !wMsgs.some((m) => m.type === "error"),
-    "경고만 있는 입력(나선 벽, 대조군 writer) → task0-done(ok, gcode, warnings·failedLayers [9] 그대로)",
+    wDone !== undefined && wDone.result.ok && typeof wDone.result.gcode === "string" && wDirect.ok &&
+      JSON.stringify(wDone.result.failedLayers) === JSON.stringify(wDirect.failedLayers) && wDone.result.failedLayers.includes(9) &&
+      JSON.stringify(wDone.result.warnings) === JSON.stringify(wDirect.warnings) &&
+      thinFillWarnings(wDone.result).length === 1 && !wMsgs.some((m) => m.type === "error"),
+    `경고만 있는 입력(나선 벽, 대조군 writer) → task0-done(ok, gcode, warnings·failedLayers 그대로 — 층 9 채움 실패 포함 ` +
+      `${JSON.stringify(wDone?.result.failedLayers)})`,
   );
 }
 
@@ -581,21 +631,26 @@ function sectionBlocked(run = runTask0GcodeExport, label = "") {
     `  ① 나선 벽 기본 writer: 실패 층 ${JSON.stringify(dt.thinFillFailedLayers)} · 변형 층 ${JSON.stringify(dt.routeVariantLayers)}` +
       ` (번호 ${JSON.stringify(dt.routeVariantLayers.map((n) => direct.layers[n].routeVariant))}) · 경고 ${spDef.ok ? spDef.warnings.length : "(막힘)"}건`,
   );
+  // (Z1-d) 나선 벽은 채움 조각이 행 사이에 놓여 트래블 여유 거리 d 경고(층 0~9)도 1줄 붙는다 — 채움 실패 경고와 따로 센다
   assert(
     spDef.ok && spDef.gcode === direct.gcode &&
-      JSON.stringify(spDef.failedLayers) === JSON.stringify(dt.thinFillFailedLayers) &&
-      (spDef.warnings.length === 0) === (dt.thinFillFailedLayers.length === 0),
+      JSON.stringify(spDef.failedLayers) === JSON.stringify(unionLayers(dt.thinFillFailedLayers, spDef.summary.travelClearance?.layers ?? [])) &&
+      (thinFillWarnings(spDef).length === 0) === (dt.thinFillFailedLayers.length === 0) &&
+      spDef.warnings.length === thinFillWarnings(spDef).length + clearanceWarnings(spDef).length,
     `① 나선 벽(겹친 상자 한 메시, lh 0.1) 기본 writer: 막지 않음, gcode = writer 직접 호출, ` +
-      `${dt.thinFillFailedLayers.length === 0 ? `재시도가 층 9 를 살림(변형 층 ${JSON.stringify(dt.routeVariantLayers)}) — 경고 0` : "재시도로도 실패 — 경고 1건"}`,
+      `${dt.thinFillFailedLayers.length === 0 ? `재시도가 층 9 를 살림(변형 층 ${JSON.stringify(dt.routeVariantLayers)}) — 채움 경고 0` : "재시도로도 실패 — 채움 경고 1건"}` +
+      ` · d 경고 ${clearanceWarnings(spDef).length}줄`,
   );
   assert(
-    sp.ok && typeof sp.gcode === "string" && sp.gcode.length > 0 && JSON.stringify(sp.failedLayers) === "[9]" &&
-      sp.summary.thinFillFailedLayers.length === 1,
-    `① 나선 벽 대조군 writer(retryStuckLayers false — 예전 계획): 막지 않음, gcode 있음, 경고 층 ${JSON.stringify(sp.failedLayers)}`,
+    sp.ok && typeof sp.gcode === "string" && sp.gcode.length > 0 && sp.failedLayers.includes(9) &&
+      JSON.stringify(sp.failedLayers) === JSON.stringify(unionLayers([9], sp.summary.travelClearance?.layers ?? [])) &&
+      JSON.stringify(sp.summary.thinFillFailedLayers) === "[9]",
+    `① 나선 벽 대조군 writer(retryStuckLayers false — 예전 계획): 막지 않음, gcode 있음, 채움 실패 층 [9], 경고 층 ${JSON.stringify(sp.failedLayers)}`,
   );
   assert(
-    sp.ok && sp.warnings.length === 1 && sp.warnings.some((s) => s.includes("층 9") && s.includes("Z 1 mm") && s.includes("얇은 부분 채움 실패")),
-    `① 경고에 층 번호·Z·문구: ${sp.ok ? sp.warnings[0] : "(막힘)"}`,
+    sp.ok && thinFillWarnings(sp).length === 1 && thinFillWarnings(sp)[0].includes("층 9") && thinFillWarnings(sp)[0].includes("Z 1 mm") &&
+      sp.warnings.length === 1 + clearanceWarnings(sp).length,
+    `① 경고에 층 번호·Z·문구: ${sp.ok ? thinFillWarnings(sp)[0] : "(막힘)"}`,
   );
   assert(
     !spd.ok && spd.gcode === null && spd.failedLayers.length === 0 && spd.issues.some((s) => s.includes("Task0 파서 print(lh=0.1)") && s.includes("F 클램프")),
@@ -609,6 +664,22 @@ function sectionBlocked(run = runTask0GcodeExport, label = "") {
   assert(!empty.ok && empty.gcode === null && empty.summary === null && empty.issues[0].includes("슬라이스할 층이 없습니다"), `③ topY 0: ${empty.ok ? "" : empty.issues[0]}`);
   const noMesh = runTask0GcodeExport({ meshes: [], topY: 10, layerHeightMm: 0.1 });
   assert(!noMesh.ok && noMesh.gcode === null, "③ 메시 없음: 막힘");
+  // (Z1-d) ⑦ 층 수 상한 9999 — Task0 거부 조건 4(PNG 이름 4자리 고정, 규격 v0.3.5 §11) → writer 전에 막음. 작은 상자 + topY 로 층 수만 키운다
+  //   (맨 아래 상자 위는 빈 층 — writer 가 빨리 끝나 경계 9999 층 통과도 상시 검증에 넣을 수 있다)
+  const capMeshes = [normalizeTriangleWinding(boxTriangles([-1, 0, -1], [1, 0.2, 1]))];
+  const capCalls = [];
+  const cap = runTask0GcodeExport({ meshes: capMeshes, topY: 1000, layerHeightMm: 0.1 }, (d) => capCalls.push(d));
+  assert(
+    !cap.ok && cap.gcode === null && cap.summary === null && capCalls.length === 0 &&
+      cap.issues.length === 1 && cap.issues[0].startsWith("층 10000개가 Task0 상한 9999층을 넘습니다") && cap.issues[0].includes("거부 조건 4"),
+    `⑦ 층 10000 개(lh 0.1, topY 1000): writer 전에 막힘(층 진행 ${capCalls.length}회) — "${cap.ok ? "(통과)" : cap.issues[0].slice(0, 40)}…"`,
+  );
+  const edgeCalls = [];
+  const edge = runTask0GcodeExport({ meshes: capMeshes, topY: 999.9, layerHeightMm: 0.1 }, (d) => edgeCalls.push(d));
+  assert(
+    edge.ok && edge.summary.layerCount === 9999 && edgeCalls.length === 9999 && edge.warnings.length === 0,
+    `⑦ 층 9999 개(topY 999.9) 경계: 통과 (층 ${edge.ok ? edge.summary.layerCount : "?"}, 경고 ${edge.ok ? edge.warnings.length : "(막힘)"})`,
+  );
   return out;
 }
 
@@ -790,7 +861,7 @@ async function sectionControls(area) {
   const noFill = await loadMutant("no-fill-check", "if (failed.length > 0) {", "if (failed.length < 0) {");
   const d = sectionBlocked(noFill.runTask0GcodeExport, "no-fill-check");
   assert(
-    d.spiral.ok && typeof d.spiral.gcode === "string" && d.spiral.warnings.length === 0,
+    d.spiral.ok && typeof d.spiral.gcode === "string" && thinFillWarnings(d.spiral).length === 0,
     "d. 채움 실패 확인을 빼면 나선 벽(대조군 writer, 층 9 채움 실패)이 경고 없이 나온다 — ① 의 경고 단언이 잡는다",
   );
   // d2. 경고를 막음으로 되돌린 코어 (수정 전 정책) — ① 의 "막지 않음" 단언이 잡는다
@@ -818,7 +889,7 @@ async function sectionControls(area) {
 }
 
 async function main() {
-  console.log("Task0 앱 내보내기 검증 (Z2 — 프로파일·출력 가능 영역·워커 코어, 규격서 v0.3.4)");
+  console.log("Task0 앱 내보내기 검증 (Z2 — 프로파일·출력 가능 영역·워커 코어, 규격서 v0.3.5)");
   await sectionProfile();
   const area = sectionArea();
   sectionSamePath();

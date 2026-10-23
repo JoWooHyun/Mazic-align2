@@ -1,7 +1,8 @@
 // Task0 견본 job.zip + 불량 7종 생성 (로드맵 0절 2주차 — 협의 §26-3·§27, 10/8 전달분).
 //
-//   만드는 것 (조립 = src/features/v2/utils/task0/task0-jobzip.ts buildTask0JobZip, 규격서 v0.3.4 §11 @ a4ebc6c —
-//   run.gcode 는 §5 v0.3.4 리트랙트 규칙(모든 툴 리트랙트 상태로 시작, 첫 도포 앞 E+r), Z1-c):
+//   만드는 것 (조립 = src/features/v2/utils/task0/task0-jobzip.ts buildTask0JobZip, 규격서 v0.3.5 §11 @ 481f416 —
+//   run.gcode 는 §5 v0.3.4 리트랙트 규칙(모든 툴 리트랙트 상태로 시작, 첫 도포 앞 E+r), Z1-c. Z1-d(v0.3.5)에서 바뀐 것은
+//   run.gcode 머리 메타 두 줄뿐 — 단일 재료라 툴 전환·전환 트래블이 없다):
 //     sample.job.zip   3층 견본. 10×10 mm 판 두 장(높이 0~0.1, 0.2~0.3 mm), lh 0.1 → 단면 0.05·0.15·0.25 →
 //                      층 1(0-based) 이 두 판 사이 틈이라 빈 층(run.gcode 는 마커 + ;Z: + ;HEIGHT: + G1 Z 만, PNG 전부 0).
 //                      자리 = 출력 가능 영역 가운데(파일 A 와 같은 자리 — world x·z 0~10 = 베드 X 75~85 × Y 42.5~52.5).
@@ -344,7 +345,7 @@ function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
   L.push("");
   L.push(`생성: MazicAlign ${commit}`);
   L.push("      frontend/scripts/gen-task0-sample-zip.mjs (같은 입력이면 같은 바이트 — generatedAt 고정)");
-  L.push("규격: Task0_Gcode_규격서 v0.3.4 (a4ebc6c) §11 job.zip, §3 층 규약, §5 리트랙트, §13 시간 상수. 파서 이식 기준 03c0519 (v0.2.1)");
+  L.push("규격: Task0_Gcode_규격서 v0.3.5 (481f416) §11 job.zip, §3 층 규약, §5 리트랙트, §13 시간 상수(툴 전환 6 s). 파서 이식 기준 03c0519 (v0.2.1)");
   L.push("");
   L.push("공통 조건");
   L.push(`  단일 재료 T0, 도포폭 w = ${prm.depositWidthMm} mm, 시린지 상수 K = ${prm.syringeKMm3PerMm} mm3/mm (잠정: 10 mL 안지름 14.5 mm 가정)`);
@@ -406,14 +407,14 @@ function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
     L.push(`    검증기: 위반 [${b.report.violations.join(", ")}] — ${b.report.reasons.map((r) => r.message).join(" / ")}`);
   }
   L.push("");
-  L.push("거부 조건 (규격서 v0.3.4 §11)");
+  L.push("거부 조건 (규격서 v0.3.5 §11)");
   for (const [n, label] of Object.entries(TASK0_JOB_CONDITION_LABELS)) L.push(`  ${n}. ${label}`);
   return L.join("\n") + "\n";
 }
 
 async function main() {
   const { out } = parseArgs(process.argv.slice(2));
-  console.log("Task0 견본 job.zip + 불량 7종 생성 (규격서 v0.3.4 §11, 협의 §26-3·§27)");
+  console.log("Task0 견본 job.zip + 불량 7종 생성 (규격서 v0.3.5 §11, 협의 §26-3·§27)");
 
   // 1) 전부 만들고 검사 — 하나라도 어긋나면 아무것도 쓰지 않음
   const { sample, bads } = await buildTask0SampleSet();

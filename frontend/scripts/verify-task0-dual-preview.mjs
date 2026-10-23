@@ -9,7 +9,8 @@
 //     src/features/v2/utils/task0/task0-gcode-writer.ts        Task0LayerStats.unreachableByTool (G-code 바이트 불변)
 //     src/features/v2/utils/task0/task0-export.ts              실패 층 이유 = writer 통계, manifest 이름 정규화
 //     + 데이터(ProjectV2.task0MaterialNames?, createStlFile init — repo 경유), 배선(소스 검사).
-//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.4 @ a4ebc6c §6(A = T0, B = T1, 겹친 곳 B — D1a B 우선)·§11(materials[].name 은
+//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.4 @ a4ebc6c → Z1-d v0.3.5 @ 481f416 (§6 갇힌 층만 B → A 잠정 허용 — writer
+//   flipOrderWhenStuck 기본 켬. (5) 실패 이유 판정은 뒤집기를 끈 대조군 입력으로 본다) §6(A = T0, B = T1, 겹친 곳 B — D1a B 우선)·§11(materials[].name 은
 //   Task0 GUI 표시용 자유 문자열). 설계 = docs/계획_Z1_task0출력_20261002.md §4-6(D1b 인계 — D2 목록, 3D 색 구멍).
 //
 //   (1) 라벨 마스크 — 2재료 픽스처(서포트 기둥 A + 판 B = 파일 D 형상 / 겹친 두 상자 A·B / A 고리 안 B)의 여러 높이에서
@@ -106,16 +107,16 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.resolve(SCRIPT_DIR, "..");
 const V2 = path.join(FRONTEND, "src", "features", "v2");
 
-/** 고정값 — verify-task0-export·verify-task0-dual-export·verify-task0-jobzip-export 와 같은 값 */
-const FILE_D_SHA = "53730df71c6a7d984615962e9228c9a6a54636e84941d6b69310334f9ee28faa";
+/** 고정값 (Z1-d, 규격 v0.3.5) — verify-task0-export·verify-task0-dual-export·verify-task0-jobzip-export 와 같은 값 */
+const FILE_D_SHA = "a7a90c684789556f7f3ca5d19e29317a637b6110f709d98cbead13d9b0518f0c";
 const SINGLE_SHA = {
-  cube10: "dde08ea97b2e144dabc842d1257980bdd4d51fa59b7bf7453c463e5f264928b9",
-  "gap-plates": "ab3f8d7431386b5deaa3a4f44df09dfe1b0b1f0ac82303423cc63ccac76d7859",
-  "file-b": "b1e65f70c96a3e5cee17a97c27d8b2bb029faa8e82791bca2ef09361098a8339",
+  cube10: "d5c9db45d7ca7a51823bcb20234d329bd88c19b8ee4d4e8edf57f3de96a6cd6e",
+  "gap-plates": "3baf90a6768acc409dee05a0b62b9158cba3637654a809e131e71b044997c117",
+  "file-b": "5c8fbf74b37d1d3e1c05f468384f3cc27f89ded6480120eeaaaca30356e1bc5f",
 };
-const SAMPLE_SHA = "616b0e610dfa0a101f357d2a8a30bdb7f3823ddd773350ffe40682f7c8192989";
-/** D1b 2재료 job.zip (파일 D 형상, 앱 generator, D_GENERATED_AT) — 기본 이름이면 그대로여야 한다 */
-const DUAL_ZIP_SHA = "e9edb893e4e0b40e271ebfda9dcdfb4885859087a64c549fccffbe407ce26050";
+const SAMPLE_SHA = "10e653f345dcd70295bc3a8dddd28bda5d944675a7fde9e94bc5468dd720fc62";
+/** 2재료 job.zip (파일 D 형상, 앱 generator, D_GENERATED_AT) — 기본 이름이면 그대로여야 한다 (Z1-d 값 — verify-task0-dual-export DUAL_ZIP_SHA) */
+const DUAL_ZIP_SHA = "83db607e89f4e96eb89f6f63d4bf230895ab42d91289ae6c11b44b36420310b0";
 const D_GENERATED_AT = "2026-10-07T00:00:00.000Z";
 const D_LH = 0.1;
 
@@ -601,7 +602,7 @@ async function sectionNames() {
       ...extra,
     });
   const jd = await core(M.task0ExportMaterialNames("dual", M.resolveTask0MaterialNames(undefined)));
-  assert(jd.ok && sha256(jd.zip) === DUAL_ZIP_SHA, `기본 이름(2재료) → D1b 고정 job.zip 그대로 (${jd.ok ? sha256(jd.zip).slice(0, 16) : jd.issues[0]}…)`);
+  assert(jd.ok && sha256(jd.zip) === DUAL_ZIP_SHA, `기본 이름(2재료) → 고정 job.zip 그대로 (${jd.ok ? sha256(jd.zip).slice(0, 16) : jd.issues[0]}…)`);
   const jn = await core(M.task0ExportMaterialNames("dual", { A: "베이스 레진", B: "크라운\u0000 레진\u0085" }));
   const man = jn.ok ? await zipManifest(jn.zip) : null;
   const rep = jn.ok ? await verifyTask0JobZip(jn.zip) : null;
@@ -784,15 +785,21 @@ async function sectionCopy() {
 
 // ── (5) 실패 이유 ────────────────────────────────────────────────────────
 
+/**
+ * (Z1-d) 실패 이유 판정은 writer 가 그 층을 'failed' 로 남겨야 볼 수 있다 — 기본 writer 는 갇힌 층을 B → A 로 뒤집어 통과시키므로
+ * (flipOrderWhenStuck 기본 켬, 규격 v0.3.5 §6) 여기 입력은 모두 뒤집기를 끈 대조군(예전 기본)이다.
+ */
+const NO_FLIP = { flipOrderWhenStuck: false };
 function ringPlusInput() {
   const ring = fixtureClosedRing().meshes();
   const meshes = [ring[0], ring[1], box([10, 0, -2], [13, 1, 2])];
-  return { meshes, topY: meshesTopY(meshes), layerHeightMm: 0.1, writer: APP.writer, printable: APP.printable, materialSlots: ["A", "B", "B"] };
+  const slots = ["A", "B", "B"];
+  return { meshes, topY: meshesTopY(meshes), layerHeightMm: 0.1, writer: { ...APP.writer, dualMaterial: { slots, ...NO_FLIP } }, printable: APP.printable, materialSlots: slots };
 }
 function ringInput() {
   const ring = fixtureClosedRing();
   const meshes = ring.meshes();
-  return { meshes, topY: meshesTopY(meshes), layerHeightMm: 0.1, writer: APP.writer, printable: APP.printable, materialSlots: ring.slots };
+  return { meshes, topY: meshesTopY(meshes), layerHeightMm: 0.1, writer: { ...APP.writer, dualMaterial: { slots: ring.slots, ...NO_FLIP } }, printable: APP.printable, materialSlots: ring.slots };
 }
 function baRingInput() {
   const ring = fixtureClosedRing().meshes();
@@ -800,7 +807,7 @@ function baRingInput() {
     meshes: ring,
     topY: meshesTopY(ring),
     layerHeightMm: 0.1,
-    writer: { ...APP.writer, dualMaterial: { order: "BA" } },
+    writer: { ...APP.writer, dualMaterial: { slots: ["B", "A"], order: "BA", ...NO_FLIP } },
     printable: APP.printable,
     materialSlots: ["B", "A"],
   };
@@ -818,7 +825,7 @@ function reasonChecks(core) {
   const r = core.runTask0GcodeExport(ringInput());
   const rw = warnsOf(r);
   out.push({
-    ok: r.ok && rw.some((s) => s.startsWith(trappedHead) && s.includes("T1 패스에서 길이 없는 도포 항목") && s.includes("협의 §31-4")) && !rw.some((s) => s.includes("맞물린")),
+    ok: r.ok && rw.some((s) => s.startsWith(trappedHead) && s.includes("T1 패스에서 길이 없는 도포 항목") && s.includes("뒤집는 계획을 끈 설정")) && !rw.some((s) => s.includes("맞물린")),
     msg: `A 고리 안 B → 갇힌 B 경고(파일은 냄) "${shown(r, 44)}…"`,
   });
   const rp = core.runTask0GcodeExport(ringPlusInput());
@@ -842,9 +849,9 @@ function sectionReasons() {
   const cases = [
     ...[fixtureCube10(), fixtureGapPlates(), fixtureFileB()].map((fx) => ({ name: fx.name, meshes: fx.meshes(), lh: 0.1 })),
     { name: "파일 D", meshes: fixtureDualPillarsPlate().meshes(), lh: D_LH, dual: { slots: fixtureDualPillarsPlate().slots } },
-    { name: "A 고리 안 B", ...(() => { const i = ringInput(); return { meshes: i.meshes, lh: 0.1, dual: { slots: i.materialSlots } }; })() },
-    { name: "고리 밖 B 추가", ...(() => { const i = ringPlusInput(); return { meshes: i.meshes, lh: 0.1, dual: { slots: i.materialSlots } }; })() },
-    { name: "B 고리 안 A ('BA')", ...(() => { const i = baRingInput(); return { meshes: i.meshes, lh: 0.1, dual: { slots: i.materialSlots, order: "BA" } }; })() },
+    { name: "A 고리 안 B", ...(() => { const i = ringInput(); return { meshes: i.meshes, lh: 0.1, dual: { slots: i.materialSlots, ...NO_FLIP } }; })() },
+    { name: "고리 밖 B 추가", ...(() => { const i = ringPlusInput(); return { meshes: i.meshes, lh: 0.1, dual: { slots: i.materialSlots, ...NO_FLIP } }; })() },
+    { name: "B 고리 안 A ('BA')", ...(() => { const i = baRingInput(); return { meshes: i.meshes, lh: 0.1, dual: { slots: i.materialSlots, order: "BA", ...NO_FLIP } }; })() },
     { name: "구 + 기둥(seed 1000)", ...(() => { const s = sphereSeedModel(1000); return { meshes: s.meshes, lh: 0.1, dual: { slots: s.slots } }; })() },
   ];
   const results = {};
@@ -1011,7 +1018,7 @@ async function sectionControls(copyCtx) {
   );
   // e. 갇힌 B 판정을 D1b 휴리스틱으로
   const oldRule = await loadMutant("trapped-heuristic", "utils/task0/task0-export.ts", [
-    ["    else if (abOrder && stuckT1 > 0) {", "    else if (abOrder && s.byTool[1].segments === 0) {"],
+    ["    else if (abOrder && !s.orderFlipped && stuckT1 > 0) {", "    else if (abOrder && s.byTool[1].segments === 0) {"],
   ]);
   const eRes = reasonChecks(oldRule);
   assert(!eRes[1].ok, `e. 갇힌 B 판정을 옛 휴리스틱("T1 도포 0")으로 되돌리면 고리 밖 B 배치가 "맞물림" 으로 읽혀 (5) 실패 — ${eRes[1].msg.slice(0, 60)}…`);
@@ -1058,7 +1065,7 @@ function sectionPerf() {
 }
 
 async function main() {
-  console.log("Task0 2재료 D2 검증 — 2색 슬라이스 미리보기·재료 색 상태·재료 이름·복제 슬롯 상속·실패 이유 (규격서 v0.3.4)");
+  console.log("Task0 2재료 D2 검증 — 2색 슬라이스 미리보기·재료 색 상태·재료 이름·복제 슬롯 상속·실패 이유 (규격서 v0.3.5)");
   sectionLabels();
   sectionColors();
   await sectionNames();

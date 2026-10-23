@@ -4,6 +4,7 @@
 //     task0-png.ts (8-bit 회색조 PNG 인코더·디코더, CRC-32) · task0-jobzip.ts (manifest·exposure·estimate·preview·zip 조립,
 //     zip 읽기, 검사기 verifyTask0JobZip) + scripts/gen-task0-sample-zip.mjs (견본 sample.job.zip + 불량 7종).
 //     규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.4 @ a4ebc6c §11(job.zip·거부 조건 1~7)·§3·§13,
+//     → Z1-d v0.3.5 @ 481f416 (§11 거부 조건 4 "이름 4자리 고정, 상한 9999층", §13 toolChangeSec 6),
 //     협의 docs/제안_Task0협의_20260929.md §26-3·§27-1.
 //
 //   (1) PNG — 이 스크립트 안의 **독립 구현**(비트 단위 CRC-32 + node:zlib inflate + 필터 5종 복원)으로 대조:
@@ -30,6 +31,8 @@
 //          toolChangeCount, exposure lh, 알 수 없는 항목, JSON 앞 BOM, 도포 층 검정 PNG) — 위반 번호는 그대로 [] 이고 추가 검사가 잡음,
 //          extraChecks 를 끄면 통과.
 //       c. 조건의 다른 형태 — manifest 없음 [2], 4자리 아닌 이름 [4], bed·projector 값 [5], exposure 없음 [6],
+//          (Z1-d) 층 10001 개 zip(layers/10000.png 5자리 — 개수·번호는 이어짐, 'header') [4] / 9999 개(경계) 위반 없음,
+//          buildTask0JobFiles 에 층 10000 개 → RangeError,
 //          PNG 수·;LAYER_CHANGE 수만 다름 [3], ;Z: 없음 ∋ 7, zip 아님 ∋ 1·2,
 //          조건 7 허용치 경계 — 층 2 의 ;Z:·G1 Z 를 ±0.002 → [7], ±0.0009 → 통과 (파서 이식판 print(lh) 판정과 같음).
 //       d. deflate(방식 8)로 다시 묶은 견본도 통과(zip 읽기 경로).
@@ -66,8 +69,10 @@ import { generateTask0Gcode } from "../src/features/v2/utils/task0/task0-gcode-w
 import { parseGcodeText } from "../src/features/v2/utils/task0/task0-gcode-parser.ts";
 import {
   TASK0_ESTIMATE_PARTS,
+  TASK0_JOB_MAX_LAYER_COUNT,
   assembleTask0JobZip,
   buildTask0Estimate,
+  buildTask0JobFiles,
   buildTask0Exposure,
   buildTask0Preview,
   readTask0ZipEntries,
@@ -611,11 +616,11 @@ function keysOf(manifest) {
 }
 
 async function sectionManifest(sample) {
-  // 시간 상수 = 규격 §13 표 그대로 (값을 바꾸면 이 단언과 규격서를 함께)
+  // 시간 상수 = 규격 §13 표 그대로 (값을 바꾸면 이 단언과 규격서를 함께) — v0.3.5: toolChangeSec 0.5 → 6
   const T = TASK0_TIME_CONSTANTS;
   assert(
-    JSON.stringify(T) === JSON.stringify({ toolChangeSec: 0.5, parkSec: 3, bladeSec: 15, layerOverheadSec: 2 }),
-    `(2) TASK0_TIME_CONSTANTS = 규격 §13 (툴전환 0.5 / 파킹 3 / 블레이드 15 / 층 오버헤드 2): ${JSON.stringify(T)}`,
+    JSON.stringify(T) === JSON.stringify({ toolChangeSec: 6, parkSec: 3, bladeSec: 15, layerOverheadSec: 2 }),
+    `(2) TASK0_TIME_CONSTANTS = 규격 v0.3.5 §13 (툴전환 6 / 파킹 3 / 블레이드 15 / 층 오버헤드 2): ${JSON.stringify(T)}`,
   );
   const files = Object.fromEntries(sample.files.map((f) => [f.name, f.data]));
   const m = JSON.parse(dec.decode(files["manifest.json"]));
@@ -704,11 +709,11 @@ async function sectionManifest(sample) {
     ];
     const prm = { depositF: 1800, travelF: 6000, retractF: 1800, retractMm: 1 };
     const est = buildTask0Estimate(layers, prm, [10, 99], { toolChangeCount: 3, time: { parkSec: 4 } });
-    const want = { depositSec: 1, travelSec: 1.067, toolChangeSec: 1.5, parkSec: 4, bladeSec: 15, layerOverheadSec: 4, exposureSec: 10 };
+    const want = { depositSec: 1, travelSec: 1.067, toolChangeSec: 18, parkSec: 4, bladeSec: 15, layerOverheadSec: 4, exposureSec: 10 };
     const diff = Object.keys(want).filter((key) => est[key] !== want[key]);
     assert(
-      diff.length === 0 && est.totalSec === 36.567,
-      `(2) buildTask0Estimate 손계산 — 도포 30 mm/30 mm/s, 트래블 100 mm/100 mm/s + 리트랙트(E−r 1 + E+r 1) × 1 mm/30 mm/s, 툴전환 3×0.5, 파킹 덮어쓰기 4, ` +
+      diff.length === 0 && est.totalSec === 53.067,
+      `(2) buildTask0Estimate 손계산 — 도포 30 mm/30 mm/s, 트래블 100 mm/100 mm/s + 리트랙트(E−r 1 + E+r 1) × 1 mm/30 mm/s, 툴전환 3×6, 파킹 덮어쓰기 4, ` +
         `빈 층 노광 99 제외 → total ${est.totalSec} (다른 항목: ${diff.join(", ") || "없음"})`,
     );
   }
@@ -1013,6 +1018,50 @@ async function sectionControls(sample, bads) {
     const r = await verifyTask0JobZip(await mutateSample(sample, edit));
     assert(JSON.stringify(r.violations) === JSON.stringify(want), `(7c) ${label} → 위반 [${r.violations}] (기대 [${want}]) — ${r.reasons.map((x) => x.message).join(" / ")}`);
   }
+  // (Z1-d) 조건 4 상한 — v0.3.5 §11 "이름 4자리 고정, 상한 9999층". 층 수·;LAYER_CHANGE·exposure 길이를 모두 맞춘 큰 zip 을 만들어
+  //   조건 4 만 걸리는지(10001 층 — layers/10000.png 는 5자리, 번호는 이어짐 — 고치기 전 검사기는 이것을 통과시켰다) / 9999 층 경계는 통과.
+  //   PNG 는 견본의 빈 층 PNG 한 장을 모든 층에 같이 쓴다(층 내용 대조는 조건 4 가 깨지면 하지 않고, 'header' 는 풀지 않는다)
+  {
+    const blank = sample.files.find((f) => f.name === "layers/0001.png").data;
+    const bigZip = async (n) => {
+      const g = generateTask0Gcode([], n * SAMPLE_LH - SAMPLE_LH / 2, SAMPLE_LH); // 메시 없음 → 층 n 개 전부 빈 층
+      const files = sample.files
+        .filter((f) => !f.name.startsWith("layers/"))
+        .map((f) => {
+          if (f.name === "run.gcode") return { name: f.name, data: enc.encode(g.gcode) };
+          if (f.name === "manifest.json") {
+            const m = JSON.parse(dec.decode(f.data));
+            m.layerCount = n;
+            return { name: f.name, data: task0JsonBytes(m) };
+          }
+          if (f.name === "exposure.json") {
+            const x = JSON.parse(dec.decode(f.data));
+            x.exposureSecByLayer = Array.from({ length: n }, (_, i) => x.exposureSecByLayer[Math.min(i, x.exposureSecByLayer.length - 1)]);
+            return { name: f.name, data: task0JsonBytes(x) };
+          }
+          return f;
+        });
+      for (let i = 0; i < n; i++) files.push({ name: task0LayerPngName(i), data: blank });
+      return { layerCount: g.totals.layerCount, bytes: await assembleTask0JobZip(files) };
+    };
+    for (const [n, want] of [[10001, [4]], [9999, []]]) {
+      const big = await bigZip(n);
+      const r = await verifyTask0JobZip(big.bytes, { layerPngs: "header" });
+      assert(
+        big.layerCount === n && JSON.stringify(r.violations) === JSON.stringify(want) &&
+          (n <= 9999 || r.reasons.some((x) => x.condition === 4 && x.message.includes("상한 9999"))),
+        `(7c) 층 ${n} 개 zip(${n > 9999 ? "layers/10000.png 5자리 — 번호는 이어짐" : "경계"}, 'header') → 위반 [${r.violations}] (기대 [${want}]) — ` +
+          `${r.reasons.map((x) => x.message).join(" / ") || "사유 없음"}`,
+      );
+    }
+    let thrown = "";
+    try {
+      buildTask0JobFiles({ gcode: { totals: { layerCount: 10000 } }, layerHeightMm: SAMPLE_LH, images: { layerFiles: [] } });
+    } catch (e) {
+      thrown = e instanceof RangeError ? e.message : `다른 오류 ${String(e)}`;
+    }
+    assert(TASK0_JOB_MAX_LAYER_COUNT === 9999 && thrown.includes("상한 9999"), `(7c) buildTask0JobFiles 층 10000 개 → RangeError "${thrown.slice(0, 50)}…"`);
+  }
   {
     const r = await verifyTask0JobZip(await mutateSample(sample, (fs0) => editText(fs0, "run.gcode", (t) => t.replace(";Z:0.2\n", ""))));
     assert(r.violations.includes(7), `(7c) 층 1 의 ;Z: 줄 삭제 → 위반 [${r.violations}] ∋ 7 — ${r.reasons.map((x) => x.message).join(" / ")}`);
@@ -1176,7 +1225,7 @@ async function sectionPerf() {
 
 async function main() {
   const t0 = performance.now();
-  console.log("Task0 job.zip 조립·검사기 + 8-bit 회색조 PNG 검증 (규격서 v0.3.4 §11, 협의 §26-3·§27)");
+  console.log("Task0 job.zip 조립·검사기 + 8-bit 회색조 PNG 검증 (규격서 v0.3.5 §11, 협의 §26-3·§27)");
   await timed("(1) PNG 인코더·디코더", sectionPng);
   const set = await timed("견본·불량 7종 생성", buildTask0SampleSet);
   if (!set) {

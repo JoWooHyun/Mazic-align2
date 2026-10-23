@@ -2,6 +2,8 @@
  * Task0 job.zip — 조립(buildTask0JobZip)과 검사(verifyTask0JobZip) (규격서 v0.3.3 §11·§3·§13)
  *
  * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.3 @ 커밋 dfdf08c
+ *   (Z1-d: v0.3.5 @ 481f416 §11 거부 조건 세부 — 3 은 manifest layerCount 기준으로 `;LAYER_CHANGE`·PNG·exposure 길이가 모두 같아야,
+ *    4 는 PNG 이름 4자리 고정·상한 9999층, 5 는 PNG 전부·베드 정확 일치(이미 그렇게 검사). §13 toolChangeSec 6)
  *   §11(job.zip 구성·PNG·래스터 규약·manifest v1·exposure.json·preview·**거부 조건 1~7**), §3(층 규약, 빈 층 = PNG 전부 검정),
  *   §13(시간 상수). 협의 `docs/제안_Task0협의_20260929.md` §26-3(10/8 견본 구성)·§27-1(불량 7종).
  * 견본·불량 zip 생성: `scripts/gen-task0-sample-zip.mjs`, 상시 검증: `scripts/verify-task0-jobzip.mjs`.
@@ -13,7 +15,8 @@
  *   - run.gcode      = task0-gcode-writer generateTask0Gcode 출력 그대로.
  *   - layers/NNNN.png = 층 N 의 task0-mask rasterizeTask0Mask(… 'full') — 투사 프레임 1920 × 1080, 0/1 → 0/255,
  *                       8-bit 회색조 (task0-png). 단면은 writer 와 같은 task0-slice task0LayerPolygonsBed(같은 bed 값).
- *                       번호는 0-based 4자리(10000 층부터는 자리가 늘어남 — 규격은 4자리만 적었다).
+ *                       번호는 0-based 4자리 — v0.3.5 §11 "4자리 고정, 상한 9999층"(TASK0_JOB_MAX_LAYER_COUNT). 그보다 많은 층은
+ *                       buildTask0JobFiles 가 거부하고(앱 내보내기는 writer 전에 막음), 검사기는 거부 조건 4 로 본다.
  *   - manifest.json  = 규격 §11 예시와 같은 필드·순서. generatedAt 은 주입 가능(같은 입력 → 같은 바이트).
  *                       2재료(D1b — writer 결과 totals.dualMaterial)면 materials = [A(T0), B(T1)]·dualMaterial true·
  *                       toolChangeCount = G-code 툴 전환 수, 층 노광 = 재료별 큰 값(buildTask0MaterialExposure — 규격 §6).
@@ -28,7 +31,7 @@
  *
  * estimate (규격 §11·§13) — writer 층 통계로 계산, 각 항목을 1 ms 단위로 반올림, totalSec = 나머지 7개 합(ms 정수 합):
  *   depositSec = Σ 도포 길이 ÷ 도포 속도(파일의 F) / travelSec = Σ 트래블 길이 ÷ 트래블 속도 + E 단독 줄(E−r·E+r) 시간
- *   (§13 에 따로 항목이 없어 트래블에 넣는다) / toolChangeSec = toolChangeCount × 0.5 /
+ *   (§13 에 따로 항목이 없어 트래블에 넣는다) / toolChangeSec = toolChangeCount × TASK0_TIME_CONSTANTS.toolChangeSec(v0.3.5: 6) /
  *   parkSec·bladeSec = 도포가 있는 층 수 × 3·15 (빈 층은 Task0 가 파킹·블레이드·LED 를 생략 — §9) /
  *   layerOverheadSec = 전체 층 수 × 2 / exposureSec = 도포가 있는 층의 exposureSecByLayer 합.
  *   가속은 보지 않는다(잠정 상수와 같은 수준의 근사).
@@ -36,7 +39,8 @@
  * 검사 (verifyTask0JobZip) — 거부 조건 번호 목록(violations) + 추가 검사(extraIssues):
  *   1 run.gcode 없음 / 2 manifest.json 없음·JSON 아님·version ≠ 1 /
  *   3 `;LAYER_CHANGE` 수(Task0 파서 이식판 print 모드 layerCount) · manifest layerCount · layers/*.png 수 중 하나라도 다름 /
- *   4 PNG 이름이 layers/0000.png … 로 빈틈없이 이어지지 않음 / 5 PNG 해상도·manifest projector 픽셀 수 ≠ 1920 × 1080,
+ *   4 PNG 이름이 layers/0000.png … 로 빈틈없이 이어지지 않음, 또는 PNG 가 9999장 초과(v0.3.5 — 이름 4자리 고정·상한 9999층) /
+ *   5 PNG 해상도·manifest projector 픽셀 수 ≠ 1920 × 1080,
  *   manifest bed ≠ 150 × 85 / 6 exposure.json 없음·배열 아님·길이 ≠ layerCount / 7 층 N 의 `;Z:` 가 없거나
  *   |`;Z:` − layerHeightMm × (N+1)| > 0.001.
  *   한 조건만 어긴 zip 이 그 번호 하나만 받도록, 판정할 수 없는 조건은 건너뛴다(예: run.gcode 가 없으면 3·7 의
@@ -107,7 +111,13 @@ export const TASK0_JOB_FILE_PREVIEW = 'preview.png';
 export const TASK0_PREVIEW_WIDTH_PX = 400;
 export const TASK0_PREVIEW_HEIGHT_PX = 300;
 
-/** 층 N 의 마스크 PNG 이름 — 0-based 4자리 (규격 §11) */
+/**
+ * 층 수 상한 — 규격 v0.3.5 §11 거부 조건 4 "이름은 4자리 고정, 상한 9999층(0.1 mm 면 1 m — 5자리 없음)".
+ * 앱 내보내기(task0-export)는 층 수가 이를 넘으면 writer 전에 막고, buildTask0JobFiles 는 RangeError.
+ */
+export const TASK0_JOB_MAX_LAYER_COUNT = 9999;
+
+/** 층 N 의 마스크 PNG 이름 — 0-based 4자리 (규격 §11. N > 9998 은 상한 밖 — 자리가 늘어난 이름은 거부 조건 4) */
 export function task0LayerPngName(layerIndex: number): string {
   return `layers/${String(layerIndex).padStart(4, '0')}.png`;
 }
@@ -126,13 +136,13 @@ export const TASK0_ESTIMATE_PARTS = [
 /** 거부 조건 번호 — 규격 §11 */
 export type Task0JobCondition = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
-/** 거부 조건 문구 — 규격 §11 그대로 */
+/** 거부 조건 문구 — 규격 §11 그대로 (v0.3.5 세부 포함) */
 export const TASK0_JOB_CONDITION_LABELS: Readonly<Record<Task0JobCondition, string>> = Object.freeze({
   1: 'run.gcode 없음',
   2: 'manifest.json 없음 또는 version ≠ 1',
-  3: ';LAYER_CHANGE 개수 ≠ layerCount ≠ PNG 개수',
-  4: 'PNG 번호 불연속',
-  5: '해상도(1920×1080)·베드 불일치',
+  3: ';LAYER_CHANGE 개수 ≠ layerCount ≠ PNG 개수 (manifest layerCount 기준 — ;LAYER_CHANGE·PNG·exposure 길이 모두 같아야)',
+  4: 'PNG 번호 불연속 (이름 4자리 고정·상한 9999층)',
+  5: '해상도(1920×1080)·베드 불일치 (PNG 전부·베드 정확 일치)',
   6: 'exposure 배열 길이 ≠ layerCount',
   7: ';Z: ≠ layerHeightMm × (N+1) (±0.001)',
 });
@@ -783,6 +793,9 @@ export function buildTask0JobFiles(input: Task0JobFilesInput): Task0JobFiles {
   const { gcode, images } = input;
   const lh = input.layerHeightMm;
   const layerCount = gcode.totals.layerCount;
+  if (layerCount > TASK0_JOB_MAX_LAYER_COUNT) {
+    throw new RangeError(`층 수 ${layerCount} > Task0 상한 ${TASK0_JOB_MAX_LAYER_COUNT}층 — PNG 이름 4자리 고정 (규격 v0.3.5 §11 거부 조건 4)`);
+  }
   if (images.layerFiles.length !== layerCount) {
     throw new RangeError(`층 PNG ${images.layerFiles.length}장 ≠ writer 층 수 ${layerCount}`);
   }
@@ -1112,9 +1125,17 @@ export async function verifyTask0JobZip(
   const expectedNames = Array.from({ length: P }, (_, i) => task0LayerPngName(i));
   const missing = expectedNames.filter((nm) => !pngNames.has(nm));
   const unexpected = [...pngNames].filter((nm) => !expectedNames.includes(nm));
-  const cond4ok = missing.length === 0 && unexpected.length === 0;
-  if (!cond4ok) {
+  // v0.3.5 — 이름 4자리 고정·상한 9999층: 숫자부가 4자리가 아닌 이름(위 기대 이름도 10000장부터 5자리)이나 9999장 초과
+  const notFourDigits = [...pngNames].filter((nm) => !/^layers\/[0-9]{4}\.png$/i.test(nm));
+  const overCap = P > TASK0_JOB_MAX_LAYER_COUNT;
+  const cond4ok = missing.length === 0 && unexpected.length === 0 && notFourDigits.length === 0 && !overCap;
+  if (missing.length > 0 || unexpected.length > 0) {
     fail(4, `빠진 번호: ${listHead(missing) || '없음'} / 어긋난 이름: ${listHead(unexpected) || '없음'}`);
+  } else if (notFourDigits.length > 0 || overCap) {
+    fail(
+      4,
+      `PNG ${P}장 (상한 ${TASK0_JOB_MAX_LAYER_COUNT}) / 4자리가 아닌 이름: ${listHead(notFourDigits) || '없음'} — 이름 4자리 고정 (규격 v0.3.5 §11)`,
+    );
   }
 
   // ---- 5. 해상도·베드 ----

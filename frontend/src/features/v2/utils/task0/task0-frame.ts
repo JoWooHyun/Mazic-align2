@@ -2,6 +2,7 @@
  * Task0 좌표·층 규약 — 단일 소스 (규격서 v0.3.3 §1·§3·§5·§8·§11, 협의 §25~§26)
  *
  * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.3 @ 커밋 dfdf08c.
+ *   (Z1-d: v0.3.5 @ 481f416 — §7-2 트래블 여유 거리 d(travelClearanceMm)·§13 toolChangeSec 6. 좌표·층 규약은 v0.3.3 그대로)
  * 설계: `docs/계획_Z1_task0출력_20261002.md` S2·S4·S6.
  *
  * writer(task0-gcode-writer.ts)·검증 스크립트·(Z3) 마스크 래스터가 **같은 변환**을 쓰도록 여기 한 곳에 둔다.
@@ -67,9 +68,19 @@ export interface Task0Defaults {
   readonly travelSpeedMmS: number;
   /** E 단독 줄(리트랙트·언리트랙트) 속도 (mm/s) — §8 초안 한계 F1800 */
   readonly retractSpeedMmS: number;
-  /** Task0 파킹 위치 (mm) — §9 층 경계에서 Task0 가 (0,0) 으로 파킹. 층 첫 트래블 길이 통계에만 쓴다 */
+  /**
+   * Task0 파킹 위치 (mm) — §9 층 경계에서 Task0 가 (0,0) 으로 파킹. 층 첫 트래블 길이 통계에 쓴다.
+   * (Z1-d, v0.3.5 §6) T 전환 매크로도 노즐을 여기로 파킹하므로 전환 직후 첫 트래블의 출발점이기도 하다.
+   */
   readonly parkXMm: number;
   readonly parkYMm: number;
+  /**
+   * 트래블 여유 거리 d (mm) — v0.3.5 §7-2 "트래블이 칠한 비드 중심선에서 떨어질 최소 거리
+   * d = w/2 + 노즐 바깥 반지름 + 여유". 노즐 외경 실측 전 잠정 d = w(노즐 끝 외경 ≈ w 가정) 【미정: §14 — 노즐 외경·레진 높이
+   * 실측 후 교체】. 검사기(task0-travel-check)만 쓴다 — writer 우회 계획은 아직 w/2 접촉 기하(행 간격 w 와 d = w 가 양립하지
+   * 않아 보류, 협의 §37 질문). 위반은 내보내기 경고(규칙 10 — Task0 가 거부하지 않는 품질 문제).
+   */
+  readonly travelClearanceMm: number;
 }
 
 /** Task0 기본값 — 단일 소스 (빌트인 Task0 프로파일·프로파일 선택 필드 폴백이 여기를 참조) */
@@ -97,6 +108,7 @@ export const TASK0_DEFAULTS: Task0Defaults = Object.freeze({
   retractSpeedMmS: 30,
   parkXMm: 0,
   parkYMm: 0,
+  travelClearanceMm: 0.5,
 });
 
 /** 픽셀 변환에 필요한 투사 값만 */
@@ -242,11 +254,14 @@ export function task0SliceY(layerIndex: number, layerHeightMm: number): number {
 }
 
 /**
- * 시간 추정 상수 (s) — 규격서 v0.3.3 §13 (잠정). job.zip manifest `estimate` 계산에 쓴다(task0-jobzip.ts).
+ * 시간 추정 상수 (s) — 규격서 v0.3.5 §13 (잠정 — v0.3.5 에서 toolChangeSec 0.5 → 6). job.zip manifest `estimate` 계산에 쓴다(task0-jobzip.ts).
  * 층당 시간 = 도포 + 트래블 + 툴전환 횟수 × toolChangeSec + parkSec + bladeSec + layerOverheadSec + 노광.
  */
 export interface Task0TimeConstants {
-  /** 툴 전환 1회 (퍼지 도입 시 5~15) */
+  /**
+   * 툴 전환 1회 — v0.3.5 §13: Z 리프트 0.3 s + 파킹 왕복 ≈ 5 s + 오프셋·복원, 퍼지 없음(퍼지 도입 시 +5~15).
+   * 층 블록 안 T 줄마다 1회(층 머리 T 포함 — 매크로가 리프트·파킹을 하므로, 협의 §37 질문 3)
+   */
   readonly toolChangeSec: number;
   /** 층당 노즐 파킹 */
   readonly parkSec: number;
@@ -258,7 +273,7 @@ export interface Task0TimeConstants {
 
 /** 시간 추정 상수 — 규격서 §13 값 그대로 (바뀌면 규격서와 함께) */
 export const TASK0_TIME_CONSTANTS: Task0TimeConstants = Object.freeze({
-  toolChangeSec: 0.5,
+  toolChangeSec: 6,
   parkSec: 3,
   bladeSec: 15,
   layerOverheadSec: 2,

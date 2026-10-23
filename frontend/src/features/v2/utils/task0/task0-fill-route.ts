@@ -1,9 +1,16 @@
 /**
- * Task0 채움 층의 도포 순서·트래블 — 띠 분해 + 우회 경로 (규격서 v0.3.4 §5·§7, Z1-b2)
+ * Task0 채움 층의 도포 순서·트래블 — 띠 분해 + 우회 경로 (규격서 v0.3.5 §5·§7, Z1-b2)
  *
  * 원본 규격: Task0 리포 `docs/Task0_Gcode_규격서_초안.md` v0.3.4 @ 커밋 a4ebc6c §7 (v0.3.3 dfdf08c 와 같은 문장) —
  *   "도포는 파킹 (0,0)에서 멀어지는 +Y 방향 단조 진행", "도포한 영역을 가로지르는 트래블 금지 — 우회 경로",
  *   "층 안 Z-hop 금지". 설계: `docs/계획_Z1_task0출력_20261002.md` Z1-b2.
+ *   v0.3.5(481f416, Z1-d) §7-1 이 이 모듈의 방식을 규격으로 적었다 — "+Y 단조는 폭 w 띠 단위로(띠 번호가 줄지 않으면 된다,
+ *   띠 안에서 최대 w 의 −Y 도포·우회 트래블 허용), 툴 패스마다 다시 시작(T1 패스는 그 층의 최소 Y 에서)", "폭 w~2w 띠는 행이
+ *   한 줄 이상 지나 커버리지 (c)(d)를 통과하면 추가 중심선 불필요". 아래 띠 분해·패스별 띠 원점(bandOriginMm)이 그대로 그 정의다.
+ *   v0.3.5 §7-2 의 트래블 여유 거리 d(TASK0_DEFAULTS.travelClearanceMm, 잠정 w)는 **이 계획에는 넣지 않았다** — 계획 거리는
+ *   지금처럼 w/2(아래 교차 검사·엄격 판정). 사유: 행 간격이 w 라 행 사이에 놓이는 채움 조각은 어느 쪽에서 들어가도 가장 가까운
+ *   행 중심선에서 w/2 이하라 d = w 로 계획하면 얇은 층이 전부 "경로 없음" 이 된다(실측 — 파일 B 5층 전부, 기본 서포트 발·화살촉 층).
+ *   d 는 검사기(task0-travel-check)가 재고 내보내기가 경고로 알린다. d 실측·Task0 답(협의 §37) 뒤에 이 계획을 맞춘다.
  * 이 모듈은 얇은 부분 채움(task0-thin-fill)이 필요한 층에서만 쓴다. 채움이 없는 층은 writer 가 B안 행을 그대로
  *   낸다(출력 바이트 불변 — 파일 A·C).
  * 리트랙트(E−r/E+r)는 여기서 내지 않는다 — writer 가 행 층과 같은 상태 기계(travel/deposit)로 붙인다
@@ -83,9 +90,16 @@ export interface Task0RouteInput {
   /** 띠 원점 = 층 단면 최소 Y (mm) */
   bandOriginMm: number;
   depositWidthMm: number;
-  /** A* 격자 범위 (mm) — 단면 bbox + 여유, 출력 가능 영역 안 */
+  /**
+   * A* 격자 범위 (mm) — 단면 bbox + 여유, 출력 가능 영역 안. (Z1-d) L자 트래블의 꺾이는 점도 이 안이어야 한다 — 아래 startUm
+   */
   regionMm: { xMin: number; xMax: number; yMin: number; yMax: number };
-  /** 층 시작 위치 (µm) = Task0 파킹 */
+  /**
+   * 층 시작 위치 (µm) = Task0 파킹. (Z1-d) 2재료 뒤 패스도 파킹(규격 v0.3.5 §6 — T 매크로가 (0,0) 에 파킹 후 다음 줄).
+   * 파킹은 출력 가능 영역 밖이라, 거기서 떠나는 L자(Y 먼저면 꺾이는 점 X = 0, X 먼저면 Y = 0)는 출력 가능 영역 밖 좌표를
+   * 내게 된다 — 내보내기 사후 검사(G-code XY ⊂ 출력 가능 영역)가 막는다. 그래서 **이 시작 위치에서 떠나는 트래블만** 꺾이는 점이
+   * regionMm 밖인 L자 후보를 쓰지 않는다(직선·A* 는 그대로). 그 밖의 트래블·층 첫 트래블(직선 예외)은 예전과 같다.
+   */
   startUm: Task0UmPoint;
   /** false = 우회 끔 (대조군 전용) */
   detour: boolean;
@@ -179,7 +193,8 @@ function orient(a: MmPoint, b: MmPoint, c: MmPoint): number {
   return Math.abs(v) < 1e-12 ? 0 : Math.sign(v);
 }
 
-function segSegDist(a: MmPoint, b: MmPoint, c: MmPoint, d: MmPoint): number {
+/** 두 선분 AB·CD 사이 최소 거리 (mm, 진짜 교차면 0) — task0-travel-check(d 판정)도 이 함수를 쓴다 */
+export function segSegDist(a: MmPoint, b: MmPoint, c: MmPoint, d: MmPoint): number {
   const o1 = orient(a, b, c);
   const o2 = orient(a, b, d);
   const o3 = orient(c, d, a);
@@ -188,13 +203,16 @@ function segSegDist(a: MmPoint, b: MmPoint, c: MmPoint, d: MmPoint): number {
   return Math.min(pointSegDist(a, c, d), pointSegDist(b, c, d), pointSegDist(c, a, b), pointSegDist(d, a, b));
 }
 
-/** 꺾은선에서 호 길이 앞 d·뒤 d 를 뗀 나머지 조각들 */
-function trimPolyline(points: MmPoint[], d: number): [MmPoint, MmPoint][] {
+/**
+ * 꺾은선에서 호 길이 앞 d·뒤 dEnd(빠지면 d) 를 뗀 나머지 조각들 — task0-travel-check(d 판정 — 앞만 뗌)도 이 함수를 쓴다.
+ * dEnd 를 주지 않는 호출(이 모듈의 교차 검사)은 예전과 같은 식이다.
+ */
+export function trimPolyline(points: MmPoint[], d: number, dEnd: number = d): [MmPoint, MmPoint][] {
   let total = 0;
   for (let i = 1; i < points.length; i++) total += dist(points[i - 1], points[i]);
-  if (total <= 2 * d) return [];
+  if (total <= d + dEnd) return [];
   const s0 = d;
-  const s1 = total - d;
+  const s1 = total - dEnd;
   const out: [MmPoint, MmPoint][] = [];
   let acc = 0;
   for (let i = 1; i < points.length; i++) {
@@ -833,23 +851,59 @@ export function routeTask0FillLayer(input: Task0RouteInput): Task0RouteResult {
     /** 교차 검사(c4) + 엄격 판정(c4b) 둘 다 통과 */
     const clear = (waypoints: Task0UmPoint[]): boolean => !crosses(waypoints) && contactOk([cur, ...waypoints]);
 
-    /** 현재 위치 → target 트래블 (경유점, 종류) — 길이 없으면 null */
-    const planTravel = (target: Task0UmPoint, next: Task0UmPoint | null): { pts: Task0UmPoint[]; kind: Task0TravelKind } | null => {
+    /** (Z1-d) 꺾이는 점이 regionMm 안인지 (마지막 = 도포 시작점은 보지 않는다 — 입력 startUm 주석) */
+    const cornersInRegion = (pts: readonly Task0UmPoint[]): boolean => {
+      const r = input.regionMm;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const x = pts[i][0] / UM_PER_MM;
+        const y = pts[i][1] / UM_PER_MM;
+        if (x < r.xMin || x > r.xMax || y < r.yMin || y > r.yMax) return false;
+      }
+      return true;
+    };
+
+    /**
+     * 현재 위치 → target 트래블 (경유점, 종류) — 길이 없으면 null.
+     * viaCorner(Z1-d — 아래 모서리 단계 주석)면 모서리 경유 격자 탐색만 한다(보통 후보는 같은 target 으로 이미 실패한 뒤)
+     */
+    const planTravel = (
+      target: Task0UmPoint,
+      next: Task0UmPoint | null,
+      viaCorner = false,
+    ): { pts: Task0UmPoint[]; kind: Task0TravelKind } | null => {
       if (samePt(cur, target)) return { pts: [], kind: 'none' };
       if (first) return { pts: [target], kind: 'first' };
+      if (viaCorner) {
+        // (Z1-d) 격자 밖 시작점(2재료 뒤 패스 = 파킹, 규격 v0.3.5 §6)은 격자에 이을 칸이 가까이 없어 격자 탐색이 늘 실패한다 →
+        //   격자 원점 모서리(regionMm 최소 X·최소 Y — 파킹 쪽)까지 곧게 간 뒤 거기서 격자 탐색. 파킹 (0,0) → 그 모서리 직선은
+        //   격자 범위(단면 bbox + 여유) 밖 왼쪽 아래에만 놓여 칠한 곳에 닿기 어렵다(그래도 전체 경로를 c4·c4b 로 다시 본다).
+        //   방향 후보를 다 본 뒤에도 길이 없을 때만 부른다(항목 루프) — 칠한 비드에 w/2 까지 붙는 격자 경로보다 곧은 길을 먼저
+        if (det.lattice === null) {
+          det.lattice = new DetourLattice(input.regionMm, hUm, blockMm);
+          for (const s of painted) det.lattice.stamp(s);
+        }
+        const corner: Task0UmPoint = [det.lattice.x0Um, det.lattice.y0Um];
+        if (samePt(corner, target)) return null;
+        const tail = det.lattice.search(corner, target, next, painted, w, radii, (p) => contactOk([cur, ...p]));
+        return tail !== null && clear([corner, ...tail]) ? { pts: [corner, ...tail], kind: 'detour' } : null;
+      }
       const sameY = cur[1] === target[1];
+      // 패스 시작점(2재료 뒤 패스 = 파킹)에서 떠나는 트래블만 꺾이는 점을 본다 — 그 밖의 트래블은 예전 그대로
+      const fromStart = samePt(cur, input.startUm);
       const lY: Task0UmPoint[] = sameY || cur[0] === target[0] ? [target] : [[cur[0], target[1]], target];
-      const standard: { pts: Task0UmPoint[]; kind: Task0TravelKind }[] = sameY
-        ? [{ pts: [target], kind: 'straight' }]
-        : [
-            { pts: lY, kind: lY.length === 2 ? 'lY' : 'straight' },
-            { pts: [target], kind: 'straight' },
-          ];
+      const standard: { pts: Task0UmPoint[]; kind: Task0TravelKind }[] = (
+        sameY
+          ? [{ pts: [target], kind: 'straight' as Task0TravelKind }]
+          : [
+              { pts: lY, kind: (lY.length === 2 ? 'lY' : 'straight') as Task0TravelKind },
+              { pts: [target], kind: 'straight' as Task0TravelKind },
+            ]
+      ).filter((c) => !fromStart || cornersInRegion(c.pts));
       for (const c of standard) if (clear(c.pts)) return c;
       if (!input.detour) return { pts: standard[0].pts, kind: 'crossing' };
       if (!sameY && cur[0] !== target[0]) {
         const lX: Task0UmPoint[] = [[target[0], cur[1]], target];
-        if (clear(lX)) return { pts: lX, kind: 'lX' };
+        if ((!fromStart || cornersInRegion(lX)) && clear(lX)) return { pts: lX, kind: 'lX' };
       }
       if (det.lattice === null) {
         det.lattice = new DetourLattice(input.regionMm, hUm, blockMm);
@@ -893,8 +947,14 @@ export function routeTask0FillLayer(input: Task0RouteInput): Task0RouteResult {
         const flip = flips.has(it.seq) !== (input.reverseLastItem === true && isLastItem);
         if (flip && orients.length === 2) orients = [orients[1], orients[0]];
         let done = false;
-        for (const pts of orients) {
-          const tr = planTravel(pts[0], pts.length > 1 ? pts[1] : null);
+        // (Z1-d) 격자 밖 시작점(파킹)에서는 방향 후보를 먼저 모서리 경유 없이 다 본 뒤, 그래도 길이 없을 때만 모서리 경유로 한 번 더
+        //   (planTravel 의 모서리 단계 주석). 그 밖의 위치에서는 한 바퀴뿐 — 예전 그대로
+        const rounds: readonly (readonly [Task0UmPoint[], boolean])[] = [
+          ...orients.map((pts) => [pts, false] as const),
+          ...(samePt(cur, input.startUm) && !first && !cornersInRegion([cur, cur]) ? orients.map((pts) => [pts, true] as const) : []),
+        ];
+        for (const [pts, viaCorner] of rounds) {
+          const tr = planTravel(pts[0], pts.length > 1 ? pts[1] : null, viaCorner);
           if (tr === null) continue;
           steps.push({ travel: tr.pts, travelKind: tr.kind, deposit: pts.slice(1), kind: it.kind, band });
           if (tr.kind === 'lX' || tr.kind === 'detour') detourTravels++;

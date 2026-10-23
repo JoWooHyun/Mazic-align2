@@ -29,10 +29,11 @@
 //     (d) 기본 출력 F1·F2: verify-task0-writer runOutputChecks(c1~c8 — c1 = checkParser 3모드)·checkStats 위반 0
 //         (gen-task0-dryrun 과 같은 방식), checkTask0GcodeCoverage 전 층 통과, 빈 층 0.
 //     (e) F3·F4: 기본과 대조군 G-code 바이트 동일(sha256), routeVariantLayers 빈 배열, 실패 층 0.
-//     (f) 내보내기(앱 빌트인 Task0 프로파일 값): runTask0GcodeExport(F1) 기본 → ok, 경고 0, failedLayers [];
-//         대조군 writer → ok(막지 않음), gcode 있음, 경고 1건("얇은 부분 채움 실패" + "층 0"), failedLayers [0];
+//     (f) 내보내기(앱 빌트인 Task0 프로파일 값): runTask0GcodeExport(F1) 기본 → ok, 채움 실패 경고 0 — (Z1-d) 경고는 트래블 여유 거리
+//         d(규격 v0.3.5 §7-2, 잠정 w) 1줄뿐: 19건, failedLayers [0,1,2,10,38,39,40,41](발·화살촉 층 — 채움 조각이 행 사이 w/2 에 놓임);
+//         대조군 writer → ok(막지 않음), gcode 있음, 채움 실패 경고 1건("얇은 부분 채움 실패" + "층 0") + d 경고 1줄, failedLayers ∋ 0;
 //         runTask0JobZipExport(F1, 대조군) → ok, zip > 0, 같은 경고, verifyTask0JobZip(전부 풀기) 위반 0(= Task0 가 받는 파일);
-//         runTask0JobZipExport(F2) 기본 → ok, 경고 0, verifyTask0JobZip 위반 0.
+//         runTask0JobZipExport(F2) 기본 → ok, 경고 = d 1줄(31건, 층 [0,1,10,11,38,39,40,41]), verifyTask0JobZip 위반 0.
 //     (g) 뮤테이션 대조군 — writer 소스에서 단일 재료 탐색 분기를 끈 변조본(임시 폴더)으로 F1 → 실패 층 [0] = (b) 가 실패한다.
 //         ((a) 의 옵션 끄기와 별개로, 기본값 배선이 아니라 탐색 분기 자체가 F1 을 살린다는 증명)
 //     (h) 배선(소스) — 서비스 exportTask0JobZip 이 warnings·failedLayers 를 옮김, useSliceExport 두 Task0 핸들러가 보고에
@@ -372,26 +373,31 @@ function exportInput(meshes, writer, extra = {}) {
 }
 
 async function sectionExport(runs) {
-  console.log("\n(f) 내보내기 — 기본은 경고 없이, 대조군 writer(수정 전 계획)도 막지 않고 경고로");
+  console.log("\n(f) 내보내기 — 기본은 채움 경고 없이(트래블 여유 거리 d 경고 1줄만), 대조군 writer(수정 전 계획)도 막지 않고 경고로");
   const m1 = runs.F1.meshes;
   const g = runTask0GcodeExport(exportInput(m1, APP.writer));
+  // (Z1-d) d 경고 — 발·화살촉 층의 채움 조각이 행 사이(행 중심선에서 w/2)에 놓여 d = w(잠정) 안으로 지나간다. writer 계획은 w/2 기하
+  //   (설계 — 협의 §37 질문 2). 실측: F1 19건 · 층 [0,1,2,10,38,39,40,41] (architect 측정과 같음)
+  const isClear = (s) => s.startsWith("트래블이 칠한 레진에서 d = 0.5 mm 안으로 지나는 곳 ");
   assert(
-    g.ok && typeof g.gcode === "string" && g.warnings.length === 0 && json(g.failedLayers) === "[]",
-    `F1 run.gcode 기본: ok, 경고 ${g.ok ? g.warnings.length : "(막힘)"}건, failedLayers ${json(g.failedLayers)}`,
+    g.ok && typeof g.gcode === "string" && g.warnings.length === 1 && isClear(g.warnings[0]) && g.summary.travelClearance?.count === 19 &&
+      json(g.failedLayers) === "[0,1,2,10,38,39,40,41]" && g.summary.thinFillFailedLayers.length === 0,
+    `F1 run.gcode 기본: ok, 채움 실패 0, 경고 = d 1줄(${g.ok ? g.summary.travelClearance?.count : "?"}건), failedLayers ${json(g.failedLayers)}`,
   );
   const gc = runTask0GcodeExport(exportInput(m1, CONTROL_WRITER));
-  const warn = gc.ok ? gc.warnings : [];
+  const warn = gc.ok ? gc.warnings.filter((s) => !isClear(s)) : [];
   assert(
-    gc.ok && typeof gc.gcode === "string" && gc.gcode.length > 0 && json(gc.failedLayers) === "[0]" &&
+    gc.ok && typeof gc.gcode === "string" && gc.gcode.length > 0 && gc.failedLayers.includes(0) &&
+      gc.warnings.length === 2 && gc.warnings.filter(isClear).length === 1 &&
       warn.length === 1 && warn[0].includes("얇은 부분 채움 실패") && warn[0].includes("층 0") && warn[0].includes("파일은 그대로 냈습니다"),
-    `F1 run.gcode 대조군 writer: 막지 않음(ok), failedLayers ${json(gc.failedLayers)}, 경고 "${warn[0]?.slice(0, 60) ?? "(없음)"}…"`,
+    `F1 run.gcode 대조군 writer: 막지 않음(ok), failedLayers ${json(gc.failedLayers)}(∋ 0), 경고 = 채움 실패 "${warn[0]?.slice(0, 60) ?? "(없음)"}…" + d 1줄`,
   );
   assert(gc.ok && gc.summary.thinFillFailedLayers.length === 1, "F1 run.gcode 대조군 writer: 요약 thinFillFailedLayers [0] 그대로");
 
   const jc = await runTask0JobZipExport(exportInput(m1, CONTROL_WRITER, { frame: APP.frame }));
   const jcRep = jc.ok ? await verifyTask0JobZip(jc.zip) : null;
   assert(
-    jc.ok && jc.zip.length > 0 && json(jc.failedLayers) === "[0]" && jc.warnings.some((s) => s.includes("얇은 부분 채움 실패") && s.includes("층 0")),
+    jc.ok && jc.zip.length > 0 && json(jc.failedLayers) === json(gc.failedLayers) && jc.warnings.some((s) => s.includes("얇은 부분 채움 실패") && s.includes("층 0")),
     `F1 job.zip 대조군 writer: ok, zip ${jc.ok ? jc.zip.length : 0} B, 경고 ${jc.ok ? jc.warnings.length : "?"}건, failedLayers ${json(jc.failedLayers)}`,
   );
   assert(
@@ -402,8 +408,10 @@ async function sectionExport(runs) {
   const j2 = await runTask0JobZipExport(exportInput(runs.F2.meshes, APP.writer, { frame: APP.frame }));
   const j2Rep = j2.ok ? await verifyTask0JobZip(j2.zip) : null;
   assert(
-    j2.ok && j2.warnings.length === 0 && json(j2.failedLayers) === "[]" && j2Rep !== null && j2Rep.pass,
-    `F2 job.zip 기본: ok, 경고 ${j2.ok ? j2.warnings.length : `(막힘 ${json(j2.issues)})`}건, 층 ${j2.ok ? j2.summary.layerCount : "?"}, verifyTask0JobZip ${j2Rep?.pass ? "통과" : "실패"}`,
+    j2.ok && j2.warnings.length === 1 && isClear(j2.warnings[0]) && j2.summary.travelClearance?.count === 31 &&
+      json(j2.failedLayers) === "[0,1,10,11,38,39,40,41]" && j2Rep !== null && j2Rep.pass,
+    `F2 job.zip 기본: ok, 경고 = d 1줄(${j2.ok ? j2.summary.travelClearance?.count : "?"}건, 층 ${json(j2.failedLayers)}), 층 ${j2.ok ? j2.summary.layerCount : "?"}, ` +
+      `verifyTask0JobZip ${j2Rep?.pass ? "통과" : "실패"}`,
   );
 }
 

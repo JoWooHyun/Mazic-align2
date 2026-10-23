@@ -9,16 +9,16 @@
 //     src/features/v2/utils/task0/task0-frame.ts   task0NormalizeTopY (1 µm 반올림)
 //     src/features/v2/utils/task0/task0-profile.ts task0RasterFrameForProfile
 //     + 배선(소스 검사): 워커·서비스·useSliceExport·SliceSidePanel·ViewerV2Page.
-//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.4 @ a4ebc6c §11(job.zip 구성·PNG 1920×1080 8-bit 회색조·래스터 규약·
+//   규격 = Task0 리포 docs/Task0_Gcode_규격서_초안.md v0.3.5 @ 481f416 (Z1-d — v0.3.4 a4ebc6c 에서) §11(job.zip 구성·PNG 1920×1080 8-bit 회색조·래스터 규약·
 //   manifest v1·exposure·preview·거부 조건 1~7)·§3(층 수 = ceil(topY/lh), 도포 영역 = 노광 영역, 빈 층 PNG 전부 검정)·§13.
 //   설계 = docs/계획_Z1_task0출력_20261002.md §4·§4-2·§4-3(Z3 인계).
 //
 //   (1) 앱 경로 = 스크립트 경로 — 코어를 견본과 같은 입력(3층, 층 1 빈 층, generatedAt 고정, 빌트인 Task0 프로파일의 writer·투사
-//       프레임)으로 → gen-task0-sample-zip.mjs 의 sample.job.zip 과 **같은 바이트**(sha256 616b0e61… 고정값). 진행 단계 순서
+//       프레임)으로 → gen-task0-sample-zip.mjs 의 sample.job.zip 과 **같은 바이트**(sha256 10e653f3… 고정값 — Z1-d). 진행 단계 순서
 //       (gcode 1..3 → png 1..3 → verify 0/1 → 1/1). 앱 generator(TASK0_APP_JOB_GENERATOR)로 만들면 manifest.json 의 generator 글자만
 //       다르고(다른 항목 바이트 같음) 그 글자를 견본 값으로 되돌려 다시 묶으면 견본 바이트 — 정규화 근거.
 //   (2) 파일 A·C·B — 코어 결과 zip: verifyTask0JobZip(전부 풀기) 위반 0·추가 0, PNG 수 = 층 수, run.gcode = Z2 고정 sha256
-//       (A dde08ea9… / C ab3f8d74… / B b1e65f70…), **층 PNG 전부 = task0-mask rasterizeTask0Mask(writer 와 같은 단면, 투사 프레임) × 255**
+//       (Z1-d: A d5c9db45… / C 3baf90a6… / B 5c8fbf74…), **층 PNG 전부 = task0-mask rasterizeTask0Mask(writer 와 같은 단면, 투사 프레임) × 255**
 //       (빈 층 = 전부 0), G-code 빈 층 = PNG 흰 픽셀 0 인 층, manifest 노광 = types/printer.ts DEFAULT_*(앱이 넘기는 profileExposure
 //       (빌트인) = undefined), manifest estimate = 화면 요약 estimate, generatedAt ISO.
 //   (3) float32 topY — Math.fround(0.3) 은 정규화 전 task0LayerCount 4 (대조), 코어는 3층·견본 바이트·`; topYMm: 0.3`.
@@ -141,10 +141,21 @@ const V2 = path.resolve(SCRIPT_DIR, "..", "src", "features", "v2");
 const UTILS = path.join(V2, "utils");
 const TASK0_SRC = path.join(UTILS, "task0");
 
-/** 10/8 전달 견본(Z1-c, 규격 v0.3.4) sha256 — gen-task0-sample-zip.mjs 출력 */
-const SAMPLE_SHA = "616b0e610dfa0a101f357d2a8a30bdb7f3823ddd773350ffe40682f7c8192989";
-/** 같은 때의 불량 7종 sha256 — buildTask0JobZip 을 공용 함수로 나눈 뒤에도 같아야 한다 */
+/** 견본 sha256 (Z1-d, 규격 v0.3.5 — run.gcode 머리 메타 두 줄만 바뀜) — gen-task0-sample-zip.mjs 출력 */
+const SAMPLE_SHA = "10e653f345dcd70295bc3a8dddd28bda5d944675a7fde9e94bc5468dd720fc62";
+/** 같은 때의 불량 7종 sha256 — buildTask0JobZip 을 공용 함수로 나눈 뒤에도 같아야 한다 (1번은 run.gcode 가 없어 Z1-c 판과 같음) */
 const BAD_SHA = {
+  "bad_1_no_run_gcode.job.zip": "08f9a8dd781e210b460bb80e9f407a038fb60675839cdddb8b29953c28c3cec7",
+  "bad_2_manifest_version.job.zip": "40af43d224d390b3021db0a48cb83db84d64dbfba514ed5632d3679817863da6",
+  "bad_3_layer_count.job.zip": "2573f01af0a883a7f960f6e68efcf4e50f9fafb6b5adf7621c9582e7d44c5289",
+  "bad_4_png_gap.job.zip": "41261444bc519f982505aa3606688a1eb1327ab8599b11a951723d449a7be966",
+  "bad_5_resolution.job.zip": "24cf4463e4958f4bc738846a7b19cee6b32e88e62ada7d6a8e3de47478cec73d",
+  "bad_6_exposure_length.job.zip": "884c15b2c6e140aef8c90c35ba3b04f29e017898588f4b408d74066ff7b39cce",
+  "bad_7_z_mismatch.job.zip": "d3c16bd7d658f8039c98e8e04a066d72de739aeba203bf40fba3fffe49961ea8",
+};
+/** 10/8 전달 견본·불량 7종(Z1-c, 규격 v0.3.4) sha256 — Z1-d 고정값 갱신의 근거로만 (run.gcode 머리 두 줄을 되돌려 다시 묶으면 이 값) */
+const PREV_SAMPLE_SHA_V034 = "616b0e610dfa0a101f357d2a8a30bdb7f3823ddd773350ffe40682f7c8192989";
+const PREV_BAD_SHA_V034 = {
   "bad_1_no_run_gcode.job.zip": "08f9a8dd781e210b460bb80e9f407a038fb60675839cdddb8b29953c28c3cec7",
   "bad_2_manifest_version.job.zip": "9fc7581b6286dacc9265707e78656580d45cd2f9b2177eb86abc7f7bb8aabe5b",
   "bad_3_layer_count.job.zip": "30145825d4cc11e38180e635f7250e57376459decad447626148b1065a521bfd",
@@ -153,11 +164,16 @@ const BAD_SHA = {
   "bad_6_exposure_length.job.zip": "26af5b8b4548fc71e3eaf02ae0a3b3130d9a4d236aa999563f67c01a24f9412a",
   "bad_7_z_mismatch.job.zip": "e369de001a8876ea13b9c8ed927337474bdf9022f9290626dae30b8290cc68a7",
 };
-/** run.gcode 파일 A·C·B sha256 (Z1-c 고정값 — verify-task0-export 와 같은 값) */
+/** Z1-c 판 run.gcode 머리 메타 두 줄 */
+const V034_HEADER = [
+  "; MazicAlign v2 task0-gcode-writer (Z1-c, spec v0.3.4)",
+  "; Task0 G-code spec v0.3.4 (B pattern: serpentine 0 deg row fill, L moves between rows)",
+];
+/** run.gcode 파일 A·C·B sha256 (Z1-d 고정값 — verify-task0-export 와 같은 값) */
 const GCODE_SHA = {
-  cube10: "dde08ea97b2e144dabc842d1257980bdd4d51fa59b7bf7453c463e5f264928b9",
-  "gap-plates": "ab3f8d7431386b5deaa3a4f44df09dfe1b0b1f0ac82303423cc63ccac76d7859",
-  "file-b": "b1e65f70c96a3e5cee17a97c27d8b2bb029faa8e82791bca2ef09361098a8339",
+  cube10: "d5c9db45d7ca7a51823bcb20234d329bd88c19b8ee4d4e8edf57f3de96a6cd6e",
+  "gap-plates": "3baf90a6768acc409dee05a0b62b9158cba3637654a809e131e71b044997c117",
+  "file-b": "5c8fbf74b37d1d3e1c05f468384f3cc27f89ded6480120eeaaaca30356e1bc5f",
 };
 
 // ── assert 유틸 ──────────────────────────────────────────────────────────
@@ -359,7 +375,7 @@ function withIhdrByte(png, at, val) {
 async function sectionSamplePath() {
   console.log("\n(1) 앱 경로(코어 runTask0JobZipExport) = 스크립트 경로(gen-task0-sample-zip) — sample.job.zip 같은 바이트");
   const script = await buildSampleJob();
-  assert(sha256(script.bytes) === SAMPLE_SHA, `스크립트 경로 sample.job.zip sha256 ${sha256(script.bytes).slice(0, 16)}… = 10/8 전달본 ${SAMPLE_SHA.slice(0, 16)}…`);
+  assert(sha256(script.bytes) === SAMPLE_SHA, `스크립트 경로 sample.job.zip sha256 ${sha256(script.bytes).slice(0, 16)}… = 고정값 ${SAMPLE_SHA.slice(0, 16)}…`);
   const prog = [];
   const r = await runTask0JobZipExport(sampleInput(), (s, d, t) => prog.push(`${s}:${d}/${t}`));
   assert(r.ok, `코어 통과 (막힘 이유 ${r.ok ? "없음" : JSON.stringify(r.issues)})`);
@@ -609,9 +625,10 @@ async function sectionWorkerModule() {
   const wd = w.find((p) => p.m.type === "task0-job-done");
   assert(
     wd !== undefined && wd.m.result.ok && wd.m.result.zip.length > 0 && Array.isArray(wd.transfer) && wd.transfer[0] === wd.m.result.zip.buffer &&
-      JSON.stringify(wd.m.result.failedLayers) === "[9]" && wd.m.result.warnings.some((s) => s.includes("얇은 부분 채움 실패") && s.includes("층 9")) &&
+      wd.m.result.failedLayers.includes(9) && wd.m.result.warnings.some((s) => s.includes("얇은 부분 채움 실패") && s.includes("층 9")) &&
       !w.some((p) => p.m.type === "error"),
-    "경고만 있는 입력(나선 벽, 대조군 writer) → task0-job-done(ok, zip transfer, warnings·failedLayers [9] 그대로)",
+    // (Z1-d) 나선 벽은 트래블 여유 거리 d 경고(층 0~9)도 붙어 경고 층이 [9] 보다 넓다 — 채움 실패 층 9 가 들어 있는지만 본다
+    `경고만 있는 입력(나선 벽, 대조군 writer) → task0-job-done(ok, zip transfer, warnings·failedLayers 그대로 — 층 9 포함 ${JSON.stringify(wd?.m.result.failedLayers)})`,
   );
 }
 
@@ -666,7 +683,7 @@ async function sectionBlocked() {
   });
   const spcRep = spc.ok ? await verifyTask0JobZip(spc.zip) : null;
   assert(
-    spc.ok && spc.zip.length > 0 && spc.job !== null && JSON.stringify(spc.failedLayers) === "[9]" &&
+    spc.ok && spc.zip.length > 0 && spc.job !== null && spc.failedLayers.includes(9) && JSON.stringify(spc.summary.thinFillFailedLayers) === "[9]" &&
       spc.warnings.some((s) => s.includes("얇은 부분 채움 실패") && s.includes("층 9")) && spcRep.pass,
     `① 나선 벽 대조군 writer(retryStuckLayers false — 층 9 채움 실패): 막지 않음, zip·job 있음, 경고 "${spc.ok ? spc.warnings[0]?.slice(0, 40) : "(막힘)"}…", 검사기(전부 풀기) 통과`,
   );
@@ -1101,9 +1118,32 @@ async function plateStretchImages(meshes, layerCount, lh, bed, opts) {
 async function sectionUnchanged() {
   console.log("\n(7) 기존 산출물 불변 — 견본·불량 7종 sha256, 기존 경로 진행 알림");
   const { sample, bads } = await buildTask0SampleSet();
-  assert(sha256(sample.bytes) === SAMPLE_SHA, `sample.job.zip ${sha256(sample.bytes).slice(0, 16)}… = 10/8 전달본`);
+  assert(sha256(sample.bytes) === SAMPLE_SHA, `sample.job.zip ${sha256(sample.bytes).slice(0, 16)}… = 고정값 (Z1-d)`);
   const mism = bads.filter((b) => sha256(b.bytes) !== BAD_SHA[b.spec.file]).map((b) => b.spec.file);
-  assert(bads.length === BAD_SPECS.length && bads.length === 7 && mism.length === 0, `불량 7종 sha256 = 10/8 전달본 (다른 것 ${JSON.stringify(mism)})`);
+  assert(bads.length === BAD_SPECS.length && bads.length === 7 && mism.length === 0, `불량 7종 sha256 = 고정값 (Z1-d) (다른 것 ${JSON.stringify(mism)})`);
+  // (Z1-d 고정값 근거 — git 옛 커밋이 아니라 같은 출력에서) 견본의 run.gcode 머리 메타 두 줄만 v0.3.4 문구로 되돌려 다시 묶으면 10/8 전달본,
+  //   불량 7종도 그 되돌린 견본 파일로 같은 변조를 하면 10/8 전달본 = 바이트 변화는 run.gcode 머리 두 줄뿐 (PNG·manifest·exposure·preview 그대로)
+  const revertFiles = (files) =>
+    files.map((f) => {
+      if (f.name !== "run.gcode") return { name: f.name, data: f.data };
+      const lines = dec.decode(f.data).split("\n");
+      lines[0] = V034_HEADER[0];
+      lines[1] = V034_HEADER[1];
+      return { name: f.name, data: new TextEncoder().encode(lines.join("\n")) };
+    });
+  const oldFiles = revertFiles(sample.files);
+  const changed = sample.files.filter((f, i) => !sameBytes(f.data, oldFiles[i].data)).map((f) => f.name);
+  const oldSample = await assembleTask0JobZip(oldFiles);
+  const oldBadMism = [];
+  for (const spec of BAD_SPECS) {
+    const bytes = await assembleTask0JobZip(await spec.make(oldFiles.map((f) => ({ name: f.name, data: f.data }))));
+    if (sha256(bytes) !== PREV_BAD_SHA_V034[spec.file]) oldBadMism.push(spec.file);
+  }
+  assert(
+    sha256(oldSample) === PREV_SAMPLE_SHA_V034 && JSON.stringify(changed) === '["run.gcode"]' && oldBadMism.length === 0,
+    `run.gcode 머리 메타 2줄만 되돌리면 10/8 전달본 견본 ${sha256(oldSample).slice(0, 16)}… = ${PREV_SAMPLE_SHA_V034.slice(0, 16)}…·불량 7종 그대로 ` +
+      `(바뀐 항목 ${JSON.stringify(changed)}, 불량 불일치 ${JSON.stringify(oldBadMism)})`,
+  );
   const worker = read("workers", "slice-batch.worker.ts");
   const png = worker.slice(worker.indexOf("async function runPngZip"), worker.indexOf("function runGcode"));
   const gc = worker.slice(worker.indexOf("function runGcode"), worker.indexOf("function runTask0Gcode"));
@@ -1150,7 +1190,7 @@ async function sectionPerf() {
 }
 
 async function main() {
-  console.log("Task0 앱 job.zip 내보내기 검증 (Z3 — 앱 경로 = 스크립트 경로, 규격서 v0.3.4 §11)");
+  console.log("Task0 앱 job.zip 내보내기 검증 (Z3 — 앱 경로 = 스크립트 경로, 규격서 v0.3.5 §11)");
   console.log(`  기준: 투사 ${TASK0_DEFAULTS.projectorWidthPx}×${TASK0_DEFAULTS.projectorHeightPx} · ${TASK0_DEFAULTS.pixelPitchUm} µm, 베드 ${TASK0_DEFAULTS.bedWidthMm}×${TASK0_DEFAULTS.bedDepthMm}`);
   await sectionSamplePath();
   await sectionFixtures();
