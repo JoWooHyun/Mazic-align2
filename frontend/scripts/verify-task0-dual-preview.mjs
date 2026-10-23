@@ -1003,7 +1003,8 @@ async function sectionControls(copyCtx) {
     ["  return s === 'A' || s === 'B' ? { materialSlot: s } : {};", "  return {};"],
   ]);
   const dPath = await copyPath(noInherit, copyCtx.stls, copyCtx.pid);
-  const supNoArg = copyCtx.sup.replace("        src.blob,\n        task0CopySlotInit(src),\n", "        src.blob,\n");
+  // C9: addStlFile 호출이 withSaveReport 안으로 들어가 들여쓰기가 두 단 깊다.
+  const supNoArg = copyCtx.sup.replace("          src.blob,\n          task0CopySlotInit(src),\n", "          src.blob,\n");
   assert(
     !copyTable(noInherit) && !dPath.ok && supNoArg !== copyCtx.sup && !copyWiringOk(supNoArg, copyCtx.clip, copyCtx.stlHook, copyCtx.drop),
     `d. task0CopySlotInit 가 {} 를 내면 복제본 ${dPath.d.materialSlot ?? "(없음 = B)"} — (4) 실패, 복제 핸들러에서 인자를 빼면 배선 검사 실패`,

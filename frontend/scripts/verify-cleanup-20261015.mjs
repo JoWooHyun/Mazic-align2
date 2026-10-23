@@ -468,7 +468,8 @@ function sourceChecks(tree, scripts) {
   const cut = between(clip, "export async function cutModels(", "export function useClipboardActions(");
   const iConf = cut.indexOf("if (!confirmDeleteModels(toCut.map((f) => f.fileName))) return false;");
   const iSet = cut.indexOf(".set(toCut.map(");
-  const iRemove = cut.indexOf("await removeStlFile(f.id);");
+  // C9: 저장 실패 안내를 위해 withSaveReport 로 감쌌다 — 호출 위치·순서는 그대로.
+  const iRemove = cut.indexOf('await withSaveReport("모델 잘라내기", removeStlFile(f.id));');
   const handleCut = between(clip, "const handleCut = useCallback(", "const handlePaste");
   check(
     iConf > 0 && iSet > iConf && iRemove > iConf && handleCut.includes("await cutModels(") && !handleCut.includes(".set(") && !handleCut.includes("removeStlFile(f.id)"),
