@@ -36,6 +36,9 @@ node_modules
 
 # 로컬 테스트용 STL 샘플 (정본은 ji/STL-samples 브랜치)
 stl모음/
+# 리포 루트에 떨어진 STL (2026-10-26 — 10/23 GitHub 웹 업로드로 메인라인에 15 MB STL 이 커밋된 사고).
+# 루트만 막는다 — frontend/src/features/v2/support/parts/*.stl(서포트 부품)은 추적 대상.
+/*.stl
 
 # 커밋 금지 (2026-09-23 결정) / 에이전트 작업 공간
 gpt_답변.txt

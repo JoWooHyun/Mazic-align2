@@ -167,6 +167,10 @@ PR 의 "조우현 확인 포인트"는 이 목록에서 해당 항목을 골라 
 - **`git stash` 금지(병렬 worktree)** — stash 스택은 모든 worktree 공용. "수정 전" 대조는 `git show <기준>:<경로>` 로 뽑아 `frontend/scripts/` 안 임시 폴더 복사본에서
   (끝나면 삭제 — OS 임시 폴더나 node_modules 아래 복사본은 tsx 가 `@babylonjs/core` 를 다른 모듈 인스턴스로 읽어 `instanceof` 가 틀어짐). 리드의 옛 `stash@{0}` 은 건드리지 말 것.
 - **PR 끼리의 충돌은 `git merge-tree --write-tree A B` 로 미리 시험**하고, 시험 병합 커밋(`git commit-tree`)으로 임시 worktree 를 만들어 tsc·검증·build 까지 돌린다.
+  **텍스트 충돌 없음 ≠ 검증 통과**(10/23 실제 — #150·#151·#152 를 합친 트리에서 `verify-task0-path-preview` 가 #152 가 바꾼 산출물 sha 의 **사본**을 들고 있어 FAIL → 사본 제거). 고정 sha 는 단일 소스 스크립트(`verify-task0-export`·`verify-task0-dual-export`)에만 둔다.
+- **세션이 끊기면 백그라운드 에이전트도 멈춘다**(10/22·10/23 두 번 — 새 세션에 "didn't finish" 알림). 새 세션에서 worktree 의 커밋·미커밋 변경을 먼저 보고, 남은 일은 그 에이전트에 SendMessage 로 재개(문맥 유지).
+- **리드가 GitHub 웹 "Add files via upload" 로 파일을 올리면 기본 브랜치(`integrate/v2-mainline`)에 바로 커밋된다**(10/23 `partial denture (1).stl` 15 MB → 10/26 제거 + 루트 `/*.stl` gitignore). 시험 파일은 `Documents\Task0_inbox\<날짜>_*\` 나 리포 `stl모음/`(gitignore) 에 둔다.
+- **정션 worktree 에서 `npm install` 금지** — 정션이 진짜 폴더로 바뀐다(10/23 #154 earcut 추가 때). 새 의존성 PR 머지 뒤 메인 트리 `npm install` → package-lock 의 `libc` 필드 잡음 diff 는 `git checkout -- frontend/package-lock.json` 로 되돌린다(설치는 유지됨).
 - **병렬 개발**: 서로 다른 파일 영역이면 worktree 여러 개로 coder 를 동시에 돌려도 된다. 같은 파일을 고치면 나중 PR 을 앞 PR 위로 rebase 하고 규약(예: `settleTx`)에 맞춘다.
 - **쌓인 PR 은 GitHub "Create a merge commit" 으로 머지**(squash·rebase 금지 — 다음 PR 에 앞 PR 커밋이 다시 섞여 충돌).
 - **쌓인 PR 은 앞 PR 이 머지되면 베이스를 손으로 바꾼 뒤 머지**(Settings 에 "자동 브랜치 삭제" 가 꺼져 있어 베이스 브랜치가 남고, GitHub 는 베이스를 자동으로 옮기지 않는다 — 10/21 #146 이 이미 머지된 #144 브랜치로 들어가 메인라인에 안 실렸고 cherry-pick 으로 복구). 또는 앞 PR 머지 직후 그 브랜치를 바로 지운다.
