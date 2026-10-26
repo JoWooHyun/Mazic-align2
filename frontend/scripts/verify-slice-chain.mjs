@@ -46,6 +46,7 @@ import {
   sliceTrianglesAtY,
 } from "../src/features/v2/utils/slice-geometry.ts";
 import { rasterizePolygons } from "../src/features/v2/utils/slice-rasterize.ts";
+import { chainSegmentsBefore } from "./verify-slice-open-chain.mjs";
 import { SAMPLE_MODELS } from "../src/features/v2/utils/sample-models.ts";
 import { rasterizeTask0Mask } from "../src/features/v2/utils/task0/task0-mask.ts";
 import { task0LayerPolygonsBed } from "../src/features/v2/utils/task0/task0-slice.ts";
@@ -100,6 +101,11 @@ function sliceTrianglesAtYBeforeFix(triangles, y) {
 }
 
 const SLICERS = { fixed: sliceTrianglesAtY, beforeFix: sliceTrianglesAtYBeforeFix };
+
+// (2026-10-26) chainSegments 가 열린 체인을 가까운 머리로 잇게 되어(verify-slice-open-chain) 수정 전 보간의 1 µm 키 끊김도
+//   µm 현으로 메워져 면적·마스크 오차가 거의 사라진다. 그래서 대조군(수정 전 보간)은 그 무렵의 점 단위 사슬 잇기로 단면을 만든다 —
+//   이 스크립트가 보는 것은 보간 방향 고정 자체이고, 사슬 잇기 쪽 개선이 그 결함을 가려도 대조군은 결함을 그대로 드러내야 한다.
+const chainFor = (slice) => (slice === sliceTrianglesAtYBeforeFix ? chainSegmentsBefore : chainSegments);
 
 // ── 지오메트리 ───────────────────────────────────────────────────────────
 
@@ -356,7 +362,7 @@ function scanShape(slice, tris, lh, opts = {}) {
     }
     r.layers++;
     const segs = slice(tris, y);
-    const polys = chainSegments(segs);
+    const polys = chainFor(slice)(segs);
     const A = polys.reduce((s, p) => s + signedArea(p.points), 0);
     const expect = opts.area ? opts.area(y) : null;
     const err = expect !== null ? Math.abs(Math.abs(A) - expect) : Math.abs(A - refSectionArea(tris, y));
@@ -407,7 +413,7 @@ function caseRepro() {
     const masks = [];
     let onePoly = 0;
     for (let n = 0; n < 20; n++) {
-      const polys = chainSegments(slice(BAR, (n + 0.5) * 0.05));
+      const polys = chainFor(slice)(slice(BAR, (n + 0.5) * 0.05));
       if (polys.length === 1) onePoly++;
       masks.push(rasterizePolygons(polys, DLP_OPTS).data);
     }

@@ -236,9 +236,12 @@ export function sliceTrianglesAtY(
  * 감김 방향(바깥 윤곽 vs 내벽)이 의미를 갖는다 — rasterizePolygons 의
  * nonzero 규칙이 이 감김에 의존한다. 점 순서를 뒤집는 후처리를 넣지 말 것.
  *
- * 퇴화 케이스(꼭짓점이 정확히 평면 위 등)로 out-edge 가 끊긴 지점에서 멈추면
- * 열린 체인이 되는데, 기존과 동일하게 3 점 이상일 때만 채택하고 예외는 던지지
- * 않는다(관용적 처리).
+ * 퇴화 케이스(꼭짓점이 정확히 평면 위 등)나 열린 메시(구멍·이음매)로 out-edge 가
+ * 끊긴 지점에서 멈추면 열린 체인이 되는데, 3 점 이상일 때만 채택하고 예외는 던지지
+ * 않는다(관용적 처리). 단 채택한 폴리곤 중 하나라도 끊긴 것이고 그 층에 열린 체인
+ * 머리(들어오는 선분보다 나가는 선분이 많은 점)가 있으면 그 층 전체를
+ * chainSegmentsByEdges(열린 체인 머리부터·선분 단위 소비·가까운 머리 잇기)로 다시
+ * 잇는다 — 그 밖의 층(닫힌 메시)은 예전 결과 그대로다(2026-10-23, 아래 함수 주석).
  */
 export function chainSegments(segs: SliceSegment[]): SlicePolygon[] {
   const QUANT = 1000; // 1µm
@@ -274,6 +277,8 @@ export function chainSegments(segs: SliceSegment[]): SlicePolygon[] {
 
   const visited = new Set<number>();
   const polygons: SlicePolygon[] = [];
+  // 채택한 폴리곤 중 시작점으로 돌아오지 못하고 끊긴 것(열린 체인 — 마지막 점→첫 점이 가짜 현)이 있는지
+  let openAccepted = false;
 
   for (const startId of out.keys()) {
     if (visited.has(startId)) continue;
@@ -281,6 +286,7 @@ export function chainSegments(segs: SliceSegment[]): SlicePolygon[] {
     const polygon: [number, number][] = [];
     let curr = startId;
     let safety = out.size + 4; // 안전 카운터
+    let closed = false;
 
     while (safety-- > 0) {
       visited.add(curr);
@@ -301,12 +307,139 @@ export function chainSegments(segs: SliceSegment[]): SlicePolygon[] {
         }
       }
 
+      if (next === startId) closed = true;
       if (next === -1 || next === startId) break;
       curr = next;
     }
 
-    if (polygon.length >= 3) polygons.push({ points: polygon });
+    if (polygon.length >= 3) {
+      polygons.push({ points: polygon });
+      if (!closed) openAccepted = true;
+    }
   }
 
+  // 전부 닫혔으면 위 결과 그대로 (닫힌 메시의 보통 층 — 예전과 같은 바이트)
+  if (!openAccepted) return polygons;
+  // 열린 체인 머리(들어오는 선분보다 나가는 선분이 많은 점)가 없는 층도 그대로 — 끊긴 까닭이 두 윤곽이 한 점에서 만나는
+  //   점뿐인 닫힌 입력(한 메시 안에서 꼭짓점이 맞닿게 겹친 상자 등)이다. 그 층도 점 단위 순회가 고리를 조각내 가짜 현이 생기지만
+  //   닫힌 메시 출력 바이트를 지키려고 이번에는 손대지 않는다(2026-10-26 — 별도 결정 대상, verify-slice-open-chain b2).
+  if (!hasOpenHead(out)) return polygons;
+  return chainSegmentsByEdges(out, points);
+}
+
+/** 들어오는 선분보다 나가는 선분이 많은 점(열린 체인의 머리)이 있는지 */
+function hasOpenHead(out: Map<number, number[]>): boolean {
+  const indeg = new Map<number, number>();
+  for (const succs of out.values()) for (const n of succs) indeg.set(n, (indeg.get(n) ?? 0) + 1);
+  for (const [id, succs] of out) if ((indeg.get(id) ?? 0) < succs.length) return true;
+  return false;
+}
+
+/**
+ * chainSegments 의 열린 체인 대비 경로 — 위 점 단위 순회가 끊긴 폴리곤을 하나라도 냈을 때만 층 전체를 이걸로 다시 잇는다.
+ *
+ * 왜(2026-10-23 실측 — 치과 `partial denture (1).stl`, 경계 변 740 인 **열린 메시**): 구멍·이음매가 단면 높이를 지나면
+ * 윤곽이 머리(들어오는 선분 없음)→꼬리(나가는 선분 없음) 열린 체인이 된다. 점 단위 순회는 out.keys() 순서상 체인 **가운데**에서
+ * 출발하는 일이 많아 체인을 여러 조각으로 끊고, 조각마다 끝→처음 가짜 현으로 닫는다 — 단면 안팎을 가로지르는 현이 가는
+ * 띠(가짜 얇은 부분)를 만들고, writer 의 얇은 부분 채움이 그 띠에서 노즐을 칠한 비드 사이에 가둬 그 위(+Y) 항목 전부가
+ * "경로 없음" 이 됐다(층 270 기본 계획: 도포 띠 0~16 뒤 144 항목 경로 없음). 같은 단면이 노광 마스크에도 쓰인다.
+ * 또 두 윤곽이 한 점에서 만나는 점(들어오고 나가는 선분이 각각 2개)은 점 단위 "지난 점" 표시 때문에 고리를 조각낸다
+ * (치과 STL 층 270·271 에 하나씩 — 이 경로로 다시 잇는 층 안에서는 함께 풀린다. 머리 없는 닫힌 층은 chainSegments 가 손대지 않음).
+ *
+ * 그래서 여기서는 (1) **열린 체인의 머리부터** 출발해 체인 하나를 통째로 잇고,
+ * (2) "지난 점" 대신 **선분을 하나씩 소비**하며 걷는다 — 만나는 점을 두 번 지날 수 있어 고리가 조각나지 않는다.
+ * 시작점으로 돌아오는 선분이 있으면 먼저 닫는다(3 점 이상일 때).
+ * (3) 열린 걸음(꼬리에서 더 갈 선분이 없음)은 **꼬리에서 가장 가까운 머리**로 잇는다 — 자기 머리가 가장 가까우면 그대로
+ * 닫고(구멍 하나를 가로지르는 현 하나), 다른 걸음의 머리가 더 가까우면 그 걸음을 뒤에 붙여 계속(관 조각의 바깥·안쪽 윤곽처럼
+ * 이음매 양쪽 끝이 다른 체인이면 자기 현이 내강을 가로질러 가짜 띠를 만들기 때문). 가까움이 같으면 자기 머리.
+ * 다 이은 뒤 3 점 미만은 버린다(예전과 같음).
+ * nonzero 채움은 감김수가 선분의 합이라 닫힌 고리를 어떻게 묶든 같은 영역이 된다 — 가짜 현을 짧게·적게 만드는 것이 목적.
+ * 점 순서는 선분 방향 그대로(B-7) — 뒤집지 않는다.
+ */
+function chainSegmentsByEdges(out: Map<number, number[]>, points: [number, number][]): SlicePolygon[] {
+  const used = new Map<number, Uint8Array>();
+  const indeg = new Map<number, number>();
+  for (const [id, succs] of out) {
+    used.set(id, new Uint8Array(succs.length));
+    for (const n of succs) indeg.set(n, (indeg.get(n) ?? 0) + 1);
+  }
+  const heads: number[] = [];
+  for (const [id, succs] of out) if ((indeg.get(id) ?? 0) < succs.length) heads.push(id);
+
+  const closed: number[][] = [];
+  const open: number[][] = [];
+  for (const startId of [...heads, ...out.keys()]) {
+    const u0 = used.get(startId) as Uint8Array;
+    // 한 점에서 여러 번 출발할 수 있다(만나는 점) — 걸음마다 선분을 하나 이상 소비하므로 끝난다
+    while (u0.includes(0)) {
+      const walk: number[] = [];
+      let curr = startId;
+      let isClosed = false;
+      for (;;) {
+        walk.push(curr);
+        const succs = out.get(curr) ?? [];
+        const u = used.get(curr);
+        let pick = -1;
+        if (u !== undefined) {
+          for (let i = 0; i < succs.length; i++) {
+            if (u[i] === 0 && succs[i] === startId && walk.length > 2) {
+              pick = i;
+              break;
+            }
+          }
+          if (pick < 0) {
+            for (let i = 0; i < succs.length; i++) {
+              if (u[i] === 0 && succs[i] !== startId) {
+                pick = i;
+                break;
+              }
+            }
+          }
+        }
+        if (pick < 0) break; // 열린 걸음 — 꼬리
+        (u as Uint8Array)[pick] = 1;
+        if (succs[pick] === startId) {
+          isClosed = true;
+          break;
+        }
+        curr = succs[pick];
+      }
+      (isClosed ? closed : open).push(walk);
+    }
+  }
+
+  // 열린 걸음 잇기 — 꼬리에서 가장 가까운 머리(자기 머리 포함, 같으면 자기)
+  const d2 = (a: number, b: number): number => {
+    const dx = points[a][0] - points[b][0];
+    const dz = points[a][1] - points[b][1];
+    return dx * dx + dz * dz;
+  };
+  while (open.length > 0) {
+    let cur = open.shift() as number[];
+    for (;;) {
+      const tail = cur[cur.length - 1];
+      let best = -1;
+      let bestD = d2(tail, cur[0]);
+      for (let j = 0; j < open.length; j++) {
+        const dj = d2(tail, open[j][0]);
+        if (dj < bestD) {
+          bestD = dj;
+          best = j;
+        }
+      }
+      if (best < 0) break;
+      const next = open.splice(best, 1)[0];
+      // 꼬리와 다음 머리가 같은 점이면 한 번만
+      cur = cur.concat(next[0] === tail ? next.slice(1) : next);
+    }
+    // 머리 = 꼬리로 끝나면(같은 점) 마지막 점을 빼 닫힌 고리로
+    if (cur.length > 1 && cur[cur.length - 1] === cur[0]) cur = cur.slice(0, -1);
+    closed.push(cur);
+  }
+
+  const polygons: SlicePolygon[] = [];
+  for (const walk of closed) {
+    if (walk.length >= 3) polygons.push({ points: walk.map((id) => points[id]) });
+  }
   return polygons;
 }
