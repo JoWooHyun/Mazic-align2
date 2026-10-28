@@ -447,7 +447,8 @@ export function useSliceExport({
           setTask0Report({ ok: false, kind: "jobzip", issues: result.issues });
         }
         window.alert(
-          `Task0 job.zip 을 내보내지 않았습니다.${NL}${NL}` +
+          `Task0 프린터가 받아들이지 않는 파일이라 job.zip 을 내보내지 않았습니다.${NL}` +
+            `상세 사유(규격 번호·층 번호는 개발팀 참고용):${NL}${NL}` +
             result.issues.map((s) => `· ${s}`).join(NL),
         );
         return;
@@ -538,7 +539,8 @@ export function useSliceExport({
           setTask0Report({ ok: false, kind: "gcode", issues: result.issues });
         }
         window.alert(
-          `Task0 G-code 를 내보내지 않았습니다.${NL}${NL}` +
+          `Task0 프린터가 받아들이지 않는 파일이라 G-code 를 내보내지 않았습니다.${NL}` +
+            `상세 사유(규격 번호·층 번호는 개발팀 참고용):${NL}${NL}` +
             result.issues.map((s) => `· ${s}`).join(NL),
         );
         return;

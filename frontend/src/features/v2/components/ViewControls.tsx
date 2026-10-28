@@ -20,17 +20,17 @@ const ViewControls: React.FC<ViewControlsProps> = ({
     <div
       className={`flex flex-col items-stretch bg-white/95 backdrop-blur rounded-md shadow border border-gray-200 text-xs select-none ${className}`}
     >
-      <Btn label="Home" onClick={() => onSetView("home")} />
-      <Btn label="Fit" onClick={onFit} />
+      <Btn label="처음" onClick={() => onSetView("home")} />
+      <Btn label="맞춤" onClick={onFit} />
       <Divider />
-      <Btn label="Top" onClick={() => onSetView("top")} />
-      <Btn label="Bottom" onClick={() => onSetView("bottom")} />
-      <Btn label="Front" onClick={() => onSetView("front")} />
-      <Btn label="Back" onClick={() => onSetView("back")} />
-      <Btn label="Left" onClick={() => onSetView("left")} />
-      <Btn label="Right" onClick={() => onSetView("right")} />
+      <Btn label="위" onClick={() => onSetView("top")} />
+      <Btn label="아래" onClick={() => onSetView("bottom")} />
+      <Btn label="앞" onClick={() => onSetView("front")} />
+      <Btn label="뒤" onClick={() => onSetView("back")} />
+      <Btn label="왼쪽" onClick={() => onSetView("left")} />
+      <Btn label="오른쪽" onClick={() => onSetView("right")} />
       <Divider />
-      <Btn label="Iso" onClick={() => onSetView("iso")} />
+      <Btn label="입체" onClick={() => onSetView("iso")} />
     </div>
   );
 };

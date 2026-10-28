@@ -26,25 +26,25 @@ const GizmoControls: React.FC<GizmoControlsProps> = ({
         active={mode === "none"}
         disabled={false}
         onClick={() => onChange("none")}
-        label="None"
+        label="끄기"
       />
       <Btn
         active={mode === "translate"}
         disabled={!enabled}
         onClick={() => onChange("translate")}
-        label="Move"
+        label="이동"
       />
       <Btn
         active={mode === "rotate"}
         disabled={!enabled}
         onClick={() => onChange("rotate")}
-        label="Rotate"
+        label="회전"
       />
       <Btn
         active={mode === "scale"}
         disabled={!enabled}
         onClick={() => onChange("scale")}
-        label="Scale"
+        label="배율"
       />
     </div>
   );

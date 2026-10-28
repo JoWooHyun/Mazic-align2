@@ -137,6 +137,7 @@ const SliceSidePanel: React.FC<Props> = ({
   //     높으면 그 뺄셈이 거짓이 되고, lift 는 로드 시점에 정점에 베이크되므로
   //     로드 후 lift 를 바꾸면 스토어 현재값과도 어긋난다(검수 지적).
   //     그래서 라벨을 "씬 top"으로 정정하고 **리프트가 포함돼 있다는 사실만** 알린다.
+  //     (10/28 #4 한국어 통일: "씬 top" → "출력물 최고 높이" — 모델이 아니라 서포트 포함 전체라는 뜻 유지)
   const liftMm = useSupportParamsStore((st) => st.params.liftMm);
 
   // G-code 내보내기는 감사 A5 로 워커 경로로 이동했다. 조립·다운로드·에러
@@ -207,7 +208,7 @@ const SliceSidePanel: React.FC<Props> = ({
             <span className="text-gray-800 font-mono text-right">
               {stats.resinG.toFixed(2)} g
             </span>
-            <span className="text-gray-500">출력 시간</span>
+            <span className="text-gray-500">{task0 ? "출력 시간 (LCD 기준)" : "출력 시간"}</span>
             <span className="text-gray-800 font-mono text-right">
               {formatDuration(stats.printSec)}
             </span>
@@ -244,11 +245,11 @@ const SliceSidePanel: React.FC<Props> = ({
             />
             <span className="text-xs text-gray-500">mm</span>
             <span className="ml-auto text-xs text-gray-500">
-              총 {layerCount} layer
+              총 {layerCount}층
             </span>
           </div>
           <p className="text-xs text-gray-500 mt-1">
-            씬 top: {sceneTopY.toFixed(2)} mm
+            출력물 최고 높이: {sceneTopY.toFixed(2)} mm
             {liftMm > 0 && (
               <>
                 {" "}
@@ -398,8 +399,11 @@ function Task0ReportView({ report }: { report: Task0ExportReport }) {
     return (
       <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
         <div className="font-medium">
-          {report.kind === "jobzip" ? "job.zip" : "run.gcode"} 를 내보내지 않았습니다 — 이유:
+          Task0 프린터가 받아들이지 않는 파일이라 {report.kind === "jobzip" ? "job.zip" : "run.gcode"} 를
+          내보내지 않았습니다.
         </div>
+        {/* 첫 줄은 쉬운 말로, 규격 §·층 번호가 섞인 상세 사유는 아래로 (#4 문구 — 10/12 검수) */}
+        <div className="mt-1 text-red-500">상세 사유(규격 번호·층 번호는 개발팀 참고용):</div>
         <ul className="list-disc pl-4 mt-1 space-y-0.5">
           {report.issues.map((msg, i) => (
             // 같은 문장이 두 번 나올 수 있다(파서 모드별 같은 경고 등) — 문장만 key 로 쓰면 중복 key.

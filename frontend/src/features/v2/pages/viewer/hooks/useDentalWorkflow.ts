@@ -577,7 +577,7 @@ export function useDentalWorkflow({
       });
       // 완료 통지 (감사 #5) — Support 탭의 "현재 N 개" 로 연결됨을 안내.
       setIslandSupportResult(
-        `서포트 ${generated.length}개 생성됨 · Support 탭 "현재 개수" 에 반영`,
+        `서포트 ${generated.length}개 생성됨 · 서포트 탭 "현재 개수" 에 반영`,
       );
 
       // 생성 성공 → 아일랜드 검출 상태 소진 (감사 B6). 씬 쪽은 autoSupportIslands

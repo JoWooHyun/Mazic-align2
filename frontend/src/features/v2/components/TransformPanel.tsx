@@ -185,7 +185,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
       <div
         className={`p-4 bg-white rounded-lg shadow text-sm text-gray-500 ${className}`}
       >
-        <h3 className="text-lg font-semibold text-gray-900 mb-2">Transform</h3>
+        <h3 className="text-lg font-semibold text-gray-900 mb-2">변형</h3>
         <p>
           모델을 하나만 선택하면 위치 / 회전 / 스케일 / 크기를 조정할 수 있습니다.
         </p>
@@ -456,20 +456,20 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
   return (
     <div className={`p-4 bg-white rounded-lg shadow ${className}`}>
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-lg font-semibold text-gray-900">Transform</h3>
+        <h3 className="text-lg font-semibold text-gray-900">변형</h3>
         <button
           onClick={resetAll}
           disabled={transformsEqual(local, IDENTITY_TRANSFORM)}
           className="px-3 py-1 text-sm text-primary-600 hover:bg-primary-50 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Reset
+          초기화
         </button>
       </div>
       <p className="text-xs text-gray-500 truncate mb-3" title={selected.fileName}>
         {selected.fileName}
       </p>
 
-      <Section title="Position (mm)">
+      <Section title="위치 (mm)">
         {DISPLAY_AXIS_LABELS.map((label, i) => (
           <Row
             key={label}
@@ -489,7 +489,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
         ))}
       </Section>
 
-      <Section title="Rotation (deg)">
+      <Section title="회전 (°)">
         {DISPLAY_AXIS_LABELS.map((label, i) => (
           <Row
             key={label}
@@ -551,7 +551,7 @@ const TransformPanel: React.FC<TransformPanelProps> = ({
       </Section>
 
       <Section
-        title="Scale (%)"
+        title="배율 (%)"
         right={
           <label className="flex items-center gap-1 text-xs text-gray-600 cursor-pointer">
             <input

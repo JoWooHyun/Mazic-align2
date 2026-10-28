@@ -157,7 +157,7 @@ const DentalPanel: React.FC<DentalPanelProps> = ({
 
   return (
     <div className={`p-4 bg-white rounded-lg shadow ${className}`}>
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Dental</h3>
+      <h3 className="text-lg font-semibold text-gray-900 mb-4">치과</h3>
 
       {/* 브러쉬 색칠 토글 */}
       <button

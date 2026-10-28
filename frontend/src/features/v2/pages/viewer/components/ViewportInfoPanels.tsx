@@ -49,14 +49,14 @@ export default function ViewportInfoPanels({
               className="inline-block w-3 h-3 rounded-sm"
               style={{ background: "rgb(255, 82, 82)" }}
             />
-            <span>Overhang (≤ {overhangAngleDeg}°)</span>
+            <span>오버행 (≤ {overhangAngleDeg}°)</span>
           </div>
           <div className="flex items-center space-x-2">
             <span
               className="inline-block w-3 h-3 rounded-sm"
               style={{ background: "rgb(199, 202, 212)" }}
             />
-            <span>Safe</span>
+            <span>안전</span>
           </div>
         </div>
       )}
