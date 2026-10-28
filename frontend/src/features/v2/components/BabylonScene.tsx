@@ -74,7 +74,8 @@ const BabylonScene = forwardRef<BabylonSceneHandle, BabylonSceneProps>(
     //   #1/#1.5 → #2/#3 → #3.5 → #4/#5 → #5.5 → #5.6/#5.7 → #6 → #6.5 로 고정한다.
     // 데모 수정 1차 ② — Task0 출력 가능 영역을 넘겨 플레이트를 그 사각형에 그린다. 인자만 추가 —
     //   훅 호출 순서·개수(불변식 1)는 그대로.
-    useSceneBootstrap(ctx, plateWidthMm, plateDepthMm, printableAreaMm); // #1 씬 부트스트랩 + #1.5 plate
+    //   #7 — 빌드 볼륨 높이를 넘겨 철사 상자를 그린다(인자만 추가).
+    useSceneBootstrap(ctx, plateWidthMm, plateDepthMm, printableAreaMm, plateHeightMm); // #1 씬 부트스트랩 + #1.5 plate
     // STL 로드 완료 신호 (H3). 로드는 비동기라 같은 커밋에서는 meshMapRef 가 비어
     //   있다. 이 tick 이 올라가야 메쉬를 읽는 훅(#3.5 서포트 동기화·#7 출력영역
     //   검사)이 새 모델을 본다.
