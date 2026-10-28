@@ -26,7 +26,7 @@ AI 체제: 2026-10-22~ **멀티 모델 협업**(메인 Opus 오케스트레이�
 
 - React 18 + TypeScript + Tailwind + Vite / zustand / **Babylon.js 6**
 - 데이터: **IndexedDB** (`features/v2/data/*.repo.ts` — repo 패턴 필수 경유)
-- 슬라이싱: Web Worker (`workers/slice-batch.worker.ts`), manifold-3d wasm(CSG), js-clipper(G-code)
+- 슬라이싱: Web Worker (`workers/slice-batch.worker.ts`), manifold-3d wasm(CSG), js-clipper(G-code·미리보기 단면 뚜껑 합집합), earcut(미리보기 단면 뚜껑 삼각분할 — 2026-10-23 #154)
 - 백엔드(Express+SQLite)는 **동결** — 실행 불요, 신규 의존 금지 (로컬 파일 브라우저만 선택적 사용)
 
 ## 실행 / 명령
@@ -40,10 +40,10 @@ cd frontend && npm run build      # vite build
 ```
 
 ```
-cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-23 기준 45종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-26 기준 46종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
 ```
 
-- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/23 기준 45종)가 상시 PASS여야 한다
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/26 기준 46종)가 상시 PASS여야 한다
   (**Node 20.6 이상** — `verify-head-normal.mjs` 가 `node:module` register 로더 훅을 쓴다)
   (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
   확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
@@ -101,6 +101,9 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 - **STL 축**: Babylon `STLFileLoader` 는 기본으로 STL (x, y, z) 를 (x, z, y) 로 넣어 **STL Z 를 위(Y)** 로 바꾼다(왼손 엔진용 반사). `utils/stl-loader.ts` 에 회전을 더 얹으면 안 된다 — 2026-10-13 까지 X −90° 가 한 번 더 걸려 치과 STL 이 90° 눕혀 읽혔다(데모 수정 1차 ①-b). 베드 좌표(`task0-frame` 베드 Y = world Z)가 반사를 한 번 더 해 출력은 거울상이 아니다. 수치 패널 표시축(`types/axis-display.ts`)은 별도 규약.
 - **Task0 파서 이식(`utils/task0/task0-gcode-parser.ts`)을 고치면** `verify-task0-parser.mjs` 출력이 "SKIP(차분 검사)" 가 아니라 "불일치 0건" 인지 확인할 것 —
   Task0 리포·Python 이 없는 PC 에서는 차분 검사가 SKIP 되고, 그때는 미묘한 이식 오류를 못 잡는다.
+- **실제 치과 STL 은 열린(구멍 난) 메쉬일 수 있다**(10/23 `partial denture` — 경계 변 740). 단면 사슬이 닫히지 않으면 가짜 현이 생겨 writer 가 층 대부분을 빠뜨렸다(수정 진행 중 — 로드맵 4주차).
+  합성 픽스처(큐브·판)는 전부 닫힌 메쉬라 이런 문제를 못 잡는다 — 단면·writer 를 고치면 리드 PC 의 실제 STL(`Task0_inbox\*\`, `stl모음/`, 리포 밖)로도 재현해 볼 것.
+- **정션이 걸린 worktree 에서 `npm install` 금지** — `frontend/node_modules` 정션이 진짜 폴더로 바뀐다(10/23 실제, 메인 트리는 무사했지만 정션을 따라 메인 트리를 고칠 위험). 의존성을 더해야 하면 정션을 먼저 `cmd /c rmdir` 로 지우고 그 worktree 에서 설치. 의존성 추가 PR 은 머지 뒤 메인 트리에서 `npm install` 하고 npm 이 만드는 package-lock 잡음 diff(`libc` 필드 삭제)는 되돌린다.
 
 ## AI 멀티 모델 체제 (2026-10-22~)
 
