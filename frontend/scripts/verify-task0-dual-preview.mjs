@@ -382,11 +382,11 @@ function sectionLabels() {
   );
   const pane = read("pages", "viewer", "components", "SliceSectionPane.tsx");
   assert(
-    /const MASK_MAX_PX = 512;/.test(pane) && /materialSlots=\{materialSlots\}/.test(pane) &&
+    /const MASK_MAX_PX = 1024;/.test(pane) && /materialSlots=\{materialSlots\}/.test(pane) &&
       /주황 = 재료 A\(T0\)/.test(pane) && /보라 = 재료 B\(T1\)/.test(pane) && /겹친 곳은 B/.test(pane) &&
       // 데모 수정 1차 ⑤ — 캡션의 해상도 px·"LCD 1bpp" 표기 삭제(리드 10/12).
       /단면 마스크 \(흰 = 노광 영역\)/.test(pane) && !/\{widthPx\}×\{heightPx\}px/.test(pane) && !/1bpp/.test(pane),
-    "단면 pane: 해상도 상한 512 그대로, 2재료면 범례(주황 = 재료 A(T0) · 보라 = 재료 B(T1) · 겹친 곳은 B), 아니면 '단면 마스크' 문구(px 표기 없음)",
+    "단면 pane: 해상도 상한 1024(10/28 리드 결정), 2재료면 범례(주황 = 재료 A(T0) · 보라 = 재료 B(T1) · 겹친 곳은 B), 아니면 '단면 마스크' 문구(px 표기 없음)",
   );
   const page = read("pages", "ViewerV2Page.tsx");
   assert(/<SliceSectionPane[\s\S]*?materialSlots=\{task0Material\.sliceSlots\}[\s\S]*?\/>/.test(page), "ViewerV2Page: 단면 pane 에 슬롯 표(useTask0Material sliceSlots)를 넘기기만");
@@ -1027,7 +1027,7 @@ async function sectionControls(copyCtx) {
 
 function sectionPerf() {
   if (process.env.TASK0_PERF !== "1") return;
-  console.log("\n(8) 성능 참고 (TASK0_PERF=1 — 판정 없음): 2D 단면 한 층, 512×288 (Node·NullEngine — 메인스레드 동기 호출과 같은 함수)");
+  console.log("\n(8) 성능 참고 (TASK0_PERF=1 — 판정 없음): 2D 단면 한 층, 512×288 vs 1024×576(10/28 앱 값) (Node·NullEngine — 메인스레드 동기 호출과 같은 함수)");
   const s = sphereSeedModel(1000);
   // 큰 모델 — 구 지름 40(위도 300 × 경도 400 띠) STL B + 기둥 서포트 25개 A
   const big = { meshes: [normalizeTriangleWinding(sphereTriangles(0, 22, 0, 20, 300, 400))], slots: ["B"] };
@@ -1054,9 +1054,14 @@ function sectionPerf() {
       const t1 = performance.now();
       for (const y of ys) handle.getSliceMaterialMask(y, 512, 288, slots);
       const t2 = performance.now();
+      for (const y of ys) handle.getSliceMask(y, 1024, 576);
+      const t3 = performance.now();
+      for (const y of ys) handle.getSliceMaterialMask(y, 1024, 576, slots);
+      const t4 = performance.now();
+      const ms = (a, b) => ((b - a) / ys.length).toFixed(2);
       console.log(
-        `  ${name}(삼각형 ${tris}, 메시 ${model.meshes.length})${rep === 0 ? " (예열)" : ""}: 1bpp ${((t1 - t0) / ys.length).toFixed(2)} ms/층, ` +
-          `2재료 라벨 ${((t2 - t1) / ys.length).toFixed(2)} ms/층`,
+        `  ${name}(삼각형 ${tris}, 메시 ${model.meshes.length})${rep === 0 ? " (예열)" : ""}: 512 — 1bpp ${ms(t0, t1)} · 2재료 ${ms(t1, t2)} ms/층 / ` +
+          `1024 — 1bpp ${ms(t2, t3)} · 2재료 ${ms(t3, t4)} ms/층`,
       );
     }
     scene.dispose();

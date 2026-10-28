@@ -76,8 +76,8 @@ const W_DEP = TASK0_DEFAULTS.depositWidthMm;
 const WRITER = task0WriterOptionsForProfile(TASK0_BUILT_IN_PROFILE);
 const PLATE_W = TASK0_BUILT_IN_PROFILE.buildVolumeMm[0];
 const PLATE_D = TASK0_BUILT_IN_PROFILE.buildVolumeMm[1];
-/** 앱 단면 pane 의 마스크 크기 (1920×1080 → 긴 변 512) */
-const APP_PX = [512, 288];
+/** 앱 단면 pane 의 마스크(래스터) 크기 (1920×1080 → 긴 변 1024 — 10/28 리드 결정, 종전 512). 박스(CSS)는 512×288 그대로라 kx = 0.5 */
+const APP_PX = [1024, 576];
 
 let failed = 0;
 function assert(cond, msg) {
@@ -297,7 +297,7 @@ function cubeInfo(files) {
 function sectionCoordinate(files) {
   console.log("\n(2) 좌표 일치 — 큐브 단면 래스터 ↔ bedToSectionPx (플레이트 150×85)");
   const deps = depositOnly(extractTask0Moves(files.cube10.gcode))[50];
-  for (const [Wpx, Hpx] of [APP_PX, [300, 300], [400, 100]]) {
+  for (const [Wpx, Hpx] of [APP_PX, [512, 288], [300, 300], [400, 100]]) {
     assert(coordinateOk(bedToSectionPx, cubeInfo(files), deps, Wpx, Hpx, true), `${Wpx}×${Hpx}: 경계(세로 ±0.5 · 가로 ±1 px)·표본 안/밖·파일 A 층 50 도포 끝점 전부 흰 픽셀`);
   }
 }
@@ -547,7 +547,12 @@ function sectionZoom(files) {
 function paneOk(pane) {
   const canvasTag = pane.slice(pane.indexOf("<canvas"), pane.indexOf("/>", pane.indexOf("<canvas")));
   return (
-    /const MASK_MAX_PX = 512;/.test(pane) &&
+    /const MASK_MAX_PX = 1024;/.test(pane) &&
+    // 10/28 — 박스(CSS)는 래스터와 분리해 종전 512 기준, 래스터가 장치 px 보다 촘촘하면 부드러운 축소
+    /const BOX_BASE_PX = 512;/.test(pane) &&
+    /Math\.min\(1, stage\.w \/ boxBaseW, stage\.h \/ boxBaseH\)/.test(pane) &&
+    /const maskSmooth = devicePxPerMaskPx < 1;/.test(pane) &&
+    /smooth=\{maskSmooth\}/.test(pane) &&
     /ref=\{pathCanvasRef\}/.test(pane) &&
     /drawTask0PathLayer\(ctx, \{/.test(pane) &&
     /el\.addEventListener\("wheel", onWheel, \{ passive: false \}\);/.test(pane) &&
@@ -602,8 +607,12 @@ function sectionWiring() {
   const hook = read("pages", "viewer", "hooks", "useSliceExport.ts");
   const page = read("pages", "ViewerV2Page.tsx");
   const prev = read("components", "SliceMaskPreview.tsx");
-  assert(paneOk(pane), "단면 pane: 래스터 상한 512 · 경로 canvas(CSS 확대 없음, setTransform = view) · 휠 passive:false + preventDefault · 마스크 CSS transform(origin 0 0) · 더블클릭 리셋 · 드래그 포인터 캡처 · 경로 보기 기본 켬 · 진행률은 층·경로가 같을 때만");
-  assert(/style=\{\{ imageRendering: "pixelated" \}\}/.test(prev) && /canvas\.getContext\("2d"\)/.test(prev), "SliceMaskPreview: 마스크 그리기·pixelated 그대로");
+  assert(paneOk(pane), "단면 pane: 래스터 상한 1024 · 박스 512 기준(래스터와 분리) · 촘촘하면 부드러운 축소 · 경로 canvas(CSS 확대 없음, setTransform = view) · 휠 passive:false + preventDefault · 마스크 CSS transform(origin 0 0) · 더블클릭 리셋 · 드래그 포인터 캡처 · 경로 보기 기본 켬 · 진행률은 층·경로가 같을 때만");
+  // 10/28 — smooth 가 아니면(기본) 종전 pixelated, smooth 면 부드러운 축소(1024 래스터를 작은 박스에 띄울 때 얇은 벽 건너뜀 방지)
+  assert(
+    /style=\{\{ imageRendering: smooth \? "auto" : "pixelated" \}\}/.test(prev) && /smooth = false,/.test(prev) && /canvas\.getContext\("2d"\)/.test(prev),
+    "SliceMaskPreview: 마스크 그리기 그대로 · 기본 pixelated, smooth 면 auto",
+  );
   assert(hookOk(hook), "useSliceExport: task0Path 수명 = task0Report(무효화 effect·두 핸들러 시작에서 지움, run.gcode sameInputs 안에서만 채움, job.zip 은 안 채움), 텍스트 상태 없음, 다운로드 그대로, Task0 아니면 undefined");
   assert(pageOk(page), "ViewerV2Page: task0Path·layerIdx 를 pane 에 넘기기만");
   return { pane, hook };

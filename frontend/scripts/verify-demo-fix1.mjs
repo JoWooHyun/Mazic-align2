@@ -798,8 +798,8 @@ function wiringChecks(raw) {
   check(count(raw.panel, "px)") === 0 && count(raw.panel, "1bpp") === 0 && t.panel.includes('"단면 마스크 (흰 = 노광 영역)"'), "⑤ SliceSidePanel: 캡션에 px)·1bpp 없음, '단면 마스크 (흰 = 노광 영역)'");
   check(
     !/\{widthPx\}×\{heightPx\}px/.test(t.pane) && count(raw.pane, "1bpp") === 0 && t.pane.includes("단면 마스크 (흰 = 노광 영역)") &&
-      t.pane.includes("widthPx={widthPx}") && t.pane.includes("const MASK_MAX_PX = 512;"),
-    "⑤ SliceSectionPane: 캡션에 해상도 px·1bpp 없음(래스터 상한 512·크기 계산은 그대로)",
+      t.pane.includes("widthPx={widthPx}") && t.pane.includes("const MASK_MAX_PX = 1024;"),
+    "⑤ SliceSectionPane: 캡션에 해상도 px·1bpp 없음(래스터 상한 — 10/28 리드 결정으로 512 → 1024)",
   );
   return res;
 }
