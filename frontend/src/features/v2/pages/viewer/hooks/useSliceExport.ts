@@ -38,6 +38,16 @@ import { profileExposure } from "../utils/profile-exposure";
 import { previewLayerCount } from "../utils/layer-count";
 import { NL } from "../utils/text";
 
+/**
+ * 내보내기(job.zip·run.gcode)용 writer 옵션 — 프로파일 값 + **뒤로 당기기 끔**(retractBack: false).
+ * 리드 2026-10-29 임시 결정: 드라이런에서 익스트루더가 ±1 mm 왕복만 해 토출이 안 보여서 E−r 줄을 빼고 한 방향(E+r)만 낸다.
+ * ⚠️ 실제 시린지를 달면 도포마다 1 mm 씩 쌓여 크게 과토출 — 시린지 장착 전 이 줄을 지워 규격 §5(기본 true)로 되돌릴 것.
+ * 경로 미리보기(safeBuildTask0Path)는 E 를 안 그리므로 그대로 둔다.
+ */
+function task0ExportWriterOptions(printerProfile: PrinterProfileV2) {
+  return { ...task0WriterOptionsForProfile(printerProfile), retractBack: false };
+}
+
 interface UseSliceExportArgs {
   files: STLFileV2[];
   project: ProjectV2 | null | undefined;
@@ -425,7 +435,7 @@ export function useSliceExport({
         {
           topY,
           layerHeightMm,
-          writer: task0WriterOptionsForProfile(printerProfile),
+          writer: task0ExportWriterOptions(printerProfile),
           // manifest·exposure.json 노광 — 프로파일에 노광 값이 없으면 DEFAULT_* (규칙 6).
           exposure: profileExposure(printerProfile),
           frame: task0RasterFrameForProfile(printerProfile),
@@ -522,7 +532,7 @@ export function useSliceExport({
         {
           topY,
           layerHeightMm,
-          writer: task0WriterOptionsForProfile(printerProfile),
+          writer: task0ExportWriterOptions(printerProfile),
           // 예상 시간의 노광 항목 — 프로파일에 노광 값이 없으면 DEFAULT_* (규칙 6).
           exposure: profileExposure(printerProfile),
           printable: task0PrintableFrameForProfile(printerProfile),

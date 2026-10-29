@@ -878,11 +878,11 @@ function sectionWiring() {
   assert(jobDepsOk(hook), "규칙 7 — handleExportTask0JobZip deps 에 printerProfile · slicePreview.layerHeightMm");
   assert(/`\$\{safe\}_task0_\$\{lh\}mm\.job\.zip`/.test(body), "파일 이름 <프로젝트>_task0_<lh>mm.job.zip");
   assert(
-    /getSliceGeometry\(\)/.test(body) && /getSceneTopY\(\)/.test(body) && /task0WriterOptionsForProfile\(printerProfile\)/.test(body) &&
+    /getSliceGeometry\(\)/.test(body) && /getSceneTopY\(\)/.test(body) && /writer: task0ExportWriterOptions\(printerProfile\)/.test(body) &&
       /task0RasterFrameForProfile\(printerProfile\)/.test(body) && /exposure: profileExposure\(printerProfile\)/.test(body) &&
       /generator: TASK0_APP_JOB_GENERATOR/.test(body) && /isTask0Profile\(printerProfile\)/.test(body) &&
       /printable: task0PrintableFrameForProfile\(printerProfile\)/.test(body),
-    "마스크 ZIP 과 같은 mesh 집합·topY, 프로파일 writer·투사 프레임·노광·출력 가능 영역, 앱 generator, Task0 프로파일만",
+    "마스크 ZIP 과 같은 mesh 집합·topY, 프로파일 writer(+ retractBack:false — verify-task0-retract-back)·투사 프레임·노광·출력 가능 영역, 앱 generator, Task0 프로파일만",
   );
   assert(
     task0AreaBlockOk(hook),
