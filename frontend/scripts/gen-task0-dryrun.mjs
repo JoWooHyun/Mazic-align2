@@ -27,7 +27,10 @@
 //   이 스크립트는 검증 목록(verify-*)이 아니다 — 상시 검증은 verify-task0-writer.mjs·verify-task0-coverage.mjs·
 //   verify-task0-dual.mjs(파일 D 형상 포함) 가 맡는다.
 //
-//   실행: npx tsx scripts/gen-task0-dryrun.mjs [--out <폴더>]
+//   실행: npx tsx scripts/gen-task0-dryrun.mjs [--out <폴더>] [--no-retract-back]
+//     --no-retract-back (2026-10-29 리드 결정 — 앱 내보내기와 같은 판): writer retractBack:false 로 **E−r 줄을 뺀 파일**을 쓴다.
+//       위 검사는 전부 규격 모드(기본) 출력에 그대로 돌리고, 쓰는 파일은 "규격 모드 본문 − E−r 줄 = 쓰는 본문(바이트 동일)",
+//       음수 E 0, 머리 메타 `; retractBack: false` 1줄, 파서 이식 print 오류 0 을 추가로 확인한다. 원본 파서(Python)는 네 파일 전부.
 //     기본 폴더 = OS 임시 폴더/mazicalign-task0. 쓴 경로와 파일별 통계(층 수·빈 층·도포/트래블 길이·
 //     리트랙트 수·E 합·줄 수·sha256·채움 조각/점/우회 트래블 수·드라이런 예상 시간)와 커버리지 층별 최악값 요약을 출력한다.
 //     드라이런 예상 시간 = XY 이동 길이(도포 + 트래블) ÷ 10 mm/s(드라이런 F600) + E 단독 줄 |E| ÷ 10 mm/s
@@ -44,6 +47,7 @@ import path from "node:path";
 import { checkTask0DualGcodeCoverage, checkTask0GcodeCoverage } from "../src/features/v2/utils/task0/task0-coverage.ts";
 import { TASK0_TIME_CONSTANTS } from "../src/features/v2/utils/task0/task0-frame.ts";
 import { generateTask0Gcode, resolveTask0WriterParams } from "../src/features/v2/utils/task0/task0-gcode-writer.ts";
+import { parseGcodeText } from "../src/features/v2/utils/task0/task0-gcode-parser.ts";
 import { buildTask0Estimate, buildTask0Exposure } from "../src/features/v2/utils/task0/task0-jobzip.ts";
 import {
   DUAL_CHECK_LABELS,
@@ -72,18 +76,49 @@ const DRYRUN_LAYER_OVERHEAD_S = 23;
 
 function parseArgs(argv) {
   let out = path.join(os.tmpdir(), "mazicalign-task0");
+  let noRetractBack = false;
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--out") {
+    if (argv[i] === "--no-retract-back") {
+      noRetractBack = true;
+    } else if (argv[i] === "--out") {
       const v = argv[++i];
       if (!v) throw new Error("--out 뒤에 폴더 경로가 필요함");
       out = path.resolve(v);
     } else if (argv[i].startsWith("--out=")) {
       out = path.resolve(argv[i].slice("--out=".length));
     } else {
-      throw new Error(`알 수 없는 인자: ${argv[i]} (사용법: --out <폴더>)`);
+      throw new Error(`알 수 없는 인자: ${argv[i]} (사용법: --out <폴더> [--no-retract-back])`);
     }
   }
-  return { out };
+  return { out, noRetractBack };
+}
+
+const START = "; EXECUTABLE_BLOCK_START";
+const RETRACT_BACK_META = "; retractBack: false";
+
+/** --no-retract-back — 규격 모드 출력(on)과 E−r 뺀 출력(off)의 관계 검사. 문제 목록 (빈 배열 = 통과) */
+function retractBackProblems(on, off, lh) {
+  const probs = [];
+  const split = (g) => {
+    const ls = g.split("\n");
+    const i = ls.indexOf(START);
+    return { head: ls.slice(0, i), body: ls.slice(i) };
+  };
+  const a = split(on.gcode);
+  const b = split(off.gcode);
+  const rLine = `G1 E-${on.params.retractMm.toFixed(5)} F${on.params.retractF}`;
+  const onMinus = a.body.filter((l) => l !== rLine);
+  if (a.body.length === onMinus.length) probs.push(`규격 모드에 E−r 줄(${rLine})이 없음`);
+  if (onMinus.join("\n") !== b.body.join("\n")) probs.push("쓰는 본문 ≠ 규격 모드 본문 − E−r 줄");
+  if (b.head.filter((l) => l === RETRACT_BACK_META).length !== 1) probs.push(`머리 메타 ${RETRACT_BACK_META} 가 1줄이 아님`);
+  const neg = off.gcode.split("\n").filter((l) => /E-/.test(l)).length;
+  if (neg) probs.push(`음수 E 줄 ${neg}`);
+  if (off.totals.retracts !== 0 || off.totals.unretracts !== on.totals.unretracts) {
+    probs.push(`통계 E-r ${off.totals.retracts} / E+r ${off.totals.unretracts} (기대 0 / ${on.totals.unretracts})`);
+  }
+  const p = parseGcodeText(off.gcode, { mode: "print", layerHeightMm: lh });
+  if (p.errors.length || p.warnings.length) probs.push(`파서 이식 print 경고 ${p.warnings.length}·오류 ${p.errors.length}`);
+  return probs;
 }
 
 const FILES = [
@@ -115,9 +150,10 @@ function dryrunSeconds(result) {
 }
 
 function main() {
-  const { out } = parseArgs(process.argv.slice(2));
+  const { out, noRetractBack } = parseArgs(process.argv.slice(2));
   const params = resolveTask0WriterParams();
   console.log("Task0 드라이런 파일 생성 (Z1-a2·Z1-b2·Z1-c·D1a·Z1-d, 규격서 v0.3.5)");
+  if (noRetractBack) console.log("  --no-retract-back: E−r 줄을 뺀 판을 쓴다 (리드 2026-10-29 — 앱 내보내기와 같은 판, 규격 §5 순변화 0 아님)");
   console.log(
     `  설정: w ${params.depositWidthMm} mm, K ${params.syringeKMm3PerMm} mm³/mm, 과충전 ${params.overfill}, ` +
       `r ${params.retractMm} mm, 리트랙트 생략 < ${params.retractMinTravelMm} mm, ` +
@@ -130,9 +166,10 @@ function main() {
   for (const spec of FILES) {
     const meshes = spec.fixture.meshes();
     const topY = meshesTopY(meshes);
-    const result = spec.dual
-      ? generateTask0Gcode(meshes, topY, spec.lh, { dualMaterial: { slots: spec.fixture.slots } })
-      : generateTask0Gcode(meshes, topY, spec.lh);
+    const extra = spec.dual ? { dualMaterial: { slots: spec.fixture.slots } } : {};
+    const result = generateTask0Gcode(meshes, topY, spec.lh, extra);
+    // --no-retract-back: 아래 검사는 규격 모드(result)에 그대로, 쓰는 파일(written)은 E−r 만 뺀 판
+    const written = noRetractBack ? generateTask0Gcode(meshes, topY, spec.lh, { ...extra, retractBack: false }) : result;
     const ctx = {
       name: spec.file,
       meshes,
@@ -192,14 +229,16 @@ function main() {
     }
     if (coverage.failedLayers.length > 10) problems.push(`커버리지: FAIL 층 ${coverage.failedLayers.length}개 (앞 10개만 표시)`);
     if (spec.dual && coverage.overlapSamplesA) problems.push(`B 우선 위반 표본 ${coverage.overlapSamplesA}`);
+    if (noRetractBack) for (const msg of retractBackProblems(result, written, spec.lh)) problems.push(`retractBack:false: ${msg}`);
     console.log(`\n  [${spec.file}] 검사 ${problems.length === 0 ? "통과" : `실패 ${problems.length}건`}`);
     console.log(`    커버리지 ${coverage.pass ? "전 층 통과" : "FAIL"}: ${spec.dual ? dualCoverageSummary(coverage) : coverageSummary(coverage)}`);
     for (const p of problems.slice(0, 20)) console.error(`    FAIL: ${p}`);
     if (problems.length) bad++;
-    built.push({ spec, result, ctx, coverage });
+    built.push({ spec, result: written, ctx, coverage });
   }
   // (D) 2재료 파일은 Task0 원본 파서(Python @03c0519)로도 — 있으면 3모드 경고·오류 0 이어야 쓴다 (없으면 SKIP, 이식판 c1 으로 판정)
-  const duals = built.filter((b) => b.spec.dual);
+  //   --no-retract-back 이면 쓰는 네 파일 전부(E−r 뺀 판)를 원본 파서로
+  const duals = noRetractBack ? built : built.filter((b) => b.spec.dual);
   if (duals.length) {
     const run = runTask0OriginalParser(duals.map((b) => ({ gcode: b.result.gcode, lh: b.spec.lh })));
     if (run.skip) console.log(`\n  원본 파서 SKIP: ${run.skip}`);
