@@ -6,13 +6,17 @@
 //   픽셀 수를 컨테이너 크기에 맞춰 무한정 키우면 층 스크럽이 뚝뚝 끊긴다.
 //   그래서 래스터 해상도는 긴 변 512px 상한으로 **고정**하고, 표시 크기는
 //   CSS 로만 바꾼다(P1 부터: 칸에 맞춘 단면 박스 + 줌 — 아래). 해상도 자동 적응은 2단계 과제.
+//   → **10/28 리드 결정: 래스터 상한 1024**(10/23 조사 — 512 는 0.29 mm/칸이라 얇은 벽이 30~50 % 두껍고 계단처럼 보임,
+//     1024 = 최악 층 +15 ms). **표시 박스 크기는 종전 512 기준 그대로**(BOX_BASE_PX — 레이아웃 불변) — 래스터만 촘촘해져
+//     확대·고해상도 화면에서 실제 모양에 가깝다. 래스터가 화면 픽셀보다 촘촘할 때(확대 전 보통 화면)는 pixelated(최근접) 축소가
+//     얇은 벽을 건너뛸 수 있어 부드러운 축소(SliceMaskPreview smooth)로, 확대해서 마스크 1 px ≥ 화면 1 px 가 되면 pixelated 로.
 //
 // Task0 2재료(D2): materialSlots 가 있으면(슬라이스 화면 + Task0 2재료) 단면을 재료 색으로 — 재료 A 주황 / B 보라 /
-//   겹친 곳 B(writer 와 같은 B 우선) / 빈 곳 검정, 아래에 범례. 래스터 2회(합집합 + B)라 상한 512px 그대로 둔다.
+//   겹친 곳 B(writer 와 같은 B 우선) / 빈 곳 검정, 아래에 범례. 래스터 2회(합집합 + B) — 상한은 단일과 같은 MASK_MAX_PX(10/28 1024).
 //
 // 경로 미리보기 P1 (계획 docs/계획_경로미리보기_20261019.md §3 P1 + 구현 메모 10/22):
-//   - 단면 박스 = 마스크 종횡비(widthPx:heightPx)를 지키며 칸에 맞춘 크기(확대 전 최대 widthPx×heightPx CSS px — 종전 표시와 같은 크기).
-//     마스크 canvas(512 상한 그대로, 그리기 무변경)와 경로 canvas 가 **같은 박스**에 겹친다(inset-0).
+//   - 단면 박스 = 마스크 종횡비(widthPx:heightPx)를 지키며 칸에 맞춘 크기(확대 전 최대 boxBaseW×boxBaseH CSS px — 종전 표시와 같은 크기. 10/28 부터 래스터 widthPx×heightPx 와 분리).
+//     마스크 canvas(래스터 — 10/28 부터 상한 1024, 박스와 분리)와 경로 canvas 가 **같은 박스**에 겹친다(inset-0).
 //   - 줌·이동: 휠 = 커서 기준 확대(1×~20×, 한 칸 ×1.2), 왼쪽 드래그 = 이동, 더블클릭·「맞춤」 = 원래대로. view 하나를 두 층이 같이 쓴다 —
 //     마스크는 CSS transform(픽셀이 그대로 보이게 pixelated), 경로는 ctx.setTransform 으로 매번 다시 그려 확대해도 선이 선명하다.
 //     층을 바꿔도 view 는 유지, 슬라이스 화면을 나가면(언마운트) 리셋. 휠은 passive:false 로 페이지 스크롤을 막는다.
@@ -39,8 +43,10 @@ import {
   type Task0PathPreview,
 } from "../../../utils/task0/task0-path-preview";
 
-/** 마스크 래스터 긴 변 상한 (px). 메인스레드 동기 호출이라 올리면 스크럽이 멈춘다. */
-const MASK_MAX_PX = 512;
+/** 마스크 래스터 긴 변 상한 (px). 메인스레드 동기 호출이라 올리면 스크럽이 멈춘다 (10/28 512 → 1024 — 리드 결정). */
+const MASK_MAX_PX = 1024;
+/** 단면 박스(확대 전) 긴 변 상한 (CSS px) — 래스터와 분리. 종전(래스터 512 = 표시 512) 화면 크기 그대로 둔다. */
+const BOX_BASE_PX = 512;
 
 interface SliceSectionPaneProps {
   sceneHandleRef: React.RefObject<BabylonSceneHandle>;
@@ -105,8 +111,12 @@ export default function SliceSectionPane({
   const scale = MASK_MAX_PX / Math.max(w, h);
   const widthPx = Math.max(1, Math.round(w * scale));
   const heightPx = Math.max(1, Math.round(h * scale));
+  // 확대 전 박스 기준 크기 (CSS px) — 래스터(widthPx×heightPx)와 같은 종횡비, 긴 변 BOX_BASE_PX.
+  const boxScale = BOX_BASE_PX / Math.max(w, h);
+  const boxBaseW = Math.max(1, Math.round(w * boxScale));
+  const boxBaseH = Math.max(1, Math.round(h * boxScale));
 
-  // ── 단면 박스 크기: 칸(stage)에 종횡비 그대로 맞추되 확대 전 크기는 widthPx×heightPx 를 넘지 않는다(종전 표시와 같음) ──
+  // ── 단면 박스 크기: 칸(stage)에 종횡비 그대로 맞추되 확대 전 크기는 boxBaseW×boxBaseH 를 넘지 않는다(종전 표시와 같음) ──
   const stageRef = useRef<HTMLDivElement>(null);
   const [stage, setStage] = useState<{ w: number; h: number } | null>(null);
   useEffect(() => {
@@ -120,14 +130,19 @@ export default function SliceSectionPane({
   }, []);
   const fit =
     stage && stage.w > 0 && stage.h > 0
-      ? Math.min(1, stage.w / widthPx, stage.h / heightPx)
+      ? Math.min(1, stage.w / boxBaseW, stage.h / boxBaseH)
       : 1;
-  const boxW = widthPx * fit;
-  const boxH = heightPx * fit;
+  const boxW = boxBaseW * fit;
+  const boxH = boxBaseH * fit;
 
   // ── 줌·이동 view (마스크·경로 공용) — 렌더 때 박스 크기로 자른다(창 크기가 바뀌어도 빈 테두리 없음) ──
   const [viewRaw, setViewRaw] = useState<SectionView>(SECTION_VIEW_IDENTITY);
   const view = clampSectionView(viewRaw, boxW, boxH);
+  // 마스크 1 px 이 화면(장치) 1 px 보다 작으면 부드럽게 축소 — pixelated(최근접) 축소는 얇은 벽을 건너뛸 수 있다(10/28 1024).
+  //   확대해서 마스크 1 px ≥ 장치 1 px 가 되면 pixelated 로 실제 마스크 픽셀을 보인다.
+  const devicePxPerMaskPx =
+    (boxW * view.scale * (typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1)) / widthPx;
+  const maskSmooth = devicePxPerMaskPx < 1;
   const boxRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{ id: number; x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -310,7 +325,8 @@ export default function SliceSectionPane({
               resetView();
             }}
           >
-            {/* 마스크 층 — 그리기 무변경(512 상한), 확대는 CSS transform 만(pixelated — 실제 마스크 픽셀이 보인다) */}
+            {/* 마스크 층 — 래스터 상한 MASK_MAX_PX(1024), 확대는 CSS transform 만. 마스크 1 px 이 화면 1 px 보다 작으면 부드럽게 축소,
+                크거나 같으면 pixelated(실제 마스크 픽셀이 보인다) — maskSmooth */}
             <div
               className="absolute inset-0"
               style={{
@@ -325,6 +341,7 @@ export default function SliceSectionPane({
                 heightPx={heightPx}
                 className="w-full h-full [&>canvas]:block [&>canvas]:w-full [&>canvas]:h-full [&>canvas]:border-0 [&>canvas]:rounded-none [&>canvas]:shadow-none"
                 materialSlots={materialSlots}
+                smooth={maskSmooth}
               />
             </div>
             {/* 경로 층 — CSS 확대하지 않고 같은 view 로 다시 그린다 */}
@@ -361,7 +378,7 @@ export default function SliceSectionPane({
           <span className="flex items-center gap-1">
             <LegendSwatch slot="B" /> 보라 = 재료 B(T1)
           </span>
-          {/* 데모 수정 1차 ⑤ — 캡션의 해상도(가로×세로 px) 표기 삭제(리드 10/12). 래스터 상한 512 는 그대로. */}
+          {/* 데모 수정 1차 ⑤ — 캡션의 해상도(가로×세로 px) 표기 삭제(리드 10/12). 래스터 상한은 MASK_MAX_PX(10/28 1024). */}
           <span>· 겹친 곳은 B</span>
         </p>
       ) : (

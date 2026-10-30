@@ -16,6 +16,11 @@ interface SliceMaskPreviewProps {
    * handle getSliceMaterialMask). 없으면 지금까지의 1bpp 흑백 마스크 그대로.
    */
   materialSlots?: Readonly<Record<string, Task0MaterialSlot>> | null;
+  /**
+   * true 면 canvas 를 부드럽게(imageRendering auto) 줄여 보인다 — 래스터가 화면 픽셀보다 촘촘할 때(1024 래스터를
+   *   작은 박스에 띄울 때) pixelated(최근접) 축소는 1~2 px 짜리 얇은 벽을 통째로 건너뛸 수 있어서. 기본 false = 종전 pixelated.
+   */
+  smooth?: boolean;
 }
 
 /**
@@ -34,6 +39,7 @@ const SliceMaskPreview: React.FC<SliceMaskPreviewProps> = ({
   heightPx = 200,
   className = "",
   materialSlots = null,
+  smooth = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -85,7 +91,7 @@ const SliceMaskPreview: React.FC<SliceMaskPreviewProps> = ({
         width={widthPx}
         height={heightPx}
         className="border border-gray-300 rounded shadow-sm"
-        style={{ imageRendering: "pixelated" }}
+        style={{ imageRendering: smooth ? "auto" : "pixelated" }}
       />
     </div>
   );
