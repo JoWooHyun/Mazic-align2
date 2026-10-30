@@ -20,6 +20,11 @@ export interface SceneFurniture {
   frontMarker: LinesMesh;
   grid: LinesMesh;
   axes: LinesMesh;
+  /**
+   * 빌드 볼륨 철사 상자 (#7) — 플레이트 사각형 위로 heightMm 까지 세로 모서리 4 + 윗면 사각형.
+   *   heightMm 이 없거나 0 이하이거나, 플레이트 긴 변의 VOLUME_BOX_MAX_HEIGHT_RATIO 배를 넘으면 null(그리지 않음).
+   */
+  volumeBox: LinesMesh | null;
   dispose: () => void;
 }
 
@@ -48,9 +53,21 @@ export interface PlateOptions {
    *   없으면 종전(원점 중심 widthMm × depthMm, 격자는 원점에서).
    */
   area?: PlateArea;
+  /**
+   * #7 빌드 볼륨 높이 (mm, world Y). > 0 이면 플레이트 사각형(area 가 있으면 그 사각형) 위로 이 높이까지
+   *   철사 상자를 그린다 — 모델이 높이 상한에 얼마나 가까운지 눈으로 보이게. 표시용 선일 뿐 검사(useBuildVolumeCheck)·
+   *   산출물과 무관. 없거나 0 이하이면 그리지 않는다(종전). 플레이트 긴 변의 VOLUME_BOX_MAX_HEIGHT_RATIO 배를 넘어도
+   *   그리지 않는다 — Task0 는 높이 = Z 이송 범위 2000 mm(규격서 §1)라 150×85 판 위로 2 m 기둥만 보이고 쓸모가 없다.
+   */
+  heightMm?: number;
 }
 
 const DEFAULT_GRID_STEP_MM = 10;
+/**
+ * #7 빌드 볼륨 상자를 그리는 높이 상한 = 플레이트 긴 변 × 이 배수. 넘으면 "높이 제한이 사실상 없음" 으로 보고 안 그린다
+ *   (Task0 2000 mm ÷ 140 mm ≈ 14배 → 안 그림 / LCD 프로파일은 보통 1~2배 → 그림).
+ */
+export const VOLUME_BOX_MAX_HEIGHT_RATIO = 4;
 /** 격자 줄 수 계산의 부동소수 여유 (mm/step 단위) — 정수 배수에서 줄이 빠지지 않게. */
 const GRID_EPS = 1e-9;
 
@@ -202,18 +219,47 @@ export function addBuildPlateAndGrid(
   );
   axes.isPickable = false;
 
+  // 5) 빌드 볼륨 철사 상자 (#7) — 세로 모서리 4 + 윗면 사각형. 바닥 사각형은 외곽선(2)이 이미 그린다.
+  //   격자보다 옅게(외곽선 색 + 낮은 alpha) — 작업 공간을 가리지 않고 경계만 보이게.
+  const heightMm = opts.heightMm ?? 0;
+  let volumeBox: LinesMesh | null = null;
+  if (heightMm > 0 && heightMm <= Math.max(rectW, rectD) * VOLUME_BOX_MAX_HEIGHT_RATIO) {
+    const top = heightMm;
+    const corners: [number, number][] = [
+      [rectMinX, rectMinZ],
+      [rectMaxX, rectMinZ],
+      [rectMaxX, rectMaxZ],
+      [rectMinX, rectMaxZ],
+    ];
+    const boxLines: Vector3[][] = corners.map(([x, z]) => [
+      new Vector3(x, outlineY, z),
+      new Vector3(x, top, z),
+    ]);
+    boxLines.push([...corners, corners[0]].map(([x, z]) => new Vector3(x, top, z)));
+    volumeBox = MeshBuilder.CreateLineSystem(
+      "v2_volume_box",
+      { lines: boxLines },
+      scene,
+    );
+    volumeBox.color = new Color3(0.3, 0.36, 0.42);
+    volumeBox.alpha = 0.35;
+    volumeBox.isPickable = false;
+  }
+
   return {
     plate,
     plateOutline,
     frontMarker,
     grid,
     axes,
+    volumeBox,
     dispose() {
       plate.dispose();
       plateOutline.dispose();
       frontMarker.dispose();
       grid.dispose();
       axes.dispose();
+      volumeBox?.dispose();
       plateMat.dispose();
     },
   };

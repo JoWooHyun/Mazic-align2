@@ -739,13 +739,14 @@ function wiringChecks(raw) {
   const bodyAt = t.scene.indexOf("function BabylonScene(");
   const calls = bodyAt >= 0 ? [...t.scene.slice(bodyAt).matchAll(/\b(use[A-Z]\w*)\s*\(/g)].map((m) => m[1]) : [];
   check(JSON.stringify(calls) === JSON.stringify(EXPECTED_SCENE_HOOKS), `② BabylonScene 훅 호출 순서·개수 불변 (${calls.length}개)`);
-  check(/useSceneBootstrap\(\s*ctx,\s*plateWidthMm,\s*plateDepthMm,\s*printableAreaMm\s*\)/.test(t.scene), "② BabylonScene: useSceneBootstrap 4번째 인자 = printableAreaMm");
+  // #7(10/28) — 5번째 인자 plateHeightMm(빌드 볼륨 상자)가 붙어도 4번째 = printableAreaMm 그대로 (상자 자체는 verify-build-volume-box)
+  check(/useSceneBootstrap\(\s*ctx,\s*plateWidthMm,\s*plateDepthMm,\s*printableAreaMm(?:,\s*plateHeightMm)?\s*\)/.test(t.scene), "② BabylonScene: useSceneBootstrap 4번째 인자 = printableAreaMm");
   check(
-    /printableAreaMm: PrintableAreaMm \| null,?\s*\)/.test(t.boot) &&
-      /addBuildPlateAndGrid\(scene, \{\s*widthMm: plateWidthMm,\s*depthMm: plateDepthMm,\s*area,\s*\}\)/.test(t.boot) &&
-      t.boot.includes("}, [plateWidthMm, plateDepthMm, areaMinX, areaMaxX, areaMinZ, areaMaxZ]);") &&
+    /printableAreaMm: PrintableAreaMm \| null,?\s*(?:plateHeightMm = 0,\s*)?\)/.test(t.boot) &&
+      /addBuildPlateAndGrid\(scene, \{\s*widthMm: plateWidthMm,\s*depthMm: plateDepthMm,\s*area,\s*(?:heightMm: plateHeightMm,\s*)?\}\)/.test(t.boot) &&
+      t.boot.includes("}, [plateWidthMm, plateDepthMm, plateHeightMm, areaMinX, areaMaxX, areaMinZ, areaMaxZ]);") &&
       !/\}, \[[^\]]*printableAreaMm[^\]]*\]\);/.test(t.boot),
-    "② useSceneBootstrap: 영역을 addBuildPlateAndGrid area 로, plate effect deps 는 숫자 4개(객체 아님)",
+    "② useSceneBootstrap: 영역을 addBuildPlateAndGrid area 로, plate effect deps 는 숫자(영역 4개 + #7 높이 — 객체 아님)",
   );
   check(/resetCameraOnPlate\(\s*camera,\s*area\.maxX - area\.minX,\s*area\.maxZ - area\.minZ,\s*\[/.test(t.boot), "② useSceneBootstrap: 영역이 있으면 카메라 reset 도 영역 중심·크기로");
   check(!t.bv.includes("usePrintableAreaOutline") && count(raw.bv, "usePrintableAreaOutline") === 0, "② useBuildVolumeCheck: 영역 테두리 훅 import·호출 없음");
@@ -834,9 +835,9 @@ wireControl("①-b 로더 X −90° 회전 베이크 되살림", "loader", "  //
 wireControl("①-b normal 재계산 중복(종전 1.7 되살림)", "loader", "  // 2) 빌드플레이트에 정렬", "  mesh.createNormals(true);\n  // 2) 빌드플레이트에 정렬");
 wireControl("①-b export 를 종전 X +90° 로", "export", "[w0.x, w0.z, w0.y]", "[w0.x, -w0.z, w0.y]");
 wireControl("①-b export 정점 1·2 교환 되살림", "export", "const i1 = indices[i + 1] * 3;", "const i1 = indices[i + 2] * 3;");
-wireControl("② useSceneBootstrap 에 영역 인자 안 넘김(종전)", "scene", "useSceneBootstrap(ctx, plateWidthMm, plateDepthMm, printableAreaMm);", "useSceneBootstrap(ctx, plateWidthMm, plateDepthMm);");
+wireControl("② useSceneBootstrap 에 영역 인자 안 넘김(종전)", "scene", "useSceneBootstrap(ctx, plateWidthMm, plateDepthMm, printableAreaMm, plateHeightMm);", "useSceneBootstrap(ctx, plateWidthMm, plateDepthMm);");
 wireControl("② BabylonScene 훅 하나 추가(불변식 1 위반)", "scene", "    const ctx = useSceneRefs(props);\n", "    const ctx = useSceneRefs(props);\n    useState(0);\n");
-wireControl("② plate effect deps 에 객체(매 렌더 재생성)", "boot", "}, [plateWidthMm, plateDepthMm, areaMinX, areaMaxX, areaMinZ, areaMaxZ]);", "}, [plateWidthMm, plateDepthMm, printableAreaMm]);");
+wireControl("② plate effect deps 에 객체(매 렌더 재생성)", "boot", "}, [plateWidthMm, plateDepthMm, plateHeightMm, areaMinX, areaMaxX, areaMinZ, areaMaxZ]);", "}, [plateWidthMm, plateDepthMm, printableAreaMm]);");
 wireControl("② 영역을 addBuildPlateAndGrid 에 안 넘김", "boot", "      depthMm: plateDepthMm,\n      area,\n", "      depthMm: plateDepthMm,\n");
 wireControl("② 주황 테두리 훅 되살림", "bv", "    partsReadyDep,\n  ]);\n}", "    partsReadyDep,\n  ]);\n  usePrintableAreaOutline(ctx, area);\n}");
 wireControl("② 영역 검사 제거", "bv", "collectPrintableAreaIssues(ctx, scene, files, area, plateHeightMm)", "[]");

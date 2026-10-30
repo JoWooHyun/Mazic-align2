@@ -36,6 +36,8 @@ export function useSceneBootstrap(
   // 데모 수정 1차 ② — Task0 출력 가능 영역(world X/Z, 비대칭). 있으면 플레이트를 이 사각형에 그린다.
   //   null 이면 종전(원점 중심 plateWidthMm × plateDepthMm).
   printableAreaMm: PrintableAreaMm | null,
+  // #7 — 빌드 볼륨 높이(mm). > 0 이면 플레이트 위로 철사 상자를 그린다(표시용 — 검사·산출물 무관).
+  plateHeightMm = 0,
 ): void {
   // 값으로 비교 — 호출부가 매 렌더 새 객체를 넘기므로 객체를 deps 에 넣으면 플레이트가 매번 재생성된다.
   const areaMinX = printableAreaMm?.minX;
@@ -288,7 +290,7 @@ export function useSceneBootstrap(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 1.5) plate 크기(또는 Task0 출력 가능 영역) 변경 시 furniture 재생성 + 카메라 reset.
+  // 1.5) plate 크기(또는 Task0 출력 가능 영역·#7 빌드 볼륨 높이) 변경 시 furniture 재생성 + 카메라 reset.
   //   데모 수정 1차 ②: 영역이 있으면 플레이트·격자·외곽선·앞쪽 탭을 그 사각형에 그린다.
   //   그리는 위치만 바뀐다 — world 원점·모델 좌표·world↔베드 변환은 그대로.
   useEffect(() => {
@@ -309,6 +311,7 @@ export function useSceneBootstrap(
       widthMm: plateWidthMm,
       depthMm: plateDepthMm,
       area,
+      heightMm: plateHeightMm,
     });
 
     // 모델이 없을 때만 plate 기준으로 camera reset (모델이 있으면
@@ -326,5 +329,5 @@ export function useSceneBootstrap(
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plateWidthMm, plateDepthMm, areaMinX, areaMaxX, areaMinZ, areaMaxZ]);
+  }, [plateWidthMm, plateDepthMm, plateHeightMm, areaMinX, areaMaxX, areaMinZ, areaMaxZ]);
 }
