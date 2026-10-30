@@ -40,10 +40,10 @@ cd frontend && npm run build      # vite build
 ```
 
 ```
-cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-26 기준 46종 — 개수는 `ls scripts/verify-*.mjs` 로 확인)
+cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026-10-30 기준 49종 — #159·#160 머지 기준. 개수는 `ls scripts/verify-*.mjs` 로 확인)
 ```
 
-- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/26 기준 46종)가 상시 PASS여야 한다
+- 자동 테스트(단위테스트 프레임워크) 없음. 대신 **헤드리스 검증 스크립트 전부**(10/30 기준 49종)가 상시 PASS여야 한다
   (**Node 20.6 이상** — `verify-head-normal.mjs` 가 `node:module` register 로더 훅을 쓴다)
   (`scripts/verify-*.mjs`). ⚠️ **반드시 `npx tsx`로 실행** — plain `node`로 돌리면
   확장자 없는 TS import를 못 풀어 `ERR_MODULE_NOT_FOUND` **오탐**이 난다(실제로 두 번 속았음).
@@ -56,10 +56,10 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
 
 | 경로 | 역할 | 담당/주의 |
 |---|---|---|
-| `pages/ViewerV2Page.tsx` | 전체 통합 골격 (893줄 — 10/15 정리 R-4 로 1069→893, 7/20 분리 직후 640): 공유 상태 + 훅 조립 + JSX 골격 | 공용 — useCallback deps 주의. **새 기능은 여기 말고 `viewer/` 하위 훅·컴포넌트로** |
+| `pages/ViewerV2Page.tsx` | 전체 통합 골격 (897줄 — 10/30 실측. 10/15 정리 R-4 로 1069→893, 7/20 분리 직후 640): 공유 상태 + 훅 조립 + JSX 골격 | 공용 — useCallback deps 주의. **새 기능은 여기 말고 `viewer/` 하위 훅·컴포넌트로** |
 | `pages/viewer/` | ViewerV2Page의 분리 조각: `hooks/`(서포트 편집·dental·내보내기·Task0 재료·로드 실패·Esc 해제·옛 서포트 마이그레이션 등 12개 + types), `components/`(헤더·오버레이·사이드패널·슬라이스 모드·출력영역 배너 9개), `utils/`(9개 — 삭제 확인 문구·NL·settleAll·runWithBusy 등) | 구조도: `docs/리팩토링_LLM구조_20260720.md` |
-| `components/BabylonScene.tsx` | **씬 본체** (168줄 — 10/22 실측): SceneCtx + 훅 호출(순서 고정, 현행 순서 표 = `docs/리팩토링_LLM구조_20260720.md` §4) + 핸들 조립. 편집모드 select/support/dental-brush, handle 패턴 | 유승제 설계 — 구조 변경 시 리뷰 지정 |
-| `components/babylon/` | 씬 기능 조각: `hooks/`(use* 11개 + setup-gizmos·setup-pointer-handlers·dispose-scene), `handle/` 빌더 6개, dental/bridge/재설계 액션. **훅 호출 순서·dispose 순서 불변식 있음** | 변경 전 `docs/리팩토링_LLM구조_20260720.md` §5 필독 |
+| `components/BabylonScene.tsx` | **씬 본체** (169줄 — 10/30 실측, #159 머지 기준): SceneCtx + 훅 호출(순서 고정, 현행 순서 표 = `docs/리팩토링_LLM구조_20260720.md` §4) + 핸들 조립. 편집모드 select/support/dental-brush, handle 패턴 | 유승제 설계 — 구조 변경 시 리뷰 지정 |
+| `components/babylon/` | 씬 기능 조각: `hooks/`(use* 10개 + setup-gizmos·setup-pointer-handlers·dispose-scene), `handle/` 빌더 6개, dental/bridge/재설계 액션. **훅 호출 순서·dispose 순서 불변식 있음** | 변경 전 `docs/리팩토링_LLM구조_20260720.md` §5 필독 |
 | `support/` | 서포트 구조물 (재설계 경로: 검출→라우팅→부품 조립, 레거시 trunk/브릿지, 파라미터, 자동 생성) | **조우현**(2026-08-05 유승제→이관, AI dev-cycle로 진행) |
 | `utils/dental/` | **지현규 알고리즘**: `margin-detect.ts`(🔒잠금), `margin-guard.ts`(🔒상수 잠금 — 원본 1:1 이식), `island-detection.ts`, `dental-support.ts`, `paint-mask.ts` | 지현규 — 로직 변경 시 컨펌 |
 | `utils/gcode/` | FDM G-code (marlin) — 회귀 기준으로만 유지 | 조우현 이식분 — 기존 marlin 출력 바이트 보존 |
@@ -103,6 +103,9 @@ cd frontend && npx tsx scripts/verify-<이름>.mjs   # 헤드리스 검증 (2026
   Task0 리포·Python 이 없는 PC 에서는 차분 검사가 SKIP 되고, 그때는 미묘한 이식 오류를 못 잡는다.
 - **실제 치과 STL 은 열린(구멍 난) 메쉬일 수 있다**(10/23 `partial denture` — 경계 변 740). 단면 사슬이 닫히지 않으면 가짜 현이 생겨 writer 가 층 대부분을 빠뜨렸다(수정 진행 중 — 로드맵 4주차).
   합성 픽스처(큐브·판)는 전부 닫힌 메쉬라 이런 문제를 못 잡는다 — 단면·writer 를 고치면 리드 PC 의 실제 STL(`Task0_inbox\*\`, `stl모음/`, 리포 밖)로도 재현해 볼 것.
+- **앱 Task0 내보내기는 지금 뒤로 당기기(E−r)를 끈다**(리드 2026-10-29, PR #160 — 드라이런에서 익스트루더가 한 방향으로 돌게). writer 기본(`retractBack` true)은 규격 §5 그대로이고
+  앱만 `useSliceExport` `task0ExportWriterOptions` 에서 false. **실레진(시린지 장착) 전에 되돌린다** — 그대로면 도포 시작마다 1 mm(≈165 mm³) 과토출. 상태 기계 검증은 규격 모드에, 끈 판은 `verify-task0-retract-back`.
+- **앱 배선을 소스 정규식으로 보는 검증이 있다**(`verify-task0-export`·`verify-task0-jobzip-export` 등 — 주석 지운 소스에 함수 이름 매칭). 훅·핸들의 함수 이름을 바꾸면 `scripts/` 에서 옛 이름을 grep(10/30 #160 검수 1차 FAIL).
 - **정션이 걸린 worktree 에서 `npm install` 금지** — `frontend/node_modules` 정션이 진짜 폴더로 바뀐다(10/23 실제, 메인 트리는 무사했지만 정션을 따라 메인 트리를 고칠 위험). 의존성을 더해야 하면 정션을 먼저 `cmd /c rmdir` 로 지우고 그 worktree 에서 설치. 의존성 추가 PR 은 머지 뒤 메인 트리에서 `npm install` 하고 npm 이 만드는 package-lock 잡음 diff(`libc` 필드 삭제)는 되돌린다.
 
 ## AI 멀티 모델 체제 (2026-10-22~)
