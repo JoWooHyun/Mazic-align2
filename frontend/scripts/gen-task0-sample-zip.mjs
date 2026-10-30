@@ -21,7 +21,9 @@
 //   이 스크립트는 검증 목록(verify-*)이 아니다 — 상시 검증은 verify-task0-jobzip.mjs 가 맡는다
 //   (그쪽이 buildTask0SampleSet 등을 import 하므로 main 은 직접 실행할 때만 돈다).
 //
-//   실행: npx tsx scripts/gen-task0-sample-zip.mjs [--out <폴더>]
+//   실행: npx tsx scripts/gen-task0-sample-zip.mjs [--out <폴더>] [--no-retract-back]
+//     --no-retract-back (2026-10-29 리드 결정 — 앱 내보내기와 같은 판): run.gcode 를 writer retractBack:false 로(E−r 줄 없음,
+//       머리 메타 `; retractBack: false`). 검사(verifyTask0JobZip·견본 단언·불량 조건)는 같다. README 에 그 판임을 적는다.
 //     기본 폴더 = OS 임시 폴더/mazicalign-task0-jobzip. 쓴 경로와 파일별 크기·sha256·검사 결과를 출력한다.
 //     Task0 전달은 리드가 그 폴더 내용을 `Task0_inbox\YYYYMMDD\` 로 옮긴다(협의 §27-2).
 //   ⚠️ plain node 로 돌리면 확장자 없는 TS import 를 못 풀어 오탐이 난다(CLAUDE.md).
@@ -100,13 +102,14 @@ export function sampleMeshes() {
 }
 
 /** 견본 job.zip 조립 */
-export function buildSampleJob() {
+export function buildSampleJob(writer = {}) {
   return buildTask0JobZip({
     meshes: sampleMeshes(),
     topY: SAMPLE_TOP_Y,
     layerHeightMm: SAMPLE_LH,
     exposure: SAMPLE_EXPOSURE,
     generatedAt: SAMPLE_GENERATED_AT,
+    writer,
   });
 }
 
@@ -243,8 +246,8 @@ export const BAD_SPECS = [
 ];
 
 /** 견본 + 불량 7종 전부 (바이트·파일 목록) */
-export async function buildTask0SampleSet() {
-  const sample = await buildSampleJob();
+export async function buildTask0SampleSet(writer = {}) {
+  const sample = await buildSampleJob(writer);
   const bads = [];
   for (const spec of BAD_SPECS) {
     const files = await spec.make(sample.files.map((f) => ({ name: f.name, data: f.data })));
@@ -302,18 +305,21 @@ export function badProblems(n, report) {
 
 function parseArgs(argv) {
   let out = path.join(os.tmpdir(), "mazicalign-task0-jobzip");
+  let noRetractBack = false;
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--out") {
+    if (argv[i] === "--no-retract-back") {
+      noRetractBack = true;
+    } else if (argv[i] === "--out") {
       const v = argv[++i];
       if (!v) throw new Error("--out 뒤에 폴더 경로가 필요함");
       out = path.resolve(v);
     } else if (argv[i].startsWith("--out=")) {
       out = path.resolve(argv[i].slice("--out=".length));
     } else {
-      throw new Error(`알 수 없는 인자: ${argv[i]} (사용법: --out <폴더>)`);
+      throw new Error(`알 수 없는 인자: ${argv[i]} (사용법: --out <폴더> [--no-retract-back])`);
     }
   }
-  return { out };
+  return { out, noRetractBack };
 }
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -333,7 +339,7 @@ function sourceCommit() {
 
 const fmtSec = (s) => `${s} s`;
 
-function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
+function readmeText({ sample, sampleReport, sampleBytes, bads, commit, noRetractBack }) {
   const g = sample.gcode;
   const prm = g.params;
   const t = g.totals;
@@ -342,6 +348,10 @@ function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
   const xy = t.xyBounds;
   const L = [];
   L.push("MazicAlign → Task0 job.zip 견본 + 불량 7종 (2026-10-08 전달분 — 협의 §26-3·§27)");
+  if (noRetractBack) {
+    L.push("  ※ --no-retract-back 판 (리드 2026-10-29 — 앱 내보내기와 같은 판, 협의 §37): run.gcode 에 E-r 줄이 없다(E+r 만, 머리 메타 `; retractBack: false`).");
+    L.push("    규격 §5 '층마다 E 순변화 0' 과 다르다 — 드라이런용 임시. 그 밖의 내용·불량 조건은 종전 판과 같다.");
+  }
   L.push("");
   L.push(`생성: MazicAlign ${commit}`);
   L.push("      frontend/scripts/gen-task0-sample-zip.mjs (같은 입력이면 같은 바이트 — generatedAt 고정)");
@@ -351,7 +361,11 @@ function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
   L.push(`  단일 재료 T0, 도포폭 w = ${prm.depositWidthMm} mm, 시린지 상수 K = ${prm.syringeKMm3PerMm} mm3/mm (잠정: 10 mL 안지름 14.5 mm 가정)`);
   L.push(`  과충전 ${prm.overfill}, 리트랙트 r = ${prm.retractMm} mm, 층두께 lh = ${SAMPLE_LH} mm`);
   L.push(`  속도: 도포 F${prm.depositF} / 트래블 F${prm.travelF} / 리트랙트 F${prm.retractF}. 도포 패턴 B안. G28 없음`);
-  L.push("  리트랙트(규격 v0.3.4 §5): 모든 툴 리트랙트 상태·노즐 (0,0) 으로 시작 → 툴의 첫 도포 앞에도 E+r, 도포한 층 끝마다 E-r");
+  L.push(
+    noRetractBack
+      ? "  리트랙트(--no-retract-back): 상태 기계는 규격 v0.3.4 §5 그대로(첫 도포 앞에도 E+r)지만 E-r 줄은 쓰지 않는다 → 도포 시작마다 E+r 만 누적"
+      : "  리트랙트(규격 v0.3.4 §5): 모든 툴 리트랙트 상태·노즐 (0,0) 으로 시작 → 툴의 첫 도포 앞에도 E+r, 도포한 층 끝마다 E-r",
+  );
   L.push(
     `  노광: 일반 ${SAMPLE_EXPOSURE.exposureSec} s, 바닥 ${SAMPLE_EXPOSURE.bottomExposureSec} s, bottomLayerCount ${SAMPLE_EXPOSURE.bottomLayerCount}, ` +
       `transitionLayerCount ${SAMPLE_EXPOSURE.transitionLayerCount}`,
@@ -383,7 +397,11 @@ function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
     `    run.gcode: 3층, 층 1 은 ;LAYER_CHANGE + ;Z:0.2 + ;HEIGHT:0.1 + G1 Z0.2 만. 도포 ${t.depositMm.toFixed(3)} mm (${t.segments}줄), ` +
       `E 합 ${t.extrusionMm.toFixed(5)} mm, ${t.lineCount}줄`,
   );
-  L.push(`      리트랙트 E-r ${t.retracts} / E+r ${t.unretracts} (층마다 같은 수 — 툴별 E 순변화 층마다 0, 파일 전체 0)`);
+  L.push(
+    noRetractBack
+      ? `      리트랙트 E-r ${t.retracts} / E+r ${t.unretracts} (E-r 줄 없음 — 파일 전체 E 단독 순변화 +${(t.unretracts * prm.retractMm).toFixed(5)} mm)`
+      : `      리트랙트 E-r ${t.retracts} / E+r ${t.unretracts} (층마다 같은 수 — 툴별 E 순변화 층마다 0, 파일 전체 0)`,
+  );
   L.push(
     `      Task0 파서(이식판) print 모드 경고 ${sampleReport.parserWarnings.length}, 오류 ${sampleReport.parserErrors.length}`,
   );
@@ -413,11 +431,20 @@ function readmeText({ sample, sampleReport, sampleBytes, bads, commit }) {
 }
 
 async function main() {
-  const { out } = parseArgs(process.argv.slice(2));
+  const { out, noRetractBack } = parseArgs(process.argv.slice(2));
   console.log("Task0 견본 job.zip + 불량 7종 생성 (규격서 v0.3.5 §11, 협의 §26-3·§27)");
+  if (noRetractBack) console.log("  --no-retract-back: run.gcode 에 E−r 줄 없음 (리드 2026-10-29 — 앱 내보내기와 같은 판)");
 
   // 1) 전부 만들고 검사 — 하나라도 어긋나면 아무것도 쓰지 않음
-  const { sample, bads } = await buildTask0SampleSet();
+  const { sample, bads } = await buildTask0SampleSet(noRetractBack ? { retractBack: false } : {});
+  if (noRetractBack) {
+    const gc = sample.gcode.gcode;
+    const neg = gc.split("\n").filter((l) => /E-/.test(l)).length;
+    if (neg || !gc.includes("\n; retractBack: false\n") || sample.gcode.totals.retracts !== 0) {
+      console.error(`  FAIL: --no-retract-back 인데 음수 E ${neg}줄 / 메타 줄·retracts 확인 실패 — 아무 파일도 쓰지 않음`);
+      process.exit(1);
+    }
+  }
   const sampleReport = await verifyTask0JobZip(sample.bytes);
   const problems = sampleProblems(sample, sampleReport).map((m) => `sample.job.zip: ${m}`);
   console.log(`\n  [sample.job.zip] 위반 [${sampleReport.violations.join(", ")}], 추가 검사 ${sampleReport.extraIssues.length}건`);
@@ -439,7 +466,7 @@ async function main() {
   fs.mkdirSync(out, { recursive: true });
   const written = [["sample.job.zip", sample.bytes], ...bads.map((b) => [b.spec.file, b.bytes])];
   for (const [name, bytes] of written) fs.writeFileSync(path.join(out, name), bytes);
-  const readme = readmeText({ sample, sampleReport, sampleBytes: sample.bytes, bads, commit: sourceCommit() });
+  const readme = readmeText({ sample, sampleReport, sampleBytes: sample.bytes, bads, commit: sourceCommit(), noRetractBack });
   fs.writeFileSync(path.join(out, "README.txt"), readme, "utf8");
 
   console.log(`\n출력 폴더: ${out}`);

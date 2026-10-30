@@ -737,11 +737,11 @@ function sectionWiring() {
   );
   assert(/`\$\{safe\}_task0_\$\{lh\}mm\.gcode`/.test(body), "파일 이름 <프로젝트>_task0_<lh>mm.gcode");
   assert(
-    /getSliceGeometry\(\)/.test(body) && /getSceneTopY\(\)/.test(body) && /task0WriterOptionsForProfile\(printerProfile\)/.test(body) &&
+    /getSliceGeometry\(\)/.test(body) && /getSceneTopY\(\)/.test(body) && /writer: task0ExportWriterOptions\(printerProfile\)/.test(body) &&
       // Z3: Task0 는 P-1 확인(confirmIfOutOfBounds) 대신 출력 가능 영역 밖이면 막는다(alertIfOutOfTask0Area) + 코어에 영역 전달
       /if \(alertIfOutOfTask0Area\(\)\) return;/.test(body) && !/confirmIfOutOfBounds\(\)/.test(body) &&
       /printable: task0PrintableFrameForProfile\(printerProfile\)/.test(body),
-    "마스크 ZIP 과 같은 mesh 집합·topY, 프로파일 writer 옵션, 출력 가능 영역 밖이면 막음(Z3 — confirm 아님)·코어에 영역 전달",
+    "마스크 ZIP 과 같은 mesh 집합·topY, 프로파일 writer 옵션(+ retractBack:false — verify-task0-retract-back), 출력 가능 영역 밖이면 막음(Z3 — confirm 아님)·코어에 영역 전달",
   );
   assert(
     hook.indexOf("const handleExportStl") > 0 && hook.indexOf("const handleExportTask0Gcode") > hook.indexOf("const handleExportStl"),

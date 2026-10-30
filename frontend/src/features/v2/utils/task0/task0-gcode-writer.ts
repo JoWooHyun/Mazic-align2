@@ -41,6 +41,8 @@
  *   - 그래서 툴별 E 단독 줄 순변화는 층마다 0(첫 층 포함 — E+r 수 = E−r 수), 파일 전체도 0.
  *   - 빈 층은 E 줄 없음 — 이미 리트랙트 상태라 바꿀 것이 없다.
  *   채움 층(task0-fill-route 순서)도 아래 같은 travel()/deposit() 으로 내므로 같은 규칙이다.
+ *   retractBack: false(앱 내보내기 — 리드 2026-10-29 임시 결정)면 위 상태 기계는 그대로지만 E−r 줄은 쓰지 않는다 →
+ *   E+r 만 남아 순변화 = E+r 수 × r(한 방향), 머리 메타에 `; retractBack: false`. 시린지 장착 전 되돌릴 것.
  *
  * E (규격 §5): 도포 줄 ΔE = 길이 × w × lh × 과충전 ÷ K. 소수 5자리 + **잔차 이월** — 정확 누적값을
  *   1e-5 단위로 반올림한 값의 차분을 출력하므로 어느 줄에서 끊어도 |출력 누적 − 정확 누적| ≤ 0.5e-5.
@@ -163,6 +165,13 @@ export interface Task0WriterOptions {
    * false 는 대조군 전용 — 예전 동작(앞 패스 끝점에서 출발). 단일 재료에는 영향 없음(층 안 T 전환이 없다).
    */
   switchTravelFromPark?: boolean;
+  /**
+   * 뒤로 당기기(E−r) 줄을 쓸지 (기본 true — 규격 §5 상태 기계 그대로).
+   * false = 상태 기계는 그대로 돌되 E−r 줄만 안 쓴다 → E+r(r mm)만 남아 도포 시작마다 플런저가 한 방향으로 r 씩 누적
+   * (층 E 순변화 = E+r 수 × r — 규격 §5 "순변화 0" 과 다르다). 앱 내보내기가 false 를 넘긴다(리드 2026-10-29 — 드라이런에서
+   * 익스트루더가 ±r 왕복만 해 토출이 안 보여서). ⚠️ 실제 시린지를 달면 도포마다 r 이 쌓여 크게 과토출 — 시린지 장착 전 되돌릴 것.
+   */
+  retractBack?: boolean;
   /**
    * 층 진행 콜백 (Z2 — 앱 워커 진행률). 층 하나를 다 쓸 때마다 (끝낸 층 수, 전체 층 수) 로 부른다.
    * 출력 바이트·통계에는 영향이 없다(읽기만 하는 알림).
@@ -905,6 +914,7 @@ export function generateTask0Gcode(
   const retractTicks = Math.max(1, Math.round(params.retractMm * E_TICKS_PER_MM));
   const retractLine = `G1 E${fixedFromInt(-retractTicks, 5)} F${params.retractF}`;
   const unretractLine = `G1 E${fixedFromInt(retractTicks, 5)} F${params.retractF}`;
+  const retractBack = options.retractBack ?? true;
   const parkXUm = toUm(params.parkXMm);
   const parkYUm = toUm(params.parkYMm);
   const thinFillOn = options.thinFill ?? true;
@@ -1032,10 +1042,12 @@ export function generateTask0Gcode(
       if (legs.length === 0) return;
       const st = stateOf(tool);
       if (!retracted[st] && lenMm >= params.retractMinTravelMm - TRAVEL_EPS) {
-        body.push(retractLine);
         retracted[st] = true;
-        stat.retracts++;
-        byTool[tool].retracts++;
+        if (retractBack) {
+          body.push(retractLine);
+          stat.retracts++;
+          byTool[tool].retracts++;
+        }
       }
       for (const [x, y] of legs) {
         body.push(`G1 X${fixedFromInt(x, 3)} Y${fixedFromInt(y, 3)} F${params.travelF}`);
@@ -1175,10 +1187,12 @@ export function generateTask0Gcode(
         // 툴 전환 (규격 §5·§6) — E−r(지금 툴이 언리트랙트면 길이와 무관) → T → 트래블 → E+r → 도포.
         // 층 첫 패스면 이미 모든 툴 리트랙트라 T 줄만. perToolRetract=false(대조군)는 E−r 없이 상태를 이어 간다.
         if (dual !== null && dual.perToolRetract && !retracted[stateOf(tool)]) {
-          body.push(retractLine);
           retracted[stateOf(tool)] = true;
-          stat.retracts++;
-          byTool[tool].retracts++;
+          if (retractBack) {
+            body.push(retractLine);
+            stat.retracts++;
+            byTool[tool].retracts++;
+          }
         }
         body.push(`T${pass.tool}`);
         tool = pass.tool;
@@ -1221,10 +1235,12 @@ export function generateTask0Gcode(
     // 3) 층 끝 — 도포했으면 항상 리트랙트 (§5). 마지막 줄이 지금 툴의 도포라 지금 툴만 언리트랙트 상태이고
     //    (앞 툴은 전환 때 리트랙트), 도포 안 한 층은 이미 모든 툴 리트랙트 → 툴마다 층마다 E+r 수 = E−r 수
     if (stat.segments > 0) {
-      body.push(retractLine);
       retracted[stateOf(tool)] = true;
-      stat.retracts++;
-      byTool[tool].retracts++;
+      if (retractBack) {
+        body.push(retractLine);
+        stat.retracts++;
+        byTool[tool].retracts++;
+      }
       stat.empty = false;
     }
     let ticks = 0;
@@ -1297,6 +1313,7 @@ export function generateTask0Gcode(
     `; overfill: ${metaNum(params.overfill)}`,
     `; retractMm: ${fixedFromInt(retractTicks, 5)}`,
     `; retractMinTravelMm: ${metaNum(params.retractMinTravelMm)}`,
+    ...(retractBack ? [] : ['; retractBack: false']),
     `; depositF: ${params.depositF}`,
     `; travelF: ${params.travelF}`,
     `; retractF: ${params.retractF}`,
