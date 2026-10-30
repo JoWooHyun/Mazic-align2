@@ -38,7 +38,7 @@ export default function SliceModeHeader({
             슬라이스 미리보기
           </h1>
           <span className="text-sm text-gray-500">
-            · {project?.name ?? (loading ? "Loading…" : "Unknown project")}
+            · {project?.name ?? (loading ? "불러오는 중…" : "알 수 없는 프로젝트")}
           </span>
           {project && (
             <span className="text-xs text-gray-500 font-mono">

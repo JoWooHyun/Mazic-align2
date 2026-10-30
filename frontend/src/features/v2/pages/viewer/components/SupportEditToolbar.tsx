@@ -27,7 +27,7 @@ export default function SupportEditToolbar({
     <div className="flex items-center gap-3 bg-white/95 backdrop-blur rounded-md shadow px-3 py-2 text-xs text-gray-700">
       {bridgeMode ? (
         <span className="pointer-events-none">
-          <strong>Bridge 모드</strong> ·{" "}
+          <strong>브릿지 모드</strong> ·{" "}
           {pendingBridge
             ? "두 번째 지점을 클릭"
             : "첫 번째 지점을 클릭"}{" "}
@@ -48,7 +48,7 @@ export default function SupportEditToolbar({
             : "border-primary-600 text-primary-700 hover:bg-primary-50"
         }`}
       >
-        Bridge
+        브릿지
       </button>
       <button
         onClick={onResetBridgeCurve}
@@ -59,7 +59,7 @@ export default function SupportEditToolbar({
             "bridge"
         }
         className="px-2 py-0.5 text-xs border border-gray-400 text-gray-700 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-        title="선택된 Bridge 의 변곡점을 직선 균등 분할로 복원"
+        title="선택된 브릿지의 변곡점을 직선 균등 분할로 복원"
       >
         직선 복원
       </button>

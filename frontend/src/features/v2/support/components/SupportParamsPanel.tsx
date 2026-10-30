@@ -73,13 +73,13 @@ const SupportParamsPanel: React.FC<SupportParamsPanelProps> = ({
   return (
     <div className={`p-4 bg-white rounded-lg shadow ${className}`}>
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Support</h3>
+        <h3 className="text-lg font-semibold text-gray-900">서포트</h3>
         <button
           onClick={reset}
           disabled={isAtDefault}
           className="px-3 py-1 text-sm text-primary-600 hover:bg-primary-50 rounded transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          Reset
+          초기화
         </button>
       </div>
 

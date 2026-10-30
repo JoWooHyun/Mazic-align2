@@ -122,7 +122,7 @@ export default function ViewerSidePanel({
           프로젝트 조회 실패: {error.message}
         </p>
       )}
-      {/* 탭: Transform / Support / Dental */}
+      {/* 탭: 변형 / 서포트 / 치과 */}
       <div className="flex border-b border-gray-200 bg-gray-50 sticky top-0 z-10">
         {(["transform", "support", "dental"] as const).map((t) => (
           <button
@@ -135,10 +135,10 @@ export default function ViewerSidePanel({
             }`}
           >
             {t === "transform"
-              ? "Transform"
+              ? "변형"
               : t === "support"
-                ? "Support"
-                : "Dental"}
+                ? "서포트"
+                : "치과"}
           </button>
         ))}
       </div>

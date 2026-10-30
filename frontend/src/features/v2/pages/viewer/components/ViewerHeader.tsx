@@ -74,10 +74,10 @@ export default function ViewerHeader({
             onClick={onBackToProjects}
             className="text-sm text-gray-600 hover:text-gray-900"
           >
-            ← Projects
+            ← 프로젝트 목록
           </button>
           <h1 className="text-lg font-semibold text-gray-900">
-            {project?.name ?? (loading ? "Loading…" : "Unknown project")}
+            {project?.name ?? (loading ? "불러오는 중…" : "알 수 없는 프로젝트")}
           </h1>
           {project && (
             <span className="text-xs text-gray-500 font-mono">

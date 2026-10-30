@@ -30,19 +30,19 @@ const EditModeControls: React.FC<EditModeControlsProps> = ({
         active={mode === "select"}
         disabled={disabled}
         onClick={() => onChange("select")}
-        label="Select"
+        label="선택"
       />
       <Btn
         active={mode === "support"}
         disabled={disabled}
         onClick={() => onChange("support")}
-        label="Support"
+        label="서포트"
       />
       <Btn
         active={mode === "dental-brush"}
         disabled={disabled}
         onClick={() => onChange("dental-brush")}
-        label="Dental"
+        label="치과"
       />
     </div>
   );

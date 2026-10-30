@@ -60,22 +60,22 @@ const ProjectsV2Page: React.FC = () => {
       <header className="bg-white border-b">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold text-primary-600">MazicAlign</h1>
-          <span className="text-sm text-gray-500">Local</span>
+          <span className="text-sm text-gray-500">이 PC 에 저장</span>
         </div>
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">My Projects</h2>
+          <h2 className="text-2xl font-bold text-gray-900">내 프로젝트</h2>
           <button
             onClick={() => setShowDialog(true)}
             className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 transition-colors"
           >
-            + New Project
+            + 새 프로젝트
           </button>
         </div>
 
-        {loading && <p className="text-gray-500">Loading…</p>}
+        {loading && <p className="text-gray-500">불러오는 중…</p>}
         {error && (
           <p className="text-red-600">불러오기 실패: {error.message}</p>
         )}
@@ -83,7 +83,7 @@ const ProjectsV2Page: React.FC = () => {
         {!loading && !error && projects.length === 0 && (
           <div className="p-12 text-center text-gray-500 bg-white rounded-lg border border-dashed">
             아직 프로젝트가 없습니다. <br />
-            <span className="text-sm">상단의 + New Project 로 시작하세요.</span>
+            <span className="text-sm">상단의 + 새 프로젝트 로 시작하세요.</span>
           </div>
         )}
 
@@ -96,10 +96,10 @@ const ProjectsV2Page: React.FC = () => {
             >
               <h3 className="text-lg font-bold text-gray-900">{p.name}</h3>
               <p className="text-sm text-gray-500 mt-2">
-                Code: <span className="font-mono">{p.code}</span>
+                코드: <span className="font-mono">{p.code}</span>
               </p>
               <p className="text-sm text-gray-500">
-                Last modified: {formatDate(p.lastModifiedAt)}
+                마지막 수정: {formatDate(p.lastModifiedAt)}
               </p>
               {p.note && (
                 <p className="text-sm text-gray-600 mt-2 line-clamp-2">
@@ -114,7 +114,7 @@ const ProjectsV2Page: React.FC = () => {
                   }}
                   className="text-sm text-red-500 hover:text-red-600"
                 >
-                  Delete
+                  삭제
                 </button>
               </div>
             </article>

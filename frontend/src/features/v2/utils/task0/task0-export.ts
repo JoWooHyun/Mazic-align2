@@ -843,10 +843,10 @@ export function runTask0GcodeExport(
   return exportGcodeStage(input, onLayerDone).out;
 }
 
-/** 층 번호 목록 → "1, 4, 7 외 n개" */
+/** 층 번호 목록 → "1, 4, 7 외 n개 층" — "외 n개" 만 쓰면 건수·선 개수로 읽혀서(리드 10/28 질문) "층" 을 붙인다 */
 function listLayers(layers: readonly number[]): string {
   const head = layers.slice(0, TASK0_EXPORT_MAX_LISTED).join(', ');
-  const more = layers.length > TASK0_EXPORT_MAX_LISTED ? ` 외 ${layers.length - TASK0_EXPORT_MAX_LISTED}개` : '';
+  const more = layers.length > TASK0_EXPORT_MAX_LISTED ? ` 외 ${layers.length - TASK0_EXPORT_MAX_LISTED}개 층` : '';
   return `${head}${more}`;
 }
 
